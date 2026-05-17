@@ -1,2 +1,33 @@
 # mahjong-server-bot-zoo
-A home text based server for playing mahjong and also a deployment framework for playing against mahjong AI. 
+This repository is the framework for a self hosted mahjong server I (plan to) run. The server can be used to play against your friends and also play against AI opponents for self analysis of your game play. 
+
+# Backend Features
+1. Modular Rule sets
+    1. Ability to play default MCR, ability to play homerules 
+1. Personal account stat tracking
+1. Full game history, recording the tile sequence of every game and every players decision for training purposes.
+1. 
+
+# Strategic/Analytic Features
+1. Note Taking
+1. Tiles currently out list
+1. Possible outs list, when calling displays how many Fan a potential hand would have
+1. Score calculator built in
+1. Automatic game phase tracker, (how many tiles has someone picked up and kept, how many tiles are left in wall)
+
+# Ai Features
+1. Shanten analyizer
+    1. Quantifies all potential outs that are 2-3 tiles away and how likely they are based on how many tiles are out and also many fan they would be.  
+1. Opponent Hand analyzer
+    1. analyzes an opponents hand to forecast what outs they might be going for 
+# User Interface Features
+1. Ability to taunt other players by revealing information about your hand
+
+1. Bilingual in English and Chinese
+1. Fun animations 
+    1. Plucking????
+    1. Dragon Slayer
+1. Fun art:
+    1. Slobbering Hog
+
+# Roadmap
