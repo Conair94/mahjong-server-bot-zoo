@@ -6,9 +6,11 @@ This repository is the framework for a self hosted mahjong server I (plan to) ru
     1. Ability to play default MCR, ability to play homerules 
 1. Personal account stat tracking
 1. Full game history, recording the tile sequence of every game and every players decision for training purposes.
-1. 
+1. In game chat
+1. Running Leaderboard and player rank
 
 # Strategic/Analytic Features
+1. Togglable weenie mode (all analysis available) vs plain mode (no decoration)
 1. Note Taking
 1. Tiles currently out list
 1. Possible outs list, when calling displays how many Fan a potential hand would have
@@ -22,12 +24,13 @@ This repository is the framework for a self hosted mahjong server I (plan to) ru
     1. analyzes an opponents hand to forecast what outs they might be going for 
 # User Interface Features
 1. Ability to taunt other players by revealing information about your hand
-
 1. Bilingual in English and Chinese
 1. Fun animations 
     1. Plucking????
     1. Dragon Slayer
-1. Fun art:
-    1. Slobbering Hog
+1. Fun art, such as
+    1. Cute pig for websites mascot (The Tile Hog)
+    1. unlockable profile pics such as Slobbering Hog when having a high rank, ALL GREEN if you get an ALL green hand. etc etc. 
+1. Satisfying sound when placing tiles
 
 # Roadmap
