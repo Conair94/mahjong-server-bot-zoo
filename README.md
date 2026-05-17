@@ -32,5 +32,16 @@ This repository is the framework for a self hosted mahjong server I (plan to) ru
     1. Cute pig for websites mascot (The Tile Hog)
     1. unlockable profile pics such as Slobbering Hog when having a high rank, ALL GREEN if you get an ALL green hand. etc etc. 
 1. Satisfying sound when placing tiles
+1. Achievements:
+    1. get a limit hand 
+    1. Lose Mahjong to someone else in the turn order when you would have won
+    1. Rob a Kong
+    1. Win a mahjong game in the first 10 tiles 
+    1. Win a mahjong game in the last 10 tiles
+    1. Discard 13 orphans
 
 # Roadmap
+1. Basic no whistle functionality, can play a game and host on my laptop
+2. more whistles
+3. host on dedicated 24/7 host
+4. AI training and API
