@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:botzone.org.cn)",
+      "WebSearch",
+      "WebFetch(domain:wiki.botzone.org.cn)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
