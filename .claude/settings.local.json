@@ -4,7 +4,16 @@
       "WebFetch(domain:botzone.org.cn)",
       "WebSearch",
       "WebFetch(domain:wiki.botzone.org.cn)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:eugeneyan.com)",
+      "Bash(ls -la /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ /Users/connorlockhart/.claude/ 2>&1 | head -80)",
+      "Read(//Users/connorlockhart/.claude/**)",
+      "Bash(ls /Users/connorlockhart/vault 2>&1 || echo \"NOT_PRESENT\")",
+      "Read(//Users/connorlockhart/**)",
+      "Bash(mkdir -p /Users/connorlockhart/vault)"
+    ],
+    "additionalDirectories": [
+      "/Users/connorlockhart"
     ]
   }
 }

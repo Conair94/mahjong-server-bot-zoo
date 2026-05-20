@@ -81,9 +81,23 @@ Defense is *underweighted* by beginner bots and beginner humans alike. A bot tha
 **Convention to know:** *ukeire* is the Japanese mahjong term for "the set of tiles that would improve your hand toward tenpai (one-away-from-winning)." Standard ukeire counts these tiles. **Payout-weighted ukeire** weights each by its expected value.
 
 **Input:** your hand + (1) distribution tracker + (3) deal-in risk.
-**Output:** for each legal discard, expected value = sum over (possible future hands) of (probability of reaching that hand) × (fan value of that hand) × (probability of winning before someone else does) − (expected deal-in cost from defense model).
+**Output:** for each legal discard, an estimate of the expected score from that discard onward.
 
-Critical subtlety: **MCR scoring is highly nonlinear.** There is an 8-fan minimum to win at all, and individual yaku jump in fan value discontinuously. An EV calculation that uses *expected fan* as a scalar will badly underestimate hands that have a small probability of jumping to a big-fan combination. The integration must be over the discrete distribution of final fan values, not a point estimate.
+This component is by far the hardest in the plan. The honest framing:
+
+**The full problem is a POMDP.** The decision is "what tile to discard?" but the consequence is a walk through a stochastic graph: nodes are hand configurations, edges are tile swaps (discard + draw, or discard + call), goal nodes are winning hands paying out their fan value. You don't choose which tile you draw, so chance nodes punctuate every decision. Opponents act between your turns, so adversarial nodes punctuate every chance node. You can't see opponent hands or wall order, so the entire walk is over belief states, not raw states. The formal object is the **Bellman equation** for expected value over a Partially Observable Markov Decision Process — solving it exactly is intractable; the state space is in the hundreds of millions of distinct hands before you even consider melds and discards.
+
+Every realistic implementation of (4) is an **approximation** of this object. The standard toolkit:
+
+1. **Depth-limited expectimax.** Search k turns ahead, evaluate leaves with a heuristic (or a learned value function from (6)). k=1 reduces to standard ukeire counting and is what beginner bots do. k=2–3 captures real lookahead but eats into the 1-second budget fast (branching factor ≈ 34 possible draws × possible opponent actions).
+2. **Candidate-archetype pruning.** Don't expand into every reachable hand — only the top-K archetypes you (an internal forecaster, applied to yourself) plausibly build toward. Orders-of-magnitude reduction in branching. Standard trick.
+3. **Independent-draws assumption.** Treat each future draw as i.i.d. from the wall distribution. Wrong in principle (the wall is a permutation), small error in practice, huge simplification. Component (5) keeps the wall distribution itself accurate.
+4. **Equivalence-class memoization.** Many hand states are equivalent under suit relabeling. Canonicalize before caching; the same expensive subcomputation becomes a hit.
+5. **Discrete-fan integration.** **MCR scoring is highly nonlinear** — 8-fan minimum, individual yaku jump discontinuously. EV calculations that average over an *expected fan* scalar badly underestimate hands with a small probability of a big-fan combination. Integrate over the discrete distribution of final fan values, not a point estimate.
+
+**v1 implementation explicitly uses:** k=1 lookahead (myopic), top-K archetype pruning from a self-applied forecaster, i.i.d. draws under (5), no learned value function. This is a strong baseline — much better than greedy — but it is *deliberately myopic*, and we should expect it to leave real money on the table. The fix isn't to deepen the search by hand: it's to train architectures v2/v3 (imitation, self-play) and v6 (value head), which absorb the deep lookahead into a learned function.
+
+**Convention to know:** replacing explicit search with a learned `V(belief_state) → expected score` is **value function approximation**. It's the bridge between "the exact solution is intractable" and "we can still play well." AlphaZero's value head is the same idea; we are doing the mahjong version. The hand-rolled v1 EV calculator and the learned v6 value head are pointing at the *same* mathematical object — the optimal value function of the POMDP — by different routes.
 
 ### 5. Opponent-need-aware draw distribution
 
