@@ -124,8 +124,11 @@ def calculate_fan(
     don't reach the 8-fan minimum (caller is responsible for the cliff)."""
 
 def shanten(hand: ConcealedHand, melds: list[Meld]) -> int:
-    """Number of tile swaps to reach tenpai. 0 means tenpai; -1 means
-    already won. Wraps PyMahjongGB's MahjongShanten."""
+    """Number of tile swaps to reach tenpai. 0 means tenpai. Wraps
+    PyMahjongGB's MahjongShanten, which requires a standing-position
+    hand (len(hand) + 3*len(melds) == 13). To test 'is this a winning
+    hand', use `winning_tiles` or `calculate_fan` instead — they handle
+    the 14-tile case explicitly."""
 
 def shanten_specialized(hand: ConcealedHand, variant: ShantenVariant) -> int:
     """Shanten for Seven Pairs / Thirteen Orphans / Honors-and-Knitted

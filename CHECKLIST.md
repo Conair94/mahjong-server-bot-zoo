@@ -73,12 +73,12 @@ Spec: [state-schema.md](docs/specs/state-schema.md), [engine-api.md § Exception
 
 Spec: [engine-api.md § PyMahjongGB integration boundary](docs/specs/engine-api.md).
 
-- [ ] Tests written:
-  - [ ] Per wrapper function: checked-in MCR-canonical example (fixture 4).
-  - [ ] PyMahjongGB-boundary lint fires on a synthetic offending file.
-- [ ] `mahjong/engine/pymj.py` with `calculate_fan`, `shanten`, `shanten_specialized`, `winning_tiles`.
-- [ ] AST lint wired into pre-commit.
-- [ ] **Gate:** wrapper tests green against real PyMahjongGB; lint catches violations.
+- [x] Tests written:
+  - [x] Per wrapper function: checked-in MCR-canonical example (fixture 4).
+  - [x] PyMahjongGB-boundary lint fires on a synthetic offending file. *(Lint added in Step 0.3; covers this case.)*
+- [x] `mahjong/engine/pymj.py` with `calculate_fan`, `shanten`, `shanten_specialized`, `winning_tiles`.
+- [x] AST lint wired into pre-commit. *(Same lint covers determinism + PyMahjongGB boundary.)*
+- [x] **Gate:** wrapper tests green against real PyMahjongGB; lint catches violations. *(Local 2026-05-19; CI pending.)*
 
 ### Step 1.3 — Ruleset loader
 
