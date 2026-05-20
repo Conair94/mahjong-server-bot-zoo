@@ -18,6 +18,17 @@ Build order reflects dependencies — each spec assumes the ones above it.
 | 4 | [bot-runner-protocol.md](bot-runner-protocol.md) | How the bot-runner adapter speaks to a bot subprocess in Botzone format. Framing, handshake, time-budget enforcement, sandboxing limits, illegal-action surfacing. | Bot runner, every bot (must conform). |
 | 5 | [determinism.md](determinism.md) | The seed-and-hash contract that makes "same seed + same inputs → byte-identical trace" hold across all components. Where seeds enter, how they serialize, what's included in the canonical hash. | Engine RNG, record store (serializes seed), test fixtures, AI determinism gates. |
 
+Tier 2 specs (internal structure; one consumer each, lower blast radius if wrong):
+
+| # | Spec | Pins | Consumed by |
+| --- | --- | --- | --- |
+| 6 | [engine-api.md](engine-api.md) | Full public surface of the rules engine: function signatures, exception taxonomy, the single PyMahjongGB integration seam, pure-function discipline, internal submodule layout. | Table manager (calls), tests (call & stub). |
+| 9 | [selfplay-harness.md](selfplay-harness.md) | The headless self-play driver: CLI, seed-derivation scheme, concurrency model, record output, crash recovery, eval-summary metrics, god-view gate. | AI training pipeline (consumes records), evaluation harness. |
+
+## Implementation order
+
+The bottom-up build sequence that respects the dependencies above lives in [implementation-order.md](implementation-order.md). It groups work into layers, names the fixtures that gate each step, and reaches the S0 walking skeleton, S1 Botzone-bot integration, and the self-play harness in a single linear sequence.
+
 ## Conventions
 
 - **No future-proofing.** Specs describe what's needed for v1. Extension points are added when a second consumer needs them, not in anticipation.

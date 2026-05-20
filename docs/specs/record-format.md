@@ -91,7 +91,7 @@ Every event has these common fields:
     "config_hash": "sha256:abc123..."
   },
 
-  "seed": 305419896,
+  "seed": "305419896",
 
   "seats": [
     {"seat": 0, "wind": "F1", "identity": {"kind": "human", "user_id": "u_42",  "display": "alice"}},

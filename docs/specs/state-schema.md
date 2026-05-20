@@ -121,8 +121,8 @@ GameState = {
 
     # RNG state — see determinism.md spec for full contract
     "rng": {
-        "seed": 0xDEADBEEF,         # original seed for the hand
-        "cursor": 17,               # how many bytes of the RNG stream have been consumed
+        "seed": "12379813812177893530165860108399898074",  # 128-bit; serialized as decimal string in JSON
+        "cursor": 17,                                       # how many bytes of the RNG stream have been consumed
     },
 }
 ```
@@ -200,7 +200,7 @@ Hand just started, dealer (seat 0) drew W3 and discards it. The canonical state 
   "phase": "CLAIM_WINDOW",
   "current_actor": 1,
   "terminal": null,
-  "rng": {"seed": 305419896, "cursor": 56}
+  "rng": {"seed": "305419896", "cursor": 56}
 }
 ```
 
