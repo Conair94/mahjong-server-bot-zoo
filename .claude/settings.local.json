@@ -10,7 +10,13 @@
       "Read(//Users/connorlockhart/.claude/**)",
       "Bash(ls /Users/connorlockhart/vault 2>&1 || echo \"NOT_PRESENT\")",
       "Read(//Users/connorlockhart/**)",
-      "Bash(mkdir -p /Users/connorlockhart/vault)"
+      "Bash(mkdir -p /Users/connorlockhart/vault)",
+      "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ status --short)",
+      "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ status)",
+      "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ log --oneline -10)",
+      "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ log --stat HEAD~2..HEAD)",
+      "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ diff .claude/settings.local.json)",
+      "Bash(git add *)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart"

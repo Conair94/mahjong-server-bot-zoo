@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mahjong-server-bot-zoo"
+version = "0.0.0"
+description = "Self-hosted MCR mahjong server with a TUI client and a zoo of trained bots."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Connor Lockhart" }]
+dependencies = [
+    # Runtime deps land here as layers come online.
+    # PyMahjongGB is required for Layer 1.2; pin loosely until we measure stability.
+    "PyMahjongGB>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.5",
+    "pre-commit>=3.7",
+]
+
+[project.scripts]
+mahjong = "mahjong.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mahjong*"]
+exclude = ["tests*"]
+
+# --- Pytest ---
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "determinism: cross-platform determinism fixtures (must pass on Linux and macOS in CI).",
+    "integration: multi-component integration tests (slower; not part of the <10s core suite).",
+    "linux_only: requires Linux-specific features (netns, RLIMIT_AS kill semantics).",
+    "needs_pymjgb: requires PyMahjongGB to be importable.",
+]
+asyncio_mode = "auto"
+
+# --- Mypy ---
+# CLAUDE.md mandates --strict on the engine and table manager; lenient elsewhere.
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = "mahjong.engine.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "mahjong.table.*"
+strict = true
+
+# --- Ruff ---
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Conservative starter set; tighten as the codebase grows.
+# E/F: pycodestyle + pyflakes, W: warnings, I: isort, B: bugbear, UP: pyupgrade,
+# SIM: simplify, RUF: ruff-specific.
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",  # line length — let the formatter handle wrapping where it can
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]  # asserts are fine in tests
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
