@@ -4,6 +4,8 @@ A self-hosted mahjong server with an ASCII client, modular rule sets, and first-
 
 A long-running bot-vs-bot table is intended to be available for spectating at all times while the server is up.
 
+How we work on this project (TDD-first for core, verification artifacts gate every phase): [CLAUDE.md](CLAUDE.md). Detailed plans: [server](docs/server-plan.md), [AI](docs/ai-plan.md). Speculative ideas not yet committed: [research](docs/research-ideas.md).
+
 ## Goals
 
 1. Run a playable mahjong server on a home machine for friends.
@@ -32,7 +34,7 @@ ASCII client, bilingual English/Chinese. Features:
 
 ## For researchers and bot authors
 
-Detailed AI component plan: [docs/ai-plan.md](docs/ai-plan.md).
+Detailed AI component plan: [docs/ai-plan.md](docs/ai-plan.md). Speculative techniques parked outside the committed roadmap: [docs/research-ideas.md](docs/research-ideas.md).
 
 - **Botzone-compatible bot interface.** Bots run as subprocesses communicating via the Botzone JSON request/response format over stdin/stdout. Any bot that runs on Botzone runs here unchanged.
 - **Full game records.** Every game persists the wall order, every draw, every discard, every call, and every decision point with the acting player's legal options. Format is documented and exportable.
@@ -52,13 +54,15 @@ Detailed server design: [docs/server-plan.md](docs/server-plan.md).
 
 ## Roadmap
 
-1. **Engine + Botzone I/O.** Rules engine for MCR, game-record format, bot runner speaking Botzone protocol. Validated by running a reference bot end-to-end.
-2. **ASCII client and local server.** Single-machine play, accounts, persistence, in-game chat. Plain mode only.
-3. **Analysis overlays.** Shanten, tiles-out, possible-outs with fan, score calculator, game-phase indicator. Opponent-hand forecast.
-4. **Home-rule support.** Configurable rule sets; document differences from MCR.
+Each phase ships with a checked-in verification artifact — a fixture, a determinism check, or a judge-acceptance recording — not just code that compiles. Detailed exit criteria are in [docs/server-plan.md](docs/server-plan.md) (per-phase Verification) and [docs/ai-plan.md](docs/ai-plan.md) (per-component Verification).
+
+1. **Engine + Botzone I/O.** Rules engine for MCR, game-record format, bot runner speaking Botzone protocol. Exits when four reference bots play a recorded game accepted by the official Botzone judge.
+2. **ASCII client and local server.** Single-machine play, accounts, persistence, in-game chat. Plain mode only. Exits when a scripted TUI session reproduces a recorded server-side fixture.
+3. **Analysis overlays.** Shanten, tiles-out, possible-outs with fan, score calculator, game-phase indicator. Opponent-hand forecast. Overlays share implementation with AI components 1–5; the component fixtures gate this phase.
+4. **Home-rule support.** Configurable rule sets, recorded into every game record. Exits when the same fixture replays correctly under each declared rule-set version.
 5. **Permanent spectator table.** Long-running bot-vs-bot game with public spectator view.
-6. **Dedicated host.** Move off laptop to always-on hardware.
-7. **AI training pipeline and API.** MCR database ingest, training scripts, evaluation harness, public bot-submission API.
+6. **Dedicated host.** Move off laptop to always-on hardware. Exits when a backup-restore drill succeeds end-to-end.
+7. **AI training pipeline and API.** MCR database ingest (preprocessor exists upstream — no custom pipeline), training scripts, evaluation harness against held-out opponents, public bot-submission API.
 8. **Botzone entry.** Submit a trained bot to the 6th annual competition.
 
 ## Open decisions

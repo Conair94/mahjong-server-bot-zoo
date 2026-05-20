@@ -59,7 +59,7 @@ For this project that means:
             +---------------+
 ```
 
-- **Rules engine.** Pure functions over a game-state value object: `legal_actions(state) -> list[Action]`, `apply_action(state, action) -> state'`, `score_hand(...) -> fan list`. No I/O, no randomness except via an explicitly-passed RNG seed. This is the layer that imports PyMahjongGB for fan calculation and shanten. Same code that the AI plan's components 1–5 build on top of.
+- **Rules engine.** Pure functions over a game-state value object: `legal_actions(state) -> list[Action]`, `apply_action(state, action) -> state'`, `score_hand(...) -> fan list`. No I/O, no randomness except via an explicitly-passed RNG seed. **Determinism is load-bearing:** same seed + same action sequence → byte-identical state trace. This is the property the AI plan's component- and architecture-level determinism tests rely on, and it's the property that lets us detect silent engine regressions. This is the layer that imports PyMahjongGB for fan calculation and shanten. Same code that the AI plan's components 1–5 build on top of.
 
 - **Table manager.** Owns a single game's lifecycle: deal, sequence turns, time out non-responsive seats, write the record, declare game end. Holds the seat-adapter handles (humans + bots). Stateful, in-memory. Persists nothing directly — that's the record store's job.
 
@@ -167,6 +167,89 @@ Phased to deliver something playable as quickly as possible, while keeping the e
 **Phase S8: permanent spectator table.** Always-on bot-vs-bot game with a spectator view. Requires (a) a runnable bot from the AI plan and (b) a spectator-mode adapter in the table manager. Spectator adapter is a seat that receives all-knowledge events but submits no actions.
 
 S0–S3 deliver "playable with friends." S4–S5 deliver "playable *well* with friends." S6 onward delivers AI features and assumes the AI plan is progressing in parallel.
+
+## Verification
+
+The working agreement is in [../CLAUDE.md](../CLAUDE.md) — TDD-first for core, verification ladder runs pre-commit, no phase ships without its exit artifact. This section makes each phase's exit artifact concrete.
+
+The verification ladder (cheap → expensive) runs on every change:
+
+1. Formatter (auto-on-save).
+2. Linter / static analysis (pre-commit).
+3. Type-check (pre-commit; `mypy --strict` on engine + table manager, looser elsewhere).
+4. Unit tests for the rules engine (pre-commit, < 10s).
+5. Integration tests: engine + adapters round-trip on a fixture game (pre-push).
+6. Determinism check: a recorded seeded game replays to a byte-identical state trace (pre-push).
+7. Judge-acceptance fixture: bot-bot games produce records that the official Botzone judge accepts (pre-push, gated on S1+).
+
+Hooks for 1–4 land alongside the engine in S0; 5–7 are added as their pre-conditions exist.
+
+### Per-phase exit criteria
+
+Each phase ships *only* when its artifact is checked in and green. "Looks right" is not an exit criterion.
+
+**S0 — walking skeleton.**
+
+- A `python -m mahjong play-test` command runs a complete canned-action game start-to-finish.
+- The game's record file is checked in as a fixture.
+- Determinism test: replaying the fixture seed + canned-action sequence produces a byte-identical state trace and record file across runs and machines.
+- Rule-engine unit tests cover legal-action generation, action application, terminal detection, and fan scoring (via PyMahjongGB) for a representative set of MCR hands.
+
+**S1 — bot-runner adapter + Botzone protocol I/O.**
+
+- Four copies of the official sample-bot-Botzone reference bot play a full game in the engine.
+- The resulting record is fed to the official Botzone judge; the judge accepts it without disagreement on legality or scoring. This recording becomes a checked-in fixture.
+- A second fixture covers each of `PASS`, `PLAY`, `PENG`, `CHI`, `GANG`, `BUGANG`, `HU` at least once — action grammar coverage, not just happy-path.
+- Resolves the open `botzone-mahjong-environment` question in the AI plan: edge-case fixtures (flood, final-draw wins) either pass via that library or motivate the fallback layer on PyMahjongGB.
+
+**S2 — TUI client + WebSocket transport.**
+
+- A scripted TUI session (canned keystrokes → human seat adapter → engine) produces a server-side record matching a recorded fixture.
+- WebSocket transport: connect/disconnect/reconnect within the seat-hold window preserves the game; reconnect after the window times out produces the documented auto-pass behavior. Each path is a test.
+- "Same engine" check: a recorded S2 game and a recorded S1 game share the same engine code path. No special-casing for human seats.
+
+**S3 — accounts, sessions, persistence.**
+
+- Migration test: applying the schema migrations from a fresh database produces the current schema; applying them on top of the *previous* version's schema also produces the current schema. Run both in CI.
+- Persistence round-trip: write game record + index → restart server → read back identical content. Fixture.
+- Auth tests: argon2 password hashing round-trip; session token issued, validated, expired; bot-account auth path; failed-login does not leak account existence.
+- Multi-table: two concurrent tables don't share state (a fixture game on table A leaves table B's record unchanged).
+
+**S4 — analysis overlays.**
+
+- Each overlay shares its implementation with the corresponding AI component (1, 4, 5). When that happens, *the overlay's exit criterion is that the AI component's verification fixtures still pass when the overlay code is what's actually called.* No duplicate implementations.
+- Toggling overlays on/off does not change the engine state trace for an otherwise-identical game. Fixture.
+
+**S5 — home rules + rule-set versioning.**
+
+- Every checked-in fixture from S0–S4 is re-runnable under the rule-set version it was recorded against, without code changes. The record contains the rule-set name + version; the loader uses it.
+- A home-rule variant added to the config produces a different fan score than MCR on a constructed hand where the variant matters; the difference is documented. Fixture.
+
+**S6 — opponent-aware overlays.**
+
+- Same shared-implementation rule as S4: the overlays are AI components 2 and 3, and their fixtures gate this phase.
+- Privacy check: opponent-hand forecaster used as a player overlay must consume only public information for the requesting player. A test asserts the input pipeline excludes other seats' concealed tiles, even if they're present in the table-manager memory.
+
+**S7 — dedicated host, ops hardening.**
+
+- systemd unit checked in; `systemctl restart mahjong` mid-game shuts down gracefully (current turn finishes, record is written), the host restarts, and the game can be resumed or is marked aborted in a recorded way. Test on a real host, not just in CI.
+- Health endpoint: `/health` returns 200 when the server is responsive and 503 when the table manager is locked. Integration test.
+- Backup-restore drill: kill the database, restore from the most recent backup, confirm the indexed games are still queryable and the record files still load. Document the restore command in the runbook.
+- Bot-subprocess resource limits: a fixture "bad bot" that allocates excessive memory or loops past its time budget is killed by the runner without taking the host down.
+
+**S8 — permanent spectator table.**
+
+- The spectator adapter receives events but cannot inject actions: a fixture test attempts to send an action from a spectator seat and confirms the table manager rejects it.
+- The live spectator view derives from the in-progress record file and stays in sync across reconnects (no separate event stream to keep consistent).
+
+### Fixture discipline
+
+Fixtures are checked-in recordings of seed + inputs → expected outputs. They're the durable form of "this used to work." Rules:
+
+- One fixture per behavior; named for what it pins, not when it was added.
+- Updating a fixture requires justifying the behavior change in the commit message. "Test was failing so I updated the fixture" is the canonical anti-pattern.
+- Fixtures live alongside the code that consumes them, not in a global `fixtures/` directory — easier to keep in sync.
+- The judge-acceptance fixtures from S1 are the *contract* with Botzone. Changes to them require running the change past the official judge before merge.
 
 ## Parallel work between server and AI plans
 

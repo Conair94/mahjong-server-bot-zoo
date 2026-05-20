@@ -11,11 +11,11 @@ Mahjong is an **imperfect-information game**: each player sees their own hand, a
 
 Most of the components below either improve the belief state or improve the value estimate under it. Keeping that split clear makes the architecture composable.
 
-A reference point: Microsoft's **Suphx** (Riichi mahjong, 2020) is the closest published state-of-the-art and most techniques transfer to MCR. Suphx itself is **not open source**; we are taking lessons from the paper, not the code. Key Suphx ideas worth knowing by name:
+A reference point: Microsoft's **Suphx** (Riichi mahjong, 2020) is the closest published state-of-the-art and most techniques transfer to MCR. Suphx itself is **not open source**; we are taking lessons from the paper, not the code. The Suphx idea v3 below commits to:
 
 - **Global reward prediction** — a separate network learns to predict end-of-game score from mid-game state, so per-decision training has a denser signal than waiting until the hand ends.
-- **Oracle guiding** — during training only, the policy sees opponents' actual hidden hands; the loss pulls it toward decisions an omniscient player would make, then the oracle is gradually removed.
-- **Run-time policy adaptation** — at the start of each game the bot quickly adapts to that specific game's score state (lead vs. trailing changes risk tolerance).
+
+Two further Suphx ideas (oracle guiding, run-time policy adaptation) are *not* committed in v3 and live in [research-ideas.md](research-ideas.md) with the triggers that would prompt us to try them.
 
 ## Platform constraints (Botzone)
 
@@ -58,6 +58,12 @@ Starts from uniform over unseen tiles, updates on every observed event. This is 
 
 **Why this first:** every downstream EV calculation depends on "what's the probability tile X is in the wall vs. an opponent's hand?" The naive answer (uniform over unseen tiles) is wrong as soon as opponents reveal information through their discards.
 
+**Verification artifacts** (required before component 2 starts):
+
+- Unit tests pinning posterior updates for each event type (discard, call, draw, dora reveal). Each test: given a small recorded prefix, the resulting marginals match a checked-in expected vector.
+- Determinism test: a recorded full-game prefix produces a byte-reproducible marginals trace across runs.
+- Sanity test: in the absence of any informative events, marginals stay uniform over unseen tiles.
+
 ### 2. Opponent hand-shape forecaster
 
 **Input:** per opponent — their discards, calls, seat/round wind, and the tile-distribution tracker's current state.
@@ -69,12 +75,28 @@ V2: supervised classifier trained on the MCR database. Label = the archetype the
 
 **Convention to know:** training a model on the *outcome* of a decision rather than on labels of an *intermediate concept* is called **distant supervision**. It's how you can train an archetype classifier without anyone manually labeling archetypes — you let the final hand reveal what archetype was being pursued.
 
+**Verification artifacts** (V1 heuristics):
+
+- Fixture games where a specific archetype was visibly pursued (early honors discards → not character flush; 1m/9m discards → middle shapes). Each fixture: forecaster's top archetype matches the human-annotated ground truth.
+- Calibration test: across the fixture set, predicted archetype probabilities are calibrated within an acceptable ECE (expected calibration error) bucket — overconfident hand-rules are worse than honest uncertainty.
+
+**Verification artifacts** (V2 classifier):
+
+- Held-out validation set: archetype accuracy and per-archetype recall on games not in the training corpus.
+- Eval isolation: train/val/test split must be by *game ID*, not by decision-point. Splitting by decision point leaks the same game's later decisions into both sets.
+
 ### 3. Deal-in risk model (defense)
 
 **Input:** your hand + (2) forecaster output + (1) distribution tracker.
 **Output:** for each tile in your hand, P(discarding this tile deals into a win) and the expected fan you'd pay.
 
 Defense is *underweighted* by beginner bots and beginner humans alike. A bot that never deals in but rarely wins still beats a bot that often wins but often deals in, because MCR's payout structure is asymmetric (the dealer-in pays the full hand value plus the other two contribute base).
+
+**Verification artifacts:**
+
+- Hand-traced fixtures: positions where the deal-in risk for a specific tile is high or low for non-obvious reasons. Model must agree with the hand-trace within tolerance.
+- Calibration over the MCR corpus: across recorded games, when the model predicts P(deal-in) = p, the observed empirical rate should be ≈ p over a sufficient sample. Miscalibrated risk models silently corrupt EV calculations downstream.
+- Asymmetry check: the model's loss must weight deal-ins by their actual MCR payout (full hand value, not base), not symmetric squared error. Test that the loss function is what the spec says.
 
 ### 4. EV-weighted shanten / payout-weighted ukeire (offense)
 
@@ -99,6 +121,13 @@ Every realistic implementation of (4) is an **approximation** of this object. Th
 
 **Convention to know:** replacing explicit search with a learned `V(belief_state) → expected score` is **value function approximation**. It's the bridge between "the exact solution is intractable" and "we can still play well." AlphaZero's value head is the same idea; we are doing the mahjong version. The hand-rolled v1 EV calculator and the learned v6 value head are pointing at the *same* mathematical object — the optimal value function of the POMDP — by different routes.
 
+**Verification artifacts:**
+
+- Hand-traced "right answer" fixtures: a small set of positions where the correct discard is non-obvious but humans agree. v1 must match the right answer on a target fraction; future architectures (v2, v3) must do at least as well on the same fixture.
+- Greedy-baseline regression: v1's win rate against a greedy ukeire-only bot must be above a fixed margin. This pins that the lookahead+forecaster+risk integration is actually adding value over the cheap baseline.
+- Discrete-fan integration test: synthetic positions with a small probability of a big-fan completion. The EV calculation must reflect the discrete distribution, not the mean fan — verified by comparing computed EV to a brute-force-integrated reference on a tiny state space.
+- Determinism: same seed + same opponents + same hand → same discard chosen. Refactors that change this hash are flagged.
+
 ### 5. Opponent-need-aware draw distribution
 
 The compounding effect. The naive P(draw tile X next turn) treats all unseen tiles as uniformly in the wall. Once (2) says opponent A is heavily flushing bamboo, bamboos are *more* likely to be in A's hand than in the wall — so your P(draw bamboo) is *lower* than the naive count suggests.
@@ -107,6 +136,12 @@ The compounding effect. The naive P(draw tile X next turn) treats all unseen til
 **Output:** P(this tile is in the wall) per tile type, which is what (4) should actually use in place of raw unseen counts.
 
 This is highest-leverage because it's a multiplicative improvement on every other EV in the system.
+
+**Verification artifacts:**
+
+- Reduction-to-naive test: with forecaster (2) returning uniform (no information), the output of (5) reduces exactly to raw unseen-tile counting. Catches the case where the combiner accidentally adds bias even in the no-information limit.
+- Synthetic flush fixture: a hand-constructed scenario where opponent A is heavily flushing one suit. P(tile of that suit is in wall) must decrease relative to the naive estimate; the magnitude must match a hand-traced expected adjustment within tolerance.
+- Downstream impact test: re-run the component-4 v1 fixture set with (5) plugged in. EV estimates must change; "(5) plugged in but EV unchanged" means the wiring is broken.
 
 ### 6. Learned value head
 
@@ -117,9 +152,30 @@ V1: supervised regression on the MCR database. V2: refined by self-play (see arc
 
 **Convention to know:** in RL terms, (4) is a *model-based* value estimator (we wrote down how mahjong works and integrated over outcomes); (6) is a *model-free* value estimator (we learned the value function from data, treating mahjong as a black box). Hybrid approaches that use both — model-based rollouts grounded by a learned critic — are how AlphaZero-family agents work.
 
+**Verification artifacts:**
+
+- Eval-isolated split: train/val/test on the MCR corpus split by *game ID*, never by decision-point. Reuse the same split as component 2's V2 classifier so cross-component leakage is impossible.
+- Calibration check: predicted P(win) buckets must match observed empirical rates on the held-out set within ECE tolerance.
+- Sign-of-improvement test against component 4: on a fixture of positions, using (6) as a leaf evaluator inside (4) must reduce EV-estimate error vs the hand-rolled heuristic leaf. If it doesn't, the value head isn't useful as a critic — fix or scrap before moving to v3.
+- Determinism: same data + same seed + same code → byte-identical checkpoint hash. A refactor that changes the hash without a behavior justification is flagged.
+
+## Verification
+
+Per-component verification artifacts are co-located with each component above. This section covers the architecture-level gates that span components.
+
+The working agreement is in [../CLAUDE.md](../CLAUDE.md). RL-specific guardrails from that doc:
+
+1. **Sanity baselines before scaling.** Before claiming any learning algorithm works, demonstrate (a) random-vs-random produces ~uniform win rates, (b) self-play converges on a trivial sub-game (e.g., chow-only ruleset, no defense), (c) rule-based v1 beats random by the expected margin. If these don't hold, the bug is in the environment or the eval harness, not the agent.
+2. **Reward shape is a tested contract.** Every reward function (raw fan, Suphx-style global reward prediction, any shaping) is pinned by tests mapping example trajectories to expected return *before* a training run uses it. Reward bugs are the most common silent RL failure; a tested contract converts a silent bug into a loud one.
+3. **Determinism is non-negotiable.** Seeded rollouts of the engine + agent stack must be byte-reproducible. Component-level determinism tests roll up to a per-architecture determinism test (`v1 fixture game with seed S → recorded action sequence`). A refactor that changes the hash either changed behavior (investigate) or invalidates the fixture (justify and update).
+4. **Eval is separate code from train.** Evaluation must not share mutable state, RNG, normalization stats, or replay buffers with the training loop. Static check: import graphs from `eval/` must not pull from `train/runtime_state`. Cross-contamination invalidates the whole experiment.
+5. **Held-out opponents are mandatory.** Every architecture is evaluated against opponents it did not train against (prior-year Botzone entries are cheap-and-good). A v3 self-play agent that beats itself but loses to a Botzone 2025 entry is a v3 self-play agent that has overfit to a tiny opponent distribution.
+6. **Per-architecture gate.** Each `vN` must beat `vN-1` in head-to-head play on the held-out opponent set by a margin larger than seed variance, *and* must not regress on the per-component fixture sets above. A regression on a component fixture during architecture work means the component was silently broken; fix before continuing.
+7. **Log enough to post-mortem a bad run.** At minimum: seed, config hash, git SHA, eval results per checkpoint, opponent set used. "I think it was a few days ago" is not debuggable.
+
 ## Architectures
 
-Each architecture is shippable; build the next only after the previous is working and beats its predecessor in head-to-head play.
+Each architecture is shippable; build the next only after the previous is working and beats its predecessor in head-to-head play on the held-out opponent set (see Verification above).
 
 ### v1: rule-based
 
@@ -132,7 +188,7 @@ Components 1–5 wired together with hand-tuned weights. No learning. Should dec
 
 Supervised policy network trained on the MCR database to predict the expert discard given the observation. Cheap to train. Beats v1 if the training data has strong play.
 
-**Convention to know:** training a policy by mimicking expert decisions is **behavior cloning** — the simplest form of imitation learning. Its known failure mode is **distributional shift**: the bot performs well in states the experts visited, badly in states they didn't, because errors compound. Mitigated by self-play (v3) or by **DAgger** (Dataset Aggregation), which iteratively adds the bot's own visited states to the training set with expert labels.
+**Convention to know:** training a policy by mimicking expert decisions is **behavior cloning** — the simplest form of imitation learning. Its known failure mode is **distributional shift**: the bot performs well in states the experts visited, badly in states they didn't, because errors compound. Default mitigation in this plan is moving to self-play (v3). If distributional shift bites *within* v2 (late-game collapses against rule-based v1), DAgger is the parked fallback — see [research-ideas.md](research-ideas.md).
 
 ### v3: self-play RL
 
@@ -144,11 +200,11 @@ Initialize from v2, refine via self-play with the learned value head from (6). S
 - **Replay buffer + off-policy** — store past games and learn from them repeatedly; more sample-efficient when the simulator is expensive. Mahjong games are cheap to simulate so this matters less here than in robotics.
 - **Reward shaping** — using intermediate signals (Suphx's global reward prediction) instead of only end-of-game score. Lower variance, faster training, but risks teaching the wrong objective if the shaping is misspecified.
 
-### v4: MCTS at decision time
+### v4: MCTS at decision time (offline analysis)
 
-Use the v3 policy as a prior and the v6 value head as a leaf evaluator. **The 1-second-per-interaction Botzone budget makes full AlphaZero-style search impractical at submission time** — expect hundreds, not thousands, of rollouts on a wide imperfect-information tree. Reserve MCTS primarily for offline analysis, the explainer overlay, and post-game review; only deploy a heavily pruned version in competitive play, if at all.
+Use the v3 policy as a prior and the v6 value head as a leaf evaluator. **The 1-second-per-interaction Botzone budget makes full AlphaZero-style search impractical at submission time** — expect hundreds, not thousands, of rollouts on a wide imperfect-information tree. v4 is scoped *primarily* to offline analysis, the explainer overlay, and post-game review. Live-play deployment is out of scope for v1 of v4.
 
-**Convention to know:** **MCTS** (Monte Carlo Tree Search) guided by a learned policy + value network is the AlphaZero pattern. For imperfect-information games, vanilla MCTS doesn't directly apply; variants like **IS-MCTS** (Information Set MCTS) sample possible hidden states and search over them.
+**Convention to know:** **MCTS** (Monte Carlo Tree Search) guided by a learned policy + value network is the AlphaZero pattern. For imperfect-information games, vanilla MCTS doesn't directly apply; the imperfect-info-correct variant is **IS-MCTS** (Information Set MCTS), parked in [research-ideas.md](research-ideas.md) — if v4 is built at all, IS-MCTS is the form it takes.
 
 ## Training data and evaluation
 
@@ -169,11 +225,12 @@ Use the v3 policy as a prior and the v6 value head as a leaf evaluator. **The 1-
 
 ## Open questions
 
+These are decisions deferred until they're actually answerable. Speculative *techniques* (not decisions) live in [research-ideas.md](research-ideas.md) instead.
+
 - **Model size.** Suphx used relatively small networks by 2026 standards. For MCR on a home server, the right scale is whatever trains overnight on consumer GPU hardware. Don't optimize this until v2 is running.
 - **Framework.** PyTorch is the default for research; check whether the Botzone runtime constrains submission format (it historically did — bots must fit a size and runtime budget). Pick the framework that exports cleanly to whatever Botzone accepts.
 - **Imitation vs. self-play balance.** When to stop supervised pretraining and start self-play. Empirical question; defer until v2 is running.
-- **Whether to model the wall order.** The wall is a permutation of remaining tiles. Most bots treat draws as i.i.d. from the wall distribution; modeling the actual permutation gives marginal gains and is much more complex. Default: don't.
-- **`botzone-mahjong-environment` maintenance.** The library has incomplete edge-case coverage (flood/final-draw wins) and unclear release cadence. We depend on it for legal-action generation. Decide whether to (a) accept that risk and patch upstream as needed, or (b) implement our own legal-action layer on top of PyMahjongGB. Decide before v1 ships.
+- **`botzone-mahjong-environment` maintenance.** The library has incomplete edge-case coverage (flood/final-draw wins) and unclear release cadence. We depend on it for legal-action generation. Decide whether to (a) accept that risk and patch upstream as needed, or (b) implement our own legal-action layer on top of PyMahjongGB. *Verification answer:* a fixture suite of flood/final-draw games whose outcomes match the official judge — if `botzone-mahjong-environment` passes, (a); if not, (b). Decide before v1 ships.
 - **Python time-budget on Botzone.** The 1-second budget is documented for C++; Python typically gets a longer budget. Confirm the exact number against the current Botzone wiki before sizing v3/v4 search.
 
 ## Competition timeline
