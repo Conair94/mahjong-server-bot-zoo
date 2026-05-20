@@ -101,13 +101,13 @@ Spec: [determinism.md § Ruleset config_hash](docs/specs/determinism.md).
 
 Spec: [state-schema.md § Engine API surface, § Per-seat projection](docs/specs/state-schema.md).
 
-- [ ] Tests written:
-  - [ ] `initial_state(mcr-2006, seed=12345)` hash matches a checked-in golden.
-  - [ ] Tile-count invariant: wall + concealed + flowers == 144.
-  - [ ] Privacy assertion: `project(state, seat)` has zero foreign concealed tokens.
-  - [ ] Self-view reversibility: `project(state, seat).seats[seat] == state.seats[seat]`.
-- [ ] `mahjong/engine/state.py` with `initial_state`, `project`, `is_terminal`, `state_hash`.
-- [ ] **Gate:** deal is byte-stable; projection enforces privacy.
+- [x] Tests written:
+  - [x] `initial_state(mcr-2006, seed=12345)` hash matches a checked-in golden.
+  - [x] Tile-count invariant: wall + concealed + flowers == 144.
+  - [x] Privacy assertion: `project(state, seat)` has zero foreign concealed tokens.
+  - [x] Self-view reversibility: `project(state, seat).seats[seat] == state.seats[seat]`.
+- [x] `mahjong/engine/state.py` with `initial_state`, `project`, `is_terminal`, `state_hash`.
+- [x] **Gate:** deal is byte-stable; projection enforces privacy. *(Local 2026-05-20; cross-platform CI pending push.)*
 
 ### Step 2.2 — `legal_actions`
 

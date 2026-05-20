@@ -47,7 +47,8 @@
       "Bash(python3 -m ruff format --check mahjong/ tests/)",
       "Bash(python3 -m ruff check mahjong/ tests/ --fix)",
       "Bash(python3 -m ruff format mahjong/ tests/)",
-      "Bash(python3 -m pytest tests/engine/test_rulesets.py -q)"
+      "Bash(python3 -m pytest tests/engine/test_rulesets.py -q)",
+      "Bash(python -m pytest tests/engine/test_state.py -x)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

@@ -8,3 +8,19 @@ Public surface (spec: docs/specs/engine-api.md):
 Pure-function discipline: no I/O, no globals, no clocks, no RNG except the
 canonical DRBG. Enforced by lint (see tests/lint/).
 """
+
+from mahjong.engine.errors import EngineError, IllegalAction, InvalidState, RulesetError
+from mahjong.engine.state import initial_state, is_terminal, project, state_hash
+
+# legal_actions, apply_action — wired in as Steps 2.2 / 2.3 land.
+
+__all__ = [
+    "EngineError",
+    "IllegalAction",
+    "InvalidState",
+    "RulesetError",
+    "initial_state",
+    "is_terminal",
+    "project",
+    "state_hash",
+]
