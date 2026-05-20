@@ -16,10 +16,27 @@
       "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ log --oneline -10)",
       "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ log --stat HEAD~2..HEAD)",
       "Bash(git -C /Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/ diff .claude/settings.local.json)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python -m pytest -q)",
+      "Bash(python -m pytest --version)",
+      "Bash(python -c \"import pytest_asyncio; print\\(pytest_asyncio.__version__\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -m mypy mahjong/)",
+      "Bash(python -m ruff check mahjong/ tests/)",
+      "Bash(python3 -c ' *)",
+      "Bash(python -m pytest tests/engine/test_tiles.py -q)",
+      "Bash(python -m ruff check mahjong/ tests/ --fix)",
+      "Bash(python -m mypy mahjong/ tests/engine/test_tiles.py)",
+      "Bash(python -m ruff format --check mahjong/ tests/)",
+      "Bash(python -m ruff format mahjong/ tests/)",
+      "Bash(cp CHECKLIST.md /tmp/CHECKLIST.final.md)",
+      "Bash(git checkout *)",
+      "Bash(cp /tmp/CHECKLIST.final.md CHECKLIST.md && git diff --stat CHECKLIST.md)"
     ],
     "additionalDirectories": [
-      "/Users/connorlockhart"
+      "/Users/connorlockhart",
+      "/private/tmp"
     ]
   }
 }

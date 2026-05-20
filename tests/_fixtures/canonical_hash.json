@@ -1,0 +1,85 @@
+[
+  {
+    "input": {},
+    "hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  {
+    "input": {
+      "a": 1
+    },
+    "hash": "sha256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+  },
+  {
+    "input": {
+      "a": 1,
+      "b": 2
+    },
+    "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+  },
+  {
+    "input": {
+      "b": 2,
+      "a": 1
+    },
+    "hash": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+  },
+  {
+    "input": [],
+    "hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  {
+    "input": [
+      1,
+      2,
+      3
+    ],
+    "hash": "sha256:a615eeaee21de5179de080de8c3052c8da901138406ba71c38c032845f7d54f4"
+  },
+  {
+    "input": [
+      [
+        "a"
+      ],
+      [
+        "b",
+        "c"
+      ]
+    ],
+    "hash": "sha256:2c16bd4a434efd3894fdb64b5bf4038a84956c0eaede6e027f2139b769eaf0fc"
+  },
+  {
+    "input": {
+      "nested": {
+        "x": [
+          1,
+          "two",
+          true,
+          null
+        ]
+      }
+    },
+    "hash": "sha256:8a767afe30442c721bda3cd64c4eed7036e125ecc3403560d1f92d369f338dd7"
+  },
+  {
+    "input": "ascii string",
+    "hash": "sha256:ab02f7316ec510effdf453d598eee5473d0cbf851bf2c2257f8d9e6a79366bb6"
+  },
+  {
+    "input": 42,
+    "hash": "sha256:73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049"
+  },
+  {
+    "input": true,
+    "hash": "sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+  },
+  {
+    "input": null,
+    "hash": "sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+  },
+  {
+    "input": {
+      "unicode": "麻雀"
+    },
+    "hash": "sha256:4ed62ee1296f3ec64441e830278efa5fa1404b37d06c96cfcbea9b37fae1ad01"
+  }
+]

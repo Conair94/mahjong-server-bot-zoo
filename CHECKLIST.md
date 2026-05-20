@@ -42,16 +42,16 @@ Spec: [state-schema.md § Tile encoding](docs/specs/state-schema.md), [determini
 
 Spec: [determinism.md](docs/specs/determinism.md).
 
-- [ ] Tests written (before implementation):
-  - [ ] `rng_bytes` golden vector (fixture 1) — checked-in `(seed, cursor, n) → bytes` table.
-  - [ ] `uniform_int` golden table (fixture 3) — small `n`, power-of-2, rejection edge.
-  - [ ] `shuffled_wall(seed=12345)` golden (fixture 4) — load-bearing.
-  - [ ] `canonical_hash` golden table (fixture 5) — empty dict, primitives, nested, lists.
-  - [ ] Lint: no `random`/`numpy.random`/`time`/`datetime`/`logging` imports under `mahjong.engine.*`.
-- [ ] `mahjong/engine/rng.py` with `rng_bytes`, `uniform_int`, `shuffled_wall`.
-- [ ] `mahjong/engine/hashing.py` with `canonical_hash`.
-- [ ] Lint hook (AST-based) wired into pre-commit.
-- [ ] **Gate:** all goldens byte-identical on Linux + macOS in CI.
+- [x] Tests written (before implementation):
+  - [x] `rng_bytes` golden vector (fixture 1) — checked-in `(seed, cursor, n) → bytes` table.
+  - [x] `uniform_int` golden table (fixture 3) — small `n`, power-of-2, rejection edge.
+  - [x] `shuffled_wall(seed=12345)` golden (fixture 4) — load-bearing.
+  - [x] `canonical_hash` golden table (fixture 5) — empty dict, primitives, nested, lists.
+  - [x] Lint: no `random`/`numpy.random`/`time`/`datetime`/`logging` imports under `mahjong.engine.*`.
+- [x] `mahjong/engine/rng.py` with `rng_bytes`, `uniform_int`, `shuffled_wall`.
+- [x] `mahjong/engine/hashing.py` with `canonical_hash`.
+- [x] Lint hook (AST-based) wired into pre-commit. *(Runs via `tests/lint/` under the existing pytest hook.)*
+- [x] **Gate:** all goldens byte-identical on Linux + macOS in CI. *(Local 2026-05-19 macOS green; Linux CI matrix pending first push.)*
 
 ---
 

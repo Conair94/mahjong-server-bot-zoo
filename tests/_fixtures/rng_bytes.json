@@ -1,0 +1,50 @@
+[
+  {
+    "seed": 0,
+    "cursor": 0,
+    "n": 32,
+    "hex": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+  },
+  {
+    "seed": 0,
+    "cursor": 0,
+    "n": 1,
+    "hex": "66"
+  },
+  {
+    "seed": 0,
+    "cursor": 31,
+    "n": 2,
+    "hex": "25ec"
+  },
+  {
+    "seed": 0,
+    "cursor": 32,
+    "n": 32,
+    "hex": "ec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5"
+  },
+  {
+    "seed": 1,
+    "cursor": 0,
+    "n": 8,
+    "hex": "3269aeb6831504cb"
+  },
+  {
+    "seed": 12345,
+    "cursor": 0,
+    "n": 16,
+    "hex": "5c09c58ddea3e9290c73033db6fa9dba"
+  },
+  {
+    "seed": 12345,
+    "cursor": 100,
+    "n": 64,
+    "hex": "d440263095548cdc750d90f8bb8e8d71b9197633c3640211d15218c7ed89b6532690519b9426d0fd2795fd52abf9c1ad9ce090d886e498eca19ef5391b69a326"
+  },
+  {
+    "seed": 340282366920938463463374607431768211455,
+    "cursor": 0,
+    "n": 32,
+    "hex": "73a815ee65e4ce2574588678e24eb3929759e50c0994c019817118f61b825b50"
+  }
+]
