@@ -84,14 +84,14 @@ Spec: [engine-api.md § PyMahjongGB integration boundary](docs/specs/engine-api.
 
 Spec: [determinism.md § Ruleset config_hash](docs/specs/determinism.md).
 
-- [ ] Tests written:
-  - [ ] `load_ruleset({"id": "mcr-2006"})` hash matches `MANIFEST.json`.
-  - [ ] Unknown id → `RulesetError`.
-  - [ ] Mismatched `config_hash` → `RulesetError`.
-- [ ] `mahjong/engine/rulesets/mcr-2006.json` (canonical 81-fan config).
-- [ ] `mahjong/engine/rulesets/MANIFEST.json` (id → config_hash map).
-- [ ] `load_ruleset` in `mahjong/engine/rulesets/__init__.py`.
-- [ ] **Gate:** ruleset loads; hash stamps onto states.
+- [x] Tests written:
+  - [x] `load_ruleset({"id": "mcr-2006"})` hash matches `MANIFEST.json`.
+  - [x] Unknown id → `RulesetError`.
+  - [x] Mismatched `config_hash` → `RulesetError`.
+- [x] `mahjong/engine/rulesets/mcr-2006.json` (canonical 81-fan config).
+- [x] `mahjong/engine/rulesets/MANIFEST.json` (id → config_hash map).
+- [x] `load_ruleset` in `mahjong/engine/rulesets/__init__.py`.
+- [x] **Gate:** ruleset loads; hash stamps onto states. *(Local 2026-05-19; CI pending.)*
 
 ---
 

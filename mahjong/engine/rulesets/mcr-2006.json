@@ -1,0 +1,11 @@
+{
+  "id": "mcr-2006",
+  "version": 1,
+  "description": "Mahjong Competition Rules (2006 WMSC official, 81-fan) as implemented by PyMahjongGB.",
+  "fan_cliff": 8,
+  "wall_size": 144,
+  "hand_size": 13,
+  "seats": 4,
+  "flowers_replace_at_deal": true,
+  "yaku_engine": "PyMahjongGB"
+}

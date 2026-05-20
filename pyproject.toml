@@ -33,6 +33,9 @@ where = ["."]
 include = ["mahjong*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+"mahjong.engine.rulesets" = ["*.json"]
+
 # --- Pytest ---
 
 [tool.pytest.ini_options]
