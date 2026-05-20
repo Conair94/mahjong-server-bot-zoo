@@ -19,7 +19,9 @@ Two further Suphx ideas (oracle guiding, run-time policy adaptation) are *not* c
 
 ## Platform constraints (Botzone)
 
-The bot architecture has to live inside Botzone's execution model. The relevant facts:
+The bot architecture has to live inside Botzone's execution model. Canonical reference: the [Botzone Chinese Standard Mahjong wiki](https://wiki.botzone.org.cn/index.php?title=Chinese-Standard-Mahjong/en) — protocol, token format, action grammar, time budget, and the 81-fan scoring table all live there. Treat it as the source of truth; flag any deviation when porting.
+
+The relevant facts:
 
 - **Bots are stateless.** Each interaction, the judge sends the *complete game history* and the bot must reconstruct state. There is no persistent in-process memory between turns. The belief-state components below are therefore recomputed from history each turn; design them to be cheap to rebuild, not to be incrementally maintained.
 - **Time budget: ~1 second per interaction** (C++ reference; Python may get more — verify). This caps search depth for any MCTS-style component.
