@@ -61,13 +61,13 @@ Spec: [determinism.md](docs/specs/determinism.md).
 
 Spec: [state-schema.md](docs/specs/state-schema.md), [engine-api.md § Exception types](docs/specs/engine-api.md).
 
-- [ ] Tests written:
-  - [ ] Round-trip: constructed state hashes stable; permuted-but-equivalent fields hash equal.
-  - [ ] Validator rejects unsorted `concealed`.
-  - [ ] Each exception class carries the payload fields engine-api.md fixture 5 enumerates.
-- [ ] `mahjong/engine/types.py` with `GameState`, `SeatView`, `Action`, `RuleSetRef`.
-- [ ] `mahjong/engine/errors.py` with the four exception classes.
-- [ ] **Gate:** mypy strict passes; round-trip and invariant tests green.
+- [x] Tests written:
+  - [x] Round-trip: constructed state hashes stable; permuted-but-equivalent fields hash equal.
+  - [x] Validator rejects unsorted `concealed`.
+  - [x] Each exception class carries the payload fields engine-api.md fixture 5 enumerates.
+- [x] `mahjong/engine/types.py` with `GameState`, `SeatView`, `Action`, `RuleSetRef`.
+- [x] `mahjong/engine/errors.py` with the four exception classes.
+- [x] **Gate:** mypy strict passes; round-trip and invariant tests green. *(Local 2026-05-19; CI pending.)*
 
 ### Step 1.2 — PyMahjongGB wrapper
 
