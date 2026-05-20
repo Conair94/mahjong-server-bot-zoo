@@ -48,6 +48,8 @@ markers = [
     "linux_only: requires Linux-specific features (netns, RLIMIT_AS kill semantics).",
     "needs_pymjgb: requires PyMahjongGB to be importable.",
 ]
+
+[tool.pytest_asyncio]
 asyncio_mode = "auto"
 
 # --- Mypy ---

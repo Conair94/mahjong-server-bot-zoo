@@ -25,18 +25,18 @@ Cross-cutting checklist that applies to *every* step:
 - [x] `.pre-commit-config.yaml` running formatter → linter → mypy → fast pytest.
 - [x] `.github/workflows/ci.yml` with Linux + macOS matrix on Python 3.12 and 3.13.
 - [x] `tests/test_scaffold.py` confirming every expected module imports.
-- [ ] **Gate:** `pytest` green, `mypy mahjong/` green, CI matrix green on an empty engine. *(Pending local verification + first CI run.)*
+- [x] **Gate:** `pytest` green, `mypy mahjong/` green, CI matrix green on an empty engine. *(Local verified 2026-05-19; CI matrix pending first push.)*
 
 ### Step 0.2 — Tile encoding
 
 Spec: [state-schema.md § Tile encoding](docs/specs/state-schema.md), [determinism.md § canonical_tile_set](docs/specs/determinism.md).
 
-- [ ] Tests written (before implementation):
-  - [ ] Every valid tile token validates; sample of invalid strings rejects.
-  - [ ] `canonical_tile_set()` returns 144 tokens in the locked order.
-  - [ ] Canonical sort: random sample sorts to canonical order.
-- [ ] `mahjong/engine/tiles.py` implementing validation + canonical set + sort key.
-- [ ] **Gate:** all tests green; canonical tile set matches determinism.md fixture 2.
+- [x] Tests written (before implementation):
+  - [x] Every valid tile token validates; sample of invalid strings rejects.
+  - [x] `canonical_tile_set()` returns 144 tokens in the locked order.
+  - [x] Canonical sort: random sample sorts to canonical order.
+- [x] `mahjong/engine/tiles.py` implementing validation + canonical set + sort key.
+- [x] **Gate:** all tests green; canonical tile set matches determinism.md fixture 2. *(Local 2026-05-19; cross-platform CI pending.)*
 
 ### Step 0.3 — Determinism primitives
 
