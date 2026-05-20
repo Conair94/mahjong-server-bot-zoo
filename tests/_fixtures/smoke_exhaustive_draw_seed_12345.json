@@ -1,0 +1,19 @@
+{
+  "state_hash": "sha256:7d9b498cae9d2ef34ad88aa5a9a38b8a65bab4f78489386d4b5a355faa92f89a",
+  "steps": 102,
+  "terminal": {
+    "deal_in_seat": null,
+    "fan": [],
+    "fan_total": 0,
+    "kind": "DRAW",
+    "score_delta": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "win_tile": null,
+    "win_type": null,
+    "winner": null
+  }
+}
