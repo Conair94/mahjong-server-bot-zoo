@@ -194,17 +194,55 @@ Spec: [seat-port.md § Lifecycle and concurrency model, § Error model](docs/spe
 
 Spec: [bot-runner-protocol.md § Bot manifest, § Sandboxing](docs/specs/bot-runner-protocol.md).
 
-- [ ] Tests written: manifest validation; `RLIMIT_AS` kill (Linux); network deny (Linux).
-- [ ] `mahjong/bots/manifest.py`, `sandbox.py`, `registry.py`.
-- [ ] **Gate:** manifests validate; sandbox enforces on Linux.
+- [x] Tests written (before implementation):
+  - [x] Canonical manifest (the example block in spec lines 132-156) parses to a fully-populated `BotManifest`.
+  - [x] Missing `bot_id` rejected at parse with field-specific error (fixture 10).
+  - [x] `limits.memory_mb` over server cap rejected at parse, not silently capped (fixture 10).
+  - [x] Defaults are applied for missing optional fields (`spawn_deadline_ms=5000`, `handshake_deadline_ms=1000`, `budget_ms_per_turn=1000`, `teardown_grace_ms=2000`, `runtime_mode="long_running"`, `limits.network="deny"`, `limits.max_processes=1`, etc.).
+  - [x] Type errors rejected (e.g. `command` not a list, `memory_mb` non-int, `network` not in `{"deny","allow"}`).
+  - [x] Empty `command` rejected.
+  - [x] Bad `ruleset_supported` / `format_supported` lists rejected at parse; engine-side ruleset match is *not* a manifest concern.
+  - [x] `Registry.register` round-trip: register, lookup, list. Duplicate `bot_id` raises unless `replace=True`. Unknown lookup raises.
+  - [x] `Registry.register_dict` invokes manifest validation (invalid manifest never enters the registry).
+  - [x] `build_env(manifest)` returns a dict containing only `PATH`, `LANG`, and the manifest's whitelisted `env` keys — no leak from parent process env.
+  - [x] `build_rlimits(manifest)` returns the expected `(resource, soft, hard)` tuples for `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_NOFILE`, `RLIMIT_NPROC`.
+  - [x] **Linux-only (skip on macOS):** subprocess spawned with `RLIMIT_AS=64MB` allocating 256MB exits with signal (fixture 6). *(`@pytest.mark.linux_only`; auto-skipped on Darwin via conftest.)*
+  - [x] **Linux-only (skip on macOS):** subprocess spawned with `network="deny"` cannot reach the network (fixture 7). *(`xfail` when not root — netns creation needs `CAP_NET_ADMIN`; deferred to CI host config.)*
+  - [x] **macOS:** `apply_sandbox` succeeds with a recorded `SandboxWarning` naming which layers are inactive (netns, per-process NPROC).
+- [x] `mahjong/bots/errors.py` — `BotError`, `BotManifestError`.
+- [x] `mahjong/bots/manifest.py` — `BotManifest` dataclass, `parse_manifest(dict, *, server_caps)`, `load_manifest_file(path, *, server_caps)`.
+- [x] `mahjong/bots/sandbox.py` — `build_env`, `build_rlimits`, `apply_sandbox` (preexec helper); platform-aware (Linux full; macOS best-effort with a `SandboxWarning`).
+- [x] `mahjong/bots/registry.py` — in-memory `BotRegistry` with `register/unregister/lookup/list`.
+- [x] **Gate:** manifests validate; sandbox enforces on Linux; macOS dev path runs with documented degraded warnings; mypy clean across `mahjong/bots/`. *(Local 2026-05-21: 34 bot tests pass on Darwin — 2 Linux-only fixtures auto-skipped; full suite 310 passed, 2 skipped; ruff format + lint clean; `mypy mahjong/bots/` clean. Linux CI matrix run + the netns fixture under privilege are pending CI sweep.)*
 
 ### Step 5.2 — `BotRunnerAdapter`
 
 Spec: [bot-runner-protocol.md § Process lifecycle, § Wire framing, § Time-budget enforcement](docs/specs/bot-runner-protocol.md).
 
-- [ ] Tests written: HELLO success + skip; spawn failure; per-turn timeout; framing violations; illegal-action surfacing.
-- [ ] `mahjong/adapters/bot_runner.py` + `mahjong/bots/sdk/`.
-- [ ] **Gate:** a trivial bundled bot plays a hand against three `CannedAdapter`s.
+Scope decisions (implementer-level, not spec changes):
+
+- Request-body serialization is pluggable via a `history_serializer` hook on `BotRunnerAdapter`. Default in 5.2 is a JSON serializer that includes `kind`, `legal_actions`, and `default_action` — enough for our SDK-based test bots. **Step 5.3 replaces it with the Botzone typed-line `0`/`1`/`2`/`3` serializer** once the real reference bot is in the loop.
+- Action parser is the Botzone CSM grammar (`PASS`, `PLAY W3`, `PENG B5`, `CHI W3 W4` reconstructs to `tiles=[W3,W4,W5]`, `GANG B7`, `BUGANG W2`, `HU`). `GANG.kind` is inferred from `prompt.kind` (CLAIM→EXPOSED, DISCARD→CONCEALED); `BUGANG` → `GANG.kind=ADDED`.
+- Error payload is attached to `SeatTimeout`/`SeatError` as attributes (`bot_error`, `exit_code`, `raw_response`, `bytes_read`). The table manager reads them with `getattr(exc, "bot_error", None)` and stamps them onto the record event. `raw_response` is truncated to 1024 bytes.
+- Both `long_running` and `short_running` modes are implemented; mode is negotiated by HELLO ack. Vanilla Botzone bots that ignore HELLO are run with `handshake_skipped=True` in long-running mode.
+- Action is the **first non-empty, non-sentinel line** received before `>>>BOTZONE_RESPONSE_END<<<`. Subsequent lines are dropped as diagnostic (Botzone's optional render channel is ignored per spec open-question).
+
+- [x] Tests written (before implementation):
+  - [x] HELLO handshake success (fixture 2): SDK-based bot ACKs `long_running`; first `decide` succeeds.
+  - [ ] HELLO mode downgrade: bot ACKs `short_running`; runner respects, respawns per decide. *(Code path implemented; explicit fixture deferred — covered structurally by the handshake-skip + parser tests. Add a dedicated fixture if short-running becomes a supported real-bot mode in S1.)*
+  - [x] HELLO handshake skip (fixture 3): vanilla bot ignores HELLO; runner times out the handshake, continues; first `decide` still works.
+  - [x] Spawn failure (fixture 4): manifest pointing at a non-existent binary; `seated()` raises `SeatError` with `bot_error="process_exit"`.
+  - [x] Per-turn timeout (fixture 5): bot scripted to `sleep(3)` against 300ms budget triggers `SeatTimeout` with `bot_error="read_timeout"`; subprocess is SIGTERM'd and reaped.
+  - [x] Framing violation — missing sentinel (fixture 8): bot writes a response without `>>>BOTZONE_RESPONSE_END<<<` and closes stdout; `SeatError` with `bot_error="framing_error"`.
+  - [x] Framing — CRLF tolerated (fixture 8): bot writes CRLF responses; runner strips and parses.
+  - [x] Parse error: bot writes garbage that doesn't match the action grammar; `SeatError` with `bot_error="parse_error"`; `raw_response` field present.
+  - [x] Illegal-action surfacing (fixture 9): bot returns a syntactically-valid `PENG` against a DISCARD prompt; adapter returns it normally (engine/table manager surfaces `illegal: true`).
+  - [x] Action grammar coverage: each of `PASS`, `PLAY`, `PENG`, `CHI` (3-tile reconstruction), `GANG` (EXPOSED in CLAIM / CONCEALED in DISCARD), `BUGANG`→ADDED, `HU` parses to the right `Action` dict. Plus unknown-tag, empty-line, out-of-range, and non-numbered-suit error paths.
+  - [x] Teardown: SIGTERM → grace → reap. `left()` safe to call without `seated()`.
+  - [x] **Gate:** end-to-end: one `BotRunnerAdapter` + three `CannedAdapter`s play a hand via `mahjong.table.manager.run_hand`; record reaches FOOTER; final state is TERMINAL.
+- [x] `mahjong/bots/sdk/__init__.py` — `run_bot(decide)`; `REQUEST_END_SENTINEL` and `RESPONSE_END_SENTINEL` constants; HELLO handler with mode echo.
+- [x] `mahjong/adapters/bot_runner.py` — `BotRunnerAdapter` Protocol-conforming class with `seated`/`observe`/`decide`/`left`. Includes the action-string parser, the default JSON history serializer (Step 5.3 swaps to Botzone CSM), and the framing read/write helpers.
+- [x] **Gate:** end-to-end fixture passes; mypy clean; ruff format+lint clean. *(Local 2026-05-21: 21 BotRunnerAdapter scenarios + 12 parser tests pass on Darwin; full suite 333 passed, 2 skipped (Linux-only sandbox); ruff clean; mypy clean on `mahjong/adapters/bot_runner.py` and `mahjong/bots/sdk/`.)*
 
 ### Step 5.3 — Botzone reference bot (S1 exit)
 

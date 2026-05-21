@@ -51,7 +51,17 @@
       "Bash(python -m pytest tests/engine/test_state.py -x)",
       "Bash(python -c \"from mahjong.engine.hashing import canonical_hash; print\\(canonical_hash\\({'a':1}\\)[:14]\\)\")",
       "Bash(python3 -c \"import sys; print\\(sys.executable\\)\")",
-      "Bash(git restore *)"
+      "Bash(git restore *)",
+      "Bash(ruff format *)",
+      "Bash(ruff check *)",
+      "Bash(mypy mahjong/bots/)",
+      "Bash(pytest tests/bots/ -v)",
+      "Bash(pytest)",
+      "Bash(mypy mahjong/adapters/bot_runner.py mahjong/bots/sdk/)",
+      "Bash(pytest tests/adapters/test_bot_runner.py -v)",
+      "Bash(pytest tests/adapters/test_bot_runner.py)",
+      "Bash(pytest tests/adapters/)",
+      "Bash(mypy mahjong/)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
