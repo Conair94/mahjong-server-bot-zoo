@@ -30,8 +30,7 @@ SERVER = {"version": "test", "git_sha": "test", "host": "test"}
 
 def _four_passers() -> list[CannedAdapter]:
     return [
-        CannedAdapter(identity={"kind": "canned", "script": "pass"}, actions=[])
-        for _ in range(4)
+        CannedAdapter(identity={"kind": "canned", "script": "pass"}, actions=[]) for _ in range(4)
     ]
 
 
@@ -67,9 +66,7 @@ async def test_timeout_yields_timeout_marker(tmp_path: Path) -> None:
     )
     events = read_record(tmp_path / "hand.jsonl")
     # Seat 0's first DISCARD (turn 0) is the timeout one.
-    first_discard_by_seat_0 = next(
-        e for e in events if e["event"] == "DISCARD" and e["seat"] == 0
-    )
+    first_discard_by_seat_0 = next(e for e in events if e["event"] == "DISCARD" and e["seat"] == 0)
     assert first_discard_by_seat_0.get("timeout") is True
 
 

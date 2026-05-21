@@ -127,10 +127,40 @@ def test_reader_rejects_seq_gap(tmp_path: Path) -> None:
     path = tmp_path / "bad.jsonl"
     # Hand-craft a record with seq 0, 2 (gap).
     parts: list[bytes] = []
-    parts.append(canonical_jsonl_line({"event": "HEADER", "seq": 0, "turn_index": 0, "phase": "DEAL", "ts": TS, "format_version": 1}))
-    parts.append(canonical_jsonl_line({"event": "HAND_END", "seq": 2, "turn_index": 0, "phase": "TERMINAL", "ts": TS}))
+    parts.append(
+        canonical_jsonl_line(
+            {
+                "event": "HEADER",
+                "seq": 0,
+                "turn_index": 0,
+                "phase": "DEAL",
+                "ts": TS,
+                "format_version": 1,
+            }
+        )
+    )
+    parts.append(
+        canonical_jsonl_line(
+            {"event": "HAND_END", "seq": 2, "turn_index": 0, "phase": "TERMINAL", "ts": TS}
+        )
+    )
     # Footer with bogus checksum (the seq check should fire first).
-    parts.append(canonical_jsonl_line({"event": "FOOTER", "seq": 3, "turn_index": 0, "phase": "TERMINAL", "ts": TS, "event_count": 3, "rng_cursor_final": 0, "state_hash_final": "sha256:x", "checksum": "sha256:bad", "corrects": None}))
+    parts.append(
+        canonical_jsonl_line(
+            {
+                "event": "FOOTER",
+                "seq": 3,
+                "turn_index": 0,
+                "phase": "TERMINAL",
+                "ts": TS,
+                "event_count": 3,
+                "rng_cursor_final": 0,
+                "state_hash_final": "sha256:x",
+                "checksum": "sha256:bad",
+                "corrects": None,
+            }
+        )
+    )
     path.write_bytes(b"".join(parts))
     with pytest.raises(RecordCorruptError, match="seq"):
         read_record(path)

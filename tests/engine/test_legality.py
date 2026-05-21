@@ -279,9 +279,7 @@ def test_claim_chi_enumerates_all_three_runs() -> None:
     )
     actions = legal_actions(s, 1)  # type: ignore[arg-type]
     chis = sorted([tuple(a["tiles"]) for a in actions if a["type"] == "CHI"])
-    assert chis == sorted(
-        [("B3", "B4", "B5"), ("B4", "B5", "B6"), ("B5", "B6", "B7")]
-    )
+    assert chis == sorted([("B3", "B4", "B5"), ("B4", "B5", "B6"), ("B5", "B6", "B7")])
 
 
 def test_claim_chi_only_suited_tiles() -> None:

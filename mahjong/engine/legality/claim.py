@@ -47,9 +47,7 @@ def claim_actions(state: GameState, seat: int) -> list[Action]:
         actions.extend(_chi_actions(concealed, discarded))
 
     # HU on discard: (concealed + discarded) yields a fan-bearing decomposition.
-    if _claim_hu_legal(
-        concealed, melds, discarded, seat_data["seat_wind"], state["round_wind"]
-    ):
+    if _claim_hu_legal(concealed, melds, discarded, seat_data["seat_wind"], state["round_wind"]):
         actions.append({"type": "HU"})
 
     return actions

@@ -33,8 +33,7 @@ SERVER = {"version": "test", "git_sha": "test", "host": "test"}
 
 def _four_passers() -> list[CannedAdapter]:
     return [
-        CannedAdapter(identity={"kind": "canned", "script": "pass"}, actions=[])
-        for _ in range(4)
+        CannedAdapter(identity={"kind": "canned", "script": "pass"}, actions=[]) for _ in range(4)
     ]
 
 
@@ -74,8 +73,7 @@ async def test_claim_window_records_all_seats_decisions(tmp_path: Path) -> None:
                 seats_decided.add(events[j]["seat"])
             j += 1
         assert seats_in_opps.issubset(seats_decided), (
-            f"window at seq {events[i]['seq']}: opps={seats_in_opps}, "
-            f"decided={seats_decided}"
+            f"window at seq {events[i]['seq']}: opps={seats_in_opps}, decided={seats_decided}"
         )
         windows_seen += 1
         i = j

@@ -124,9 +124,7 @@ def _pick_self_draw_win_tile(
     raise AssertionError("self-draw HU legal but no win tile decomposes — engine/legality drift")
 
 
-def _score_delta(
-    winner: int, fan_total: int, win_type: str, deal_in_seat: int | None
-) -> list[int]:
+def _score_delta(winner: int, fan_total: int, win_type: str, deal_in_seat: int | None) -> list[int]:
     delta = [0, 0, 0, 0]
     if win_type == "SELF_DRAW":
         for i in range(4):

@@ -275,7 +275,9 @@ def test_gang_exposed_from_discard_triggers_replacement_draw() -> None:
         wall_remaining=["T1", "T2", "T3"],
     )
     new = apply_action(
-        s, 2, {"type": "GANG", "tile": "B5", "kind": "EXPOSED"}  # type: ignore[arg-type]
+        s,
+        2,
+        {"type": "GANG", "tile": "B5", "kind": "EXPOSED"},  # type: ignore[arg-type]
     )
     melds = new["seats"][2]["melds"]
     assert any(m["type"] == "GANG_EXPOSED" and m["tiles"] == ["B5"] * 4 for m in melds)
@@ -294,10 +296,14 @@ def test_gang_concealed_own_turn() -> None:
         wall_remaining=["T1", "T2", "T3"],
     )
     new = apply_action(
-        s, 0, {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}  # type: ignore[arg-type]
+        s,
+        0,
+        {"type": "GANG", "tile": "B5", "kind": "CONCEALED"},  # type: ignore[arg-type]
     )
     assert new["seats"][0]["concealed"].count("B5") == 0
-    assert any(m["type"] == "GANG_CONCEALED" and m["tiles"] == ["B5"] * 4 for m in new["seats"][0]["melds"])
+    assert any(
+        m["type"] == "GANG_CONCEALED" and m["tiles"] == ["B5"] * 4 for m in new["seats"][0]["melds"]
+    )
     assert "T1" in new["seats"][0]["concealed"]
     assert new["phase"] == "DISCARD"
     assert new["current_actor"] == 0  # same player continues
@@ -316,7 +322,9 @@ def test_gang_added_promotes_existing_peng() -> None:
         wall_remaining=["T1"],
     )
     new = apply_action(
-        s, 0, {"type": "GANG", "tile": "B5", "kind": "ADDED"}  # type: ignore[arg-type]
+        s,
+        0,
+        {"type": "GANG", "tile": "B5", "kind": "ADDED"},  # type: ignore[arg-type]
     )
     new_melds = new["seats"][0]["melds"]
     assert len(new_melds) == 1
@@ -339,16 +347,19 @@ def _big_three_dragons_14() -> list[Tile]:
 
 def _big_three_dragons_13() -> list[Tile]:
     """13-tile tenpai waiting on W1 (the pair)."""
-    return _sorted(
-        ["J1", "J1", "J1", "J2", "J2", "J2", "J3", "J3", "J3", "F1", "F1", "F1", "W1"]
-    )
+    return _sorted(["J1", "J1", "J1", "J2", "J2", "J2", "J3", "J3", "J3", "F1", "F1", "F1", "W1"])
 
 
 def test_hu_self_draw_transitions_to_terminal() -> None:
     s = _make_state(
         phase="DISCARD",
         current_actor=0,
-        concealed=[_big_three_dragons_14(), _sorted(["W2"] * 13), _sorted(["W2"] * 13), _sorted(["W2"] * 13)],
+        concealed=[
+            _big_three_dragons_14(),
+            _sorted(["W2"] * 13),
+            _sorted(["W2"] * 13),
+            _sorted(["W2"] * 13),
+        ],
     )
     new = apply_action(s, 0, {"type": "HU"})  # type: ignore[arg-type]
     assert new["phase"] == "TERMINAL"
@@ -371,7 +382,12 @@ def test_hu_self_draw_prefers_last_drawn_as_win_tile() -> None:
     s = _make_state(
         phase="DISCARD",
         current_actor=0,
-        concealed=[_big_three_dragons_14(), _sorted(["W2"] * 13), _sorted(["W2"] * 13), _sorted(["W2"] * 13)],
+        concealed=[
+            _big_three_dragons_14(),
+            _sorted(["W2"] * 13),
+            _sorted(["W2"] * 13),
+            _sorted(["W2"] * 13),
+        ],
     )
     s["last_drawn"] = {"seat": 0, "tile": "W1"}  # the pair tile
     new = apply_action(s, 0, {"type": "HU"})  # type: ignore[arg-type]
@@ -384,7 +400,12 @@ def test_hu_on_discard_transitions_to_terminal_with_deal_in_seat() -> None:
     s = _make_state(
         phase="CLAIM_WINDOW",
         current_actor=1,
-        concealed=[_sorted(["W2"] * 13), _sorted(["W2"] * 13), _big_three_dragons_13(), _sorted(["W2"] * 13)],
+        concealed=[
+            _sorted(["W2"] * 13),
+            _sorted(["W2"] * 13),
+            _big_three_dragons_13(),
+            _sorted(["W2"] * 13),
+        ],
         discards=[["W1"], [], [], []],
         last_discard={"tile": "W1", "seat": 0, "turn_index": 1},
         pending_claims=[{"seat": 2, "claim": "HU"}],

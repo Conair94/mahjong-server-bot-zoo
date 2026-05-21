@@ -33,8 +33,7 @@ def _four_passers() -> list[CannedAdapter]:
     """Four CannedAdapters with empty scripts: every prompt resolves to the
     table's default action (tsumogiri on own turn, PASS in claim windows)."""
     return [
-        CannedAdapter(identity={"kind": "canned", "script": "pass"}, actions=[])
-        for _ in range(4)
+        CannedAdapter(identity={"kind": "canned", "script": "pass"}, actions=[]) for _ in range(4)
     ]
 
 
@@ -82,9 +81,7 @@ async def test_run_hand_fans_observe_to_every_seat(tmp_path: Path) -> None:
 
     class CountingCanned(CannedAdapter):
         def __init__(self) -> None:
-            super().__init__(
-                identity={"kind": "canned", "script": "counter"}, actions=[]
-            )
+            super().__init__(identity={"kind": "canned", "script": "counter"}, actions=[])
             self.observe_count = 0
 
         async def observe(self, event: dict[str, Any], view: dict[str, Any]) -> None:  # type: ignore[override]

@@ -30,7 +30,10 @@ FailureMeta = dict[str, Any]
 
 
 def _now_ts() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.") + f"{datetime.now(UTC).microsecond // 1000:03d}Z"
+    return (
+        datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.")
+        + f"{datetime.now(UTC).microsecond // 1000:03d}Z"
+    )
 
 
 def _default_action(state: GameState, seat: int, prompt_kind: PromptKind) -> Action:
@@ -66,9 +69,7 @@ def _build_prompt(
     }
 
 
-async def _seated_with_timeout(
-    adapter: SeatAdapter, ctx: SeatContext, seconds: float
-) -> None:
+async def _seated_with_timeout(adapter: SeatAdapter, ctx: SeatContext, seconds: float) -> None:
     try:
         await asyncio.wait_for(adapter.seated(ctx), timeout=seconds)
     except (TimeoutError, Exception):
@@ -93,7 +94,11 @@ async def _fanout_observe(
 
     async def one(seat: int) -> None:
         try:
-            view = state_module.project(state, seat) if state["phase"] != "TERMINAL" else cast(SeatView, {})
+            view = (
+                state_module.project(state, seat)
+                if state["phase"] != "TERMINAL"
+                else cast(SeatView, {})
+            )
             await asyncio.wait_for(adapters[seat].observe(event, view), timeout=per_observe_seconds)
         except (TimeoutError, Exception):
             return
@@ -168,13 +173,23 @@ async def run_hand(
     while not is_terminal(state):
         if state["phase"] == "DISCARD":
             state = await _step_discard(
-                state, adapters, writer, decide_timeout_seconds,
-                observe_timeout_seconds, strikes, strike_limit,
+                state,
+                adapters,
+                writer,
+                decide_timeout_seconds,
+                observe_timeout_seconds,
+                strikes,
+                strike_limit,
             )
         elif state["phase"] == "CLAIM_WINDOW":
             state = await _step_claim_window(
-                state, adapters, writer, decide_timeout_seconds,
-                observe_timeout_seconds, strikes, strike_limit,
+                state,
+                adapters,
+                writer,
+                decide_timeout_seconds,
+                observe_timeout_seconds,
+                strikes,
+                strike_limit,
             )
         else:
             raise AssertionError(f"unexpected phase in run_hand: {state['phase']!r}")
@@ -265,9 +280,7 @@ async def _step_claim_window(
             *(_decide_or_default(adapters[seat], prompts[seat]) for seat in claimers)
         )
     )
-    seat_results: dict[int, tuple[Action, FailureMeta]] = dict(
-        zip(claimers, results, strict=True)
-    )
+    seat_results: dict[int, tuple[Action, FailureMeta]] = dict(zip(claimers, results, strict=True))
 
     for seat, (_, failure) in seat_results.items():
         if failure:
@@ -386,7 +399,9 @@ async def _apply_all_pass(
             events[0].update(failure)
         for event in events:
             writer.write_event(event)
-            await _fanout_observe(adapters, state, event, per_observe_seconds=observe_timeout_seconds)
+            await _fanout_observe(
+                adapters, state, event, per_observe_seconds=observe_timeout_seconds
+            )
     return state
 
 
@@ -399,9 +414,7 @@ def _maybe_swap_to_autopass(
         adapters[seat] = cast(SeatAdapter, AutoPassAdapter())
 
 
-async def _decide_or_default(
-    adapter: SeatAdapter, prompt: Prompt
-) -> tuple[Action, FailureMeta]:
+async def _decide_or_default(adapter: SeatAdapter, prompt: Prompt) -> tuple[Action, FailureMeta]:
     """Centralized failure handler (seat-port.md `coerce_to_action_or_default`).
 
     Returns `(action, failure_meta)`. `failure_meta` is empty on success,
