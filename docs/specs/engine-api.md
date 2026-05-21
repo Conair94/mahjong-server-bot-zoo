@@ -177,7 +177,8 @@ mahjong/
       gang.py              # GANG (concealed/added) — own-turn kong
       hu.py                # HU — terminal transition; calls pymj.calculate_fan
       pass_.py             # PASS — claim-window decline
-      draw.py              # internal: engine-driven wall draw, flower replacement
+      # internal_draw + claim-window opening live in transition/__init__.py
+      # as shared helpers (engine-internal; no caller surface)
     errors.py              # EngineError, IllegalAction, InvalidState, RulesetError
 ```
 
@@ -185,7 +186,7 @@ A few notes on the decomposition:
 
 - **`types.py` has no logic.** Just `TypedDict`s and dataclasses with field validators.
 - **`legality/` and `transition/` are sibling concerns.** For every action type, there's a legality check and a transition. Keeping them parallel makes it easy to grep for "everything about CHI" — it's in `legality/claim.py` and `transition/claim.py`.
-- **`draw.py` under `transition/` is engine-internal**, not caller-facing. The caller's view of "draw a tile" is `apply_action(state, seat, PLAY)` — the engine pulls the new draw inside that transition.
+- **Wall draw is engine-internal**, not caller-facing. The `internal_draw` helper lives in `transition/__init__.py` and is invoked by transitions that need to pull a fresh tile (after a PLAY's auto-advance, after a GANG's replacement draw). The caller's view of "draw a tile" is `apply_action(state, seat, PLAY)` — the engine pulls the new draw inside that transition.
 - **`rulesets/` ships as data**, not code. The `MANIFEST.json` maps human-readable IDs (`mcr-2006`) to the current `config_hash`; the per-config JSON files are immutable once shipped (per [determinism.md](determinism.md)).
 
 ## Verification fixtures this spec implies

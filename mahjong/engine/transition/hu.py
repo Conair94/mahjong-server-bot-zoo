@@ -37,13 +37,19 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         # Tile becomes part of the winning hand visually; record convention
         # leaves it implicit (the meld layout reconstructs the shape).
     else:
+        # Prefer the actually-just-drawn tile (engine has tracked it on
+        # state.last_drawn since the last_drawn schema field was added).
+        last_drawn = new["last_drawn"]
+        hint = last_drawn["tile"] if last_drawn is not None and last_drawn["seat"] == seat else None
         win_tile = _pick_self_draw_win_tile(
-            list(seat_data["concealed"]), melds, seat_data["seat_wind"], new["round_wind"]
+            list(seat_data["concealed"]),
+            melds,
+            seat_data["seat_wind"],
+            new["round_wind"],
+            hint=hint,
         )
         deal_in_seat = None
         win_type = "SELF_DRAW"
-        hand = [t for t in seat_data["concealed"] if t != win_tile]
-        # Remove only one copy.
         hand = list(seat_data["concealed"])
         hand.remove(win_tile)
 
@@ -75,15 +81,33 @@ def apply_hu(state: GameState, seat: int) -> GameState:
     new["terminal"] = terminal
     new["phase"] = "TERMINAL"
     new["last_discard"] = None
+    new["last_drawn"] = None
     new["pending_claims"] = []
     return new
 
 
 def _pick_self_draw_win_tile(
-    concealed: list[str], melds: list[Meld], seat_wind: str, round_wind: str
+    concealed: list[str],
+    melds: list[Meld],
+    seat_wind: str,
+    round_wind: str,
+    *,
+    hint: str | None = None,
 ) -> str:
-    """Smallest tile (canonical order) whose removal yields a fan-bearing hand."""
+    """Pick the win tile for a self-draw HU.
+
+    If `hint` (the engine's `state.last_drawn.tile`) is in `concealed` and
+    yields a fan-bearing decomposition, return it — that's the *actually*
+    drawn tile and the physically correct answer. Otherwise fall back to
+    the smallest tile (canonical order) whose removal decomposes.
+    """
+    candidates: list[str] = []
+    if hint is not None and hint in concealed:
+        candidates.append(hint)
     for tile in sorted(set(concealed), key=tile_sort_key):
+        if tile != hint:
+            candidates.append(tile)
+    for tile in candidates:
         hand = list(concealed)
         hand.remove(tile)
         fans = pymj.calculate_fan(

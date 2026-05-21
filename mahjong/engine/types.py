@@ -133,6 +133,19 @@ class LastDiscard(TypedDict):
     turn_index: int
 
 
+class LastDrawn(TypedDict):
+    """The most recent tile drawn from the wall and the seat that drew it.
+
+    Cleared (set to `None`) when an actor takes a tile from the discard pile
+    via CHI/PENG/GANG, and at TERMINAL. See state-schema.md for the full
+    contract on what derives from this field (tsumogiri detection,
+    self-draw HU win_tile selection, LAST_TILE/ROBBED_KONG gating).
+    """
+
+    seat: int
+    tile: Tile
+
+
 ClaimType = Literal["HU", "PENG", "GANG", "CHI"]
 
 
@@ -183,6 +196,7 @@ class GameState(TypedDict):
     wall: Wall
     seats: list[Seat]
     last_discard: LastDiscard | None
+    last_drawn: LastDrawn | None
     pending_claims: list[PendingClaim]
     phase: Phase
     current_actor: int

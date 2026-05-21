@@ -31,7 +31,6 @@ EXPECTED_MODULES = [
     "mahjong.engine.transition.gang",
     "mahjong.engine.transition.hu",
     "mahjong.engine.transition.pass_",
-    "mahjong.engine.transition.draw",
     "mahjong.engine.rulesets",
     "mahjong.records",
     "mahjong.adapters",

@@ -185,6 +185,23 @@ def test_project_omits_rng() -> None:
     assert "rng" not in view
 
 
+def test_project_omits_last_drawn() -> None:
+    """`last_drawn` is an engine hint, not a public projection field."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, 0)
+    assert "last_drawn" not in view
+
+
+def test_initial_state_last_drawn_is_dealer_fourteenth_tile() -> None:
+    """`initial_state` sets last_drawn to seat 0's 14th drawn (post-flower)
+    tile — the dealer's just-drawn tile, ready to be discarded on turn 0."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    last_drawn = s["last_drawn"]
+    assert last_drawn is not None
+    assert last_drawn["seat"] == 0
+    assert last_drawn["tile"] in s["seats"][0]["concealed"]
+
+
 def test_project_filters_pending_claims_to_own_seat() -> None:
     """A projection sees only its own seat's claim opportunities."""
     s = state.initial_state(MCR_REF, seed=12345)

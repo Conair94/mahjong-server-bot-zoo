@@ -53,8 +53,9 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
     flowers: list[list[Tile]] = [[], [], [], []]
     concealed: list[list[Tile]] = [[], [], [], []]
     wall_pos = 0
+    dealer_last_drawn: Tile | None = None
 
-    def draw_one(seat_idx: int) -> None:
+    def draw_one(seat_idx: int) -> Tile:
         nonlocal wall_pos
         while True:
             tile = wall[wall_pos]
@@ -63,12 +64,12 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
                 flowers[seat_idx].append(tile)
                 continue
             concealed[seat_idx].append(tile)
-            return
+            return tile
 
     for _ in range(13):
         for s in range(4):
             draw_one(s)
-    draw_one(0)  # dealer's first draw
+    dealer_last_drawn = draw_one(0)  # dealer's first draw
 
     for s in range(4):
         concealed[s].sort(key=tile_sort_key)
@@ -103,6 +104,7 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
         },
         "seats": seats,
         "last_discard": None,
+        "last_drawn": {"seat": 0, "tile": dealer_last_drawn},
         "pending_claims": [],
         "phase": "DISCARD",
         "current_actor": 0,

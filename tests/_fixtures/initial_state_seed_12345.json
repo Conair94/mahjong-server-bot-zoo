@@ -4,6 +4,10 @@
     "dealer_seat": 0,
     "hand_index": 0,
     "last_discard": null,
+    "last_drawn": {
+      "seat": 0,
+      "tile": "F2"
+    },
     "pending_claims": [],
     "phase": "DISCARD",
     "rng": {
@@ -214,5 +218,5 @@
       "total": 144
     }
   },
-  "state_hash": "sha256:58bd1237dd7b24867c9f8ceb93f50fbbfccc2c75ae7eabbb5b11f7c1f0b61652"
+  "state_hash": "sha256:aa62fc2522264927cb48b15a17adb55c1fb2922d5a348a33d7c77f4b76e03a55"
 }

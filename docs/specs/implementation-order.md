@@ -170,7 +170,7 @@ These are the building blocks every later layer touches. Get them right once; th
 - `mahjong/engine/transition/gang.py`: concealed and added GANG.
 - `mahjong/engine/transition/hu.py`: HU (calls `pymj.calculate_fan`; populates `terminal`).
 - `mahjong/engine/transition/pass_.py`: PASS in a claim window.
-- `mahjong/engine/transition/draw.py`: internal wall-draw and flower replacement, invoked by other transitions.
+- `mahjong/engine/transition/__init__.py`: `internal_draw` + claim-window helpers (engine-internal, no caller surface).
 - `mahjong/engine/__init__.py`: re-export `apply_action`.
 
 **Tests (write first):**

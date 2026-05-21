@@ -125,8 +125,9 @@ def advance_to_next_seat_discard(state: GameState) -> GameState:
 def internal_draw(state: GameState, seat: int) -> GameState:
     """Pop a tile from the wall front, route flowers, append to seat's concealed.
 
-    Sets `phase = DISCARD`, `current_actor = seat`. If the wall is exhausted,
-    transitions to TERMINAL with `kind = DRAW`.
+    Sets `phase = DISCARD`, `current_actor = seat`, `last_drawn = {seat, tile}`.
+    If the wall is exhausted, transitions to TERMINAL with `kind = DRAW` and
+    clears `last_drawn`.
     """
     wall = state["wall"]["remaining"]
     while wall:
@@ -140,6 +141,7 @@ def internal_draw(state: GameState, seat: int) -> GameState:
         seat_concealed.sort(key=tile_sort_key)
         state["phase"] = "DISCARD"
         state["current_actor"] = seat
+        state["last_drawn"] = {"seat": seat, "tile": tile}
         return state
 
     # Wall exhausted with no live tile drawn → exhaustive draw.
@@ -148,6 +150,7 @@ def internal_draw(state: GameState, seat: int) -> GameState:
 
 def make_exhaustive_draw_terminal(state: GameState) -> GameState:
     state["phase"] = "TERMINAL"
+    state["last_drawn"] = None
     state["terminal"] = {
         "kind": "DRAW",
         "winner": None,

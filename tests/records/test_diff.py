@@ -37,6 +37,32 @@ def test_diff_play_emits_discard() -> None:
     assert discard["ts"] == TS
     assert discard["turn_index"] == s1["turn_index"]
     assert discard["phase"] == s1["phase"]
+
+
+def test_diff_from_hand_false_when_playing_just_drawn_tile() -> None:
+    """Tsumogiri: actor plays the tile they just drew → from_hand=False."""
+    s0 = _seed_state()
+    actor = s0["current_actor"]
+    just_drawn = s0["last_drawn"]
+    assert just_drawn is not None and just_drawn["seat"] == actor
+    play = {"type": "PLAY", "tile": just_drawn["tile"]}
+    s1 = apply_action(s0, actor, play)  # type: ignore[arg-type]
+    events = diff_to_events(s0, actor, play, s1, ts=TS)  # type: ignore[arg-type]
+    discard = next(e for e in events if e["event"] == "DISCARD")
+    assert discard["from_hand"] is False
+
+
+def test_diff_from_hand_true_when_playing_other_tile() -> None:
+    """Normal discard: actor plays a tile they didn't just draw → from_hand=True."""
+    s0 = _seed_state()
+    actor = s0["current_actor"]
+    just_drawn = s0["last_drawn"]
+    assert just_drawn is not None
+    plays = [a for a in legal_actions(s0, actor) if a["type"] == "PLAY"]
+    other_play = next(a for a in plays if a["tile"] != just_drawn["tile"])
+    s1 = apply_action(s0, actor, other_play)  # type: ignore[arg-type]
+    events = diff_to_events(s0, actor, other_play, s1, ts=TS)
+    discard = next(e for e in events if e["event"] == "DISCARD")
     assert discard["from_hand"] is True
 
 
@@ -123,6 +149,7 @@ def test_diff_hu_emits_hand_end() -> None:
         "wall": {"remaining": [], "drawn_count": 144, "total": 144},
         "seats": seats,
         "last_discard": None,
+        "last_drawn": {"seat": 0, "tile": "W1"},
         "pending_claims": [],
         "phase": "DISCARD",
         "current_actor": 0,

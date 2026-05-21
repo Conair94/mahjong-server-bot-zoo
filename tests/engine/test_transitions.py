@@ -85,6 +85,7 @@ def _make_state(
         },
         "seats": seats,
         "last_discard": last_discard,
+        "last_drawn": None,
         "pending_claims": pending_claims or [],
         "phase": phase,
         "current_actor": current_actor,
@@ -351,6 +352,7 @@ def test_hu_self_draw_transitions_to_terminal() -> None:
     )
     new = apply_action(s, 0, {"type": "HU"})  # type: ignore[arg-type]
     assert new["phase"] == "TERMINAL"
+    assert new["last_drawn"] is None  # cleared at terminal
     t = new["terminal"]
     assert t is not None
     assert t["kind"] == "HU"
@@ -361,6 +363,21 @@ def test_hu_self_draw_transitions_to_terminal() -> None:
     assert len(t["fan"]) > 0
     assert len(t["score_delta"]) == 4
     assert sum(t["score_delta"]) == 0  # zero-sum
+
+
+def test_hu_self_draw_prefers_last_drawn_as_win_tile() -> None:
+    """When `last_drawn` is set, win_tile equals the just-drawn tile (the
+    physically correct answer) rather than the canonical-sort fallback."""
+    s = _make_state(
+        phase="DISCARD",
+        current_actor=0,
+        concealed=[_big_three_dragons_14(), _sorted(["W2"] * 13), _sorted(["W2"] * 13), _sorted(["W2"] * 13)],
+    )
+    s["last_drawn"] = {"seat": 0, "tile": "W1"}  # the pair tile
+    new = apply_action(s, 0, {"type": "HU"})  # type: ignore[arg-type]
+    t = new["terminal"]
+    assert t is not None
+    assert t["win_tile"] == "W1"
 
 
 def test_hu_on_discard_transitions_to_terminal_with_deal_in_seat() -> None:

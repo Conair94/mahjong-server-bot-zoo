@@ -104,6 +104,15 @@ GameState = {
     "phase": "DEAL" | "DRAW" | "DISCARD" | "CLAIM_WINDOW" | "TERMINAL",
     "current_actor": 0,         # seat whose action is awaited; meaningful in DRAW/DISCARD phases
 
+    # The most recent tile drawn from the wall, and the seat that drew it.
+    # `None` after a claim (CHI/PENG/GANG) where the actor took a tile from
+    # the discard pile instead of the wall, and `None` at TERMINAL.
+    # Used to (a) distinguish tsumogiri from in-hand discards (the record
+    # format's `from_hand` field), (b) seed the self-draw HU win_tile when
+    # multiple decompositions are possible, and (c) gate the LAST_TILE and
+    # ROBBED_KONG win types in Layer 5+.
+    "last_drawn": {"seat": 0, "tile": "T5"} | None,
+
     # Terminal state (None until phase == TERMINAL)
     "terminal": {
         "kind": "HU" | "DRAW",        # win or exhaustive draw
@@ -162,6 +171,7 @@ Where `SeatView` is the same shape as `GameState` except:
 - `seats[i].concealed` is replaced with a count (`{"count": 13}`) for every `i != seat`.
 - `wall.remaining` is replaced with just `{"remaining_count": 70}` — order and contents are hidden.
 - `rng` is omitted entirely.
+- `last_drawn` is omitted entirely — it's an engine hint, not a public field. Opponents already see the act of drawing via turn order; they don't see the tile.
 - `pending_claims` is filtered to only include this seat's own opportunities.
 - `terminal.fan` and `terminal.score_delta` are full (everyone sees the score).
 

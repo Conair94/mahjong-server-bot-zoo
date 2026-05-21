@@ -83,6 +83,7 @@ def _make_state(
         },
         "seats": seats,
         "last_discard": last_discard,
+        "last_drawn": None,
         "pending_claims": pending_claims or [],
         "phase": phase,
         "current_actor": current_actor,

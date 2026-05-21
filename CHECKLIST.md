@@ -128,7 +128,7 @@ Spec: [state-schema.md](docs/specs/state-schema.md), [engine-api.md](docs/specs/
   - [x] Per action type: `(state_before, action) → state_after` with shape and field assertions. *(State-hash goldens deferred to Step 2.4 smoke tests where full-game flow makes them load-bearing; per-action shape is pinned now.)*
   - [x] `IllegalAction` payload completeness on every action *not* in `legal_actions`.
   - [x] Determinism: same input → same output hash across runs.
-- [x] `mahjong/engine/transition/{play,claim,gang,hu,pass_,draw}.py`. *(draw.py is the internal_draw helper now living in transition/\_\_init\_\_.py — it has no caller-facing surface, so the standalone file remains a stub. Engine-api.md called draw "engine-internal".)*
+- [x] `mahjong/engine/transition/{play,claim,gang,hu,pass_}.py`. *(`internal_draw` lives in `transition/__init__.py` as a shared helper — engine-api.md called draw "engine-internal" and no caller-facing surface justified a standalone module.)*
 - [x] **Gate:** every action type has a passing transition fixture. *(Local 2026-05-20; cross-platform CI pending push.)*
 
 ### Step 2.4 — Engine end-to-end smoke

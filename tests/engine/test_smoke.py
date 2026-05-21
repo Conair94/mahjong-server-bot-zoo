@@ -118,6 +118,7 @@ def test_smoke_dealer_hu_toy_game() -> None:
         "wall": {"remaining": [], "drawn_count": 144, "total": 144},
         "seats": seats,
         "last_discard": None,
+        "last_drawn": {"seat": 0, "tile": "W1"},
         "pending_claims": [],
         "phase": "DISCARD",
         "current_actor": 0,

@@ -44,7 +44,7 @@ def diff_to_events(
     t = action["type"]
 
     if t == "PLAY":
-        events.append(_discard_event(state_after, seat, action, ts))
+        events.append(_discard_event(state_before, state_after, seat, action, ts))
         _maybe_append_window_or_draw(events, state_before, state_after, ts)
     elif t == "PASS":
         events.append(_claim_decision_event(state_after, seat, action, ts))
@@ -65,19 +65,23 @@ def diff_to_events(
 # --- per-event constructors ---
 
 
-def _discard_event(state_after: GameState, seat: int, action: Action, ts: str) -> dict[str, Any]:
+def _discard_event(
+    state_before: GameState, state_after: GameState, seat: int, action: Action, ts: str
+) -> dict[str, Any]:
+    tile = action["tile"]  # type: ignore[typeddict-item]
+    # Tsumogiri: the played tile is the one this seat just drew from the wall.
+    last_drawn = state_before["last_drawn"]
+    from_hand = not (
+        last_drawn is not None and last_drawn["seat"] == seat and last_drawn["tile"] == tile
+    )
     return {
         "event": "DISCARD",
         "turn_index": state_after["turn_index"],
         "phase": state_after["phase"],
         "ts": ts,
         "seat": seat,
-        "tile": action["tile"],  # type: ignore[typeddict-item]
-        # from_hand is True for every discard our engine emits: the engine
-        # places drawn tiles into concealed before the discard prompt, so it
-        # cannot distinguish tsumogiri. When state grows a `last_drawn` field
-        # (see project_layer2_self_draw_win_tile memory) this becomes derivable.
-        "from_hand": True,
+        "tile": tile,
+        "from_hand": from_hand,
     }
 
 

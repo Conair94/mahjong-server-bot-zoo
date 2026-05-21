@@ -254,6 +254,47 @@ For non-PASS decisions, the same action fields as the action grammar:
 
 One `CLAIM_DECISION` per seat that had an opportunity. Order in the file is submission order (useful for "did the slow bot get its decision in before the fast one?" analysis), not seat order.
 
+**Timeout claim decisions.** If a seat fails to decide within the window's `deadline_ms`, the table manager synthesizes a `CLAIM_DECISION` on its behalf:
+
+```json
+{
+  "event": "CLAIM_DECISION",
+  "seq": 12,
+  "turn_index": 2,
+  "phase": "CLAIM_WINDOW",
+  "ts": "2026-05-19T22:34:20.311Z",
+
+  "window_seq": 7,
+  "seat": 3,
+  "decision": "PASS",
+  "decision_ms": 1000,
+  "timeout": true
+}
+```
+
+`decision_ms` equals the window's `deadline_ms` (the time the manager waited before synthesizing). `timeout` is absent for non-timeout decisions; consumers MUST treat `timeout: true` as semantically equivalent to a real `PASS` for game logic.
+
+**Timeout discards.** If the seat-on-turn fails to act in `DISCARD` within their per-turn budget, the manager synthesizes the tsumogiri equivalent — discard the just-drawn tile:
+
+```json
+{
+  "event": "DISCARD",
+  "seq": 11,
+  "turn_index": 2,
+  "phase": "CLAIM_WINDOW",
+  "ts": "2026-05-19T22:34:19.310Z",
+
+  "seat": 1,
+  "tile": "F4",
+  "decision_ms": 5000,
+  "from_hand": false,
+  "auto_discarded": true,
+  "reason": "timeout"
+}
+```
+
+`auto_discarded` and `reason` are absent for human-/bot-issued discards. `tile` is the seat's `last_drawn.tile`. `from_hand: false` follows the tsumogiri convention.
+
 ### `CLAIM_RESOLUTION` (exactly one per `CLAIM_WINDOW`)
 
 ```json
@@ -415,6 +456,5 @@ The exporter is implemented once, lives in the record store module, and is valid
 - **Compression.** Gzip closed files? Probably yes (records are repetitive JSON, 5–10× compression typical), but defer until disk usage is measurable. The loader should handle `.jsonl` and `.jsonl.gz` transparently when this lands.
 - **Live tailing semantics.** Live spectators read the in-progress file. Question: do they re-read from `seq=0` on each tick, or seek to last-known `seq`? Working answer: seek to last-known `seq`, validate `checksum` is monotonically extendable (each new event's contribution to the running checksum). Defer to the spectator-table phase (S8).
 - **Chat events.** Server-plan flagged in-game chat as deferrable. When it lands: a `CHAT` event with `{seat, text, ts}`, no `turn_index` advance, never affects state. Worth pinning the event name now so future records are consistent.
-- **Time-out events.** What's the event when a seat fails to decide within `deadline_ms`? Working answer: a synthetic `CLAIM_DECISION` with `decision: "PASS", decision_ms: <deadline>, timeout: true`, plus a `DISCARD` with `from_hand: true, auto_discarded: true, reason: "timeout"` when the actor times out on their own turn (auto-discards the just-drawn tile, "tsumogiri"). Pin this when the seat-port spec lands.
 - **Multi-winner score split.** Inherits from state-schema's open question. The `winner: list[int]` and `score_delta: list[int]` shapes already accommodate it; locking the split *math* is an S5 (rule-set) concern, not a format concern.
 - **Per-seat decoded views as cached files.** A pre-projected `record_{hand_id}_seat_{S}.jsonl` for cheap training-data reading? Defer; the projection is fast and caching adds a coherence problem. Reconsider only if profiling says it's a bottleneck.

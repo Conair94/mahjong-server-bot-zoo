@@ -45,6 +45,7 @@ def _minimal_state() -> dict[str, Any]:
             for i in range(4)
         ],
         "last_discard": None,
+        "last_drawn": None,
         "pending_claims": [],
         "phase": "DEAL",
         "current_actor": 0,

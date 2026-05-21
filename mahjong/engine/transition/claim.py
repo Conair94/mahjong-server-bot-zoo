@@ -68,6 +68,7 @@ def _consume_discard(state: GameState, discarder: int) -> None:
     """Remove the just-claimed tile from the discarder's discard pile."""
     state["seats"][discarder]["discards"].pop()
     state["last_discard"] = None
+    state["last_drawn"] = None  # claimer took tile from discard, not wall
     state["pending_claims"] = []
 
 
