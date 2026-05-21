@@ -146,25 +146,25 @@ Spec: [state-schema.md](docs/specs/state-schema.md), [engine-api.md](docs/specs/
 
 Spec: [record-format.md](docs/specs/record-format.md).
 
-- [ ] Tests written: writer round-trip, `diff_to_events` per action type, footer checksum, byte-identical serialization (fixture 1 write half).
-- [ ] `mahjong/records/writer.py` + `diff.py`.
-- [ ] **Gate:** events parse identically to themselves.
+- [x] Tests written: writer round-trip, `diff_to_events` per action type, footer checksum, byte-identical serialization (fixture 1 write half).
+- [x] `mahjong/records/writer.py` + `diff.py`.
+- [x] **Gate:** events parse identically to themselves. *(Local 2026-05-20: 12 tests under tests/records/ green; byte-identical fixture `tests/_fixtures/record_minimal.jsonl` pinned. Cross-platform CI pending push. Reader half lands in 3.2.)*
 
 ### Step 3.2 — Record reader / replay
 
 Spec: [record-format.md § Verification fixtures](docs/specs/record-format.md).
 
-- [ ] Tests written: round-trip identity, replay reproduces canonical state, per-seat projection consistency, privacy on replay, sequence integrity.
-- [ ] `mahjong/records/reader.py` + `replay.py`.
-- [ ] **Gate:** any record the writer produces is replayable and deterministic.
+- [x] Tests written: round-trip identity, replay reproduces canonical state, per-seat projection consistency, privacy on replay, sequence integrity.
+- [x] `mahjong/records/reader.py` + `replay.py`.
+- [x] **Gate:** any record the writer produces is replayable and deterministic. *(Local 2026-05-20: smoke-driven 4-PASS exhaustive-draw recorded, re-read, and replayed back to a matching final state_hash. Cross-platform CI pending push.)*
 
 ### Step 3.3 — Botzone export
 
 Spec: [record-format.md § Botzone export](docs/specs/record-format.md).
 
-- [ ] Tests written: hand-traced fixture → expected Botzone log; round-trip for surviving events.
-- [ ] `mahjong/records/botzone_export.py`.
-- [ ] **Gate:** export produces well-formed Botzone logs. (Judge acceptance waits for S1.)
+- [x] Tests written: hand-traced fixture → expected Botzone log; round-trip for surviving events.
+- [x] `mahjong/records/botzone_export.py`.
+- [x] **Gate:** export produces well-formed Botzone logs. (Judge acceptance waits for S1.) *(Local 2026-05-20: spec mapping rules enforced — HEADER → per-seat init, DISCARD → broadcast PLAY, CLAIM_DECISION → claim response, CLAIM_WINDOW/CLAIM_RESOLUTION/FOOTER dropped, source_seq preserves ordering. Exact byte format tuned to live judge in S1.)*
 
 ---
 
