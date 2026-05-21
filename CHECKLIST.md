@@ -174,9 +174,9 @@ Spec: [record-format.md § Botzone export](docs/specs/record-format.md).
 
 Spec: [seat-port.md § The interface, § Adapter catalog](docs/specs/seat-port.md).
 
-- [ ] Tests written: `CannedAdapter` script execution; `AutoPassAdapter` always returns default; Protocol satisfaction (mypy).
-- [ ] `mahjong/adapters/base.py`, `canned.py`, `autopass.py`.
-- [ ] **Gate:** adapters exist; protocol checks.
+- [x] Tests written: `CannedAdapter` script execution; `AutoPassAdapter` always returns default; Protocol satisfaction (mypy).
+- [x] `mahjong/adapters/base.py`, `canned.py`, `autopass.py`.
+- [x] **Gate:** adapters exist; protocol checks. *(Local 2026-05-20: 9 tests under tests/adapters/ green; `SeatAdapter` Protocol with `@runtime_checkable`; mypy strict clean. Cross-platform CI pending push.)*
 
 ### Step 4.2 — Table manager (asyncio loop)
 
