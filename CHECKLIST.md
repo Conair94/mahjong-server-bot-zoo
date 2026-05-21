@@ -182,9 +182,9 @@ Spec: [seat-port.md § The interface, § Adapter catalog](docs/specs/seat-port.m
 
 Spec: [seat-port.md § Lifecycle and concurrency model, § Error model](docs/specs/seat-port.md).
 
-- [ ] Tests written: four-`CannedAdapter` hand → fixture record; timeout/illegal/crash markers + strike counter; observe-fanout independence; claim-window concurrency invariance; `AutoPassAdapter`-substitution replay preservation.
-- [ ] `mahjong/table/manager.py` + `mahjong/cli/play_test.py`.
-- [ ] **Gate: S0 walking-skeleton exit artifact.** `python -m mahjong play-test` plays a fixture hand; record replays byte-identically; determinism cross-platform.
+- [x] Tests written: four-`CannedAdapter` hand → fixture record; timeout/illegal/crash markers + strike counter; observe-fanout independence; claim-window concurrency invariance; `AutoPassAdapter`-substitution replay preservation.
+- [x] `mahjong/table/manager.py` + `mahjong/cli/play_test.py`.
+- [x] **Gate: S0 walking-skeleton exit artifact.** `python -m mahjong play-test` plays a fixture hand; record replays byte-identically; determinism cross-platform. *(Local 2026-05-20: fixture `tests/_fixtures/s0_walking_skeleton_seed_12345.jsonl` checked in; byte-identical regeneration test green; record replays to matching final state_hash. Claim-window priority resolution (HU > PENG/GANG > CHI; seat-tiebreak) implemented in `_resolve_claim_priority`, resolving the deferred Phase 2 memory. Cross-platform CI pending push.)*
 
 ---
 
