@@ -79,7 +79,20 @@
       "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/python -m pytest tests/selfplay/test_eval.py -v)",
       "Bash(.venv/bin/python -m pytest tests/selfplay/test_eval.py -v)",
       "Bash(.venv/bin/python -m mypy mahjong/selfplay/eval.py mahjong/cli/selfplay.py)",
-      "Bash(.venv/bin/python -m pytest tests/ -x -q)"
+      "Bash(.venv/bin/python -m pytest tests/ -x -q)",
+      "Bash(python -m pytest tests/selfplay/test_runner.py -x -q)",
+      "Bash(.venv/bin/python -m pytest tests/selfplay/test_runner.py -x -q)",
+      "Bash(.venv/bin/python -m pytest tests/selfplay/ -x -q)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(.venv/bin/python -m ruff format mahjong/ tests/)",
+      "Bash(.venv/bin/python -m ruff check mahjong/ tests/)",
+      "Bash(.venv/bin/python -m mypy mahjong/)",
+      "Bash(git stash *)",
+      "Bash(.venv/bin/python -m ruff check --fix mahjong/ tests/)",
+      "Bash(.venv/bin/python -m ruff format --check mahjong/ tests/)",
+      "Bash(rm -rf selfplay_parallel_smoke)",
+      "Bash(.venv/bin/python --version)",
+      "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/python -m mahjong selfplay --master-seed 0x1 --hands 4 --bots b_random,b_random,b_random,b_random --output-dir /tmp/selfplay_parallel_smoke --parallel-hands 2 --eval-summary)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

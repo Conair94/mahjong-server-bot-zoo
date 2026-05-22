@@ -13,14 +13,10 @@ from pathlib import Path
 import pytest
 
 from mahjong.selfplay.eval import (
-    EvalSummary,
-    HandOutcome,
-    SeatSummary,
     aggregate,
     format_summary,
     parse_record,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -136,7 +132,7 @@ def test_parse_record_missing_hand_end_returns_none(tmp_path: Path) -> None:
         "hand_id": "test",
         "ruleset": {"id": "mcr-2006"},
         "seats": [
-            {"seat": i, "wind": f"F{i+1}", "identity": {"kind": "bot", "bot_id": "b_x"}}
+            {"seat": i, "wind": f"F{i + 1}", "identity": {"kind": "bot", "bot_id": "b_x"}}
             for i in range(4)
         ],
         "meta": None,
@@ -237,7 +233,7 @@ def test_aggregate_per_seat_avg_fan_when_won(two_hand_dir: Path) -> None:
 
 def test_aggregate_per_bot_win_rate(two_hand_dir: Path) -> None:
     summary = aggregate(sorted(two_hand_dir.glob("*.jsonl")))
-    # b_rule_v1 occupies 2 seats × 2 hands = 4 appearances, 2 wins
+    # b_rule_v1 occupies 2 seats x 2 hands = 4 appearances, 2 wins
     assert summary.per_bot["b_rule_v1"].win_rate == pytest.approx(2 / 4)
     assert summary.per_bot["b_random"].win_rate == pytest.approx(0.0)
 

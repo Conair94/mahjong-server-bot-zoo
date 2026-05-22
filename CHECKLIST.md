@@ -356,14 +356,25 @@ Scope decisions (implementer-level, not spec changes):
       suite 381 passed, 2 skipped (Linux-only sandbox); ruff format + lint
       clean; mypy clean across 46 source files. Cross-platform CI pending push.)*
 
-### Step 6.1b — `--parallel-hands` workers (deferred until 6.1a green)
+### Step 6.1b — `--parallel-hands` workers
 
 Spec: [selfplay-harness.md § Concurrency](docs/specs/selfplay-harness.md).
 
-- [ ] Subprocess-worker model with disjoint `hand_index` partitions per spec.
-- [ ] Parallel-equivalence fixture (spec fixture 3): a serial run and a
-      `--parallel-hands 4` run from the same `master_seed` produce the same
-      set of records (set equality on `hand_id`; per-hand byte-identical).
+- [x] Subprocess-worker model with disjoint `hand_index` partitions per spec.
+      `SelfPlayRunner` gains `worker_id`/`worker_count`; worker `k` plays
+      hands where `hand_index % N == k`. CLI `--parallel-hands N` is the
+      parent path: pre-flights the output dir, spawns N `python -m mahjong
+      selfplay --worker-id k --worker-count N --resume` subprocesses,
+      reaps them, then aggregates the eval-summary over the shared dir.
+- [x] Parallel-equivalence fixture (spec fixture 3): a serial run and a
+      `--parallel-hands 2` run from the same `master_seed` produce per-hand
+      byte-identical records (with `_now_ts` pinned — wall-clock is the
+      only non-determinism source). Pinned by
+      `tests/selfplay/test_runner.py::test_parallel_equivalence_per_hand_byte_identical`.
+- [x] **Gate:** 407 tests passed, 2 skipped (Linux-only sandbox); ruff
+      check + format clean; mypy clean across 47 source files; real-process
+      smoke (`--parallel-hands 2 --eval-summary`) writes the expected 4
+      records and aggregates correctly. *(Local 2026-05-22.)*
 
 ### Step 6.1c — `--eval-summary` aggregator
 

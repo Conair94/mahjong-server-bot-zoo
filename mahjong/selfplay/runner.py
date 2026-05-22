@@ -61,6 +61,8 @@ class SelfPlayRunner:
         hand_id_fn: HandIdFn | None = None,
         server_info: dict[str, Any] | None = None,
         run_hand_kwargs: dict[str, Any] | None = None,
+        worker_id: int = 0,
+        worker_count: int = 1,
     ) -> None:
         if len(bots) != 4:
             raise ValueError(f"bots must have exactly 4 entries, got {len(bots)}")
@@ -68,6 +70,12 @@ class SelfPlayRunner:
             raise ValueError(f"hands must be positive, got {hands}")
         if ruleset_id not in MANIFEST:
             raise ValueError(f"unknown ruleset: {ruleset_id!r}")
+        if worker_count < 1:
+            raise ValueError(f"worker_count must be >= 1, got {worker_count}")
+        if not 0 <= worker_id < worker_count:
+            raise ValueError(f"worker_id must be in [0, {worker_count}), got {worker_id}")
+        self.worker_id = worker_id
+        self.worker_count = worker_count
         self.master_seed = master_seed
         self.bots = list(bots)
         self.hands = hands
@@ -96,6 +104,8 @@ class SelfPlayRunner:
 
         written: list[Path] = []
         for hand_index in range(start, self.hands):
+            if hand_index % self.worker_count != self.worker_id:
+                continue
             seat_bots = self._seat_assignment(hand_index)
             adapters = [self.adapter_factory(bot_id, seat) for seat, bot_id in enumerate(seat_bots)]
             seed = hand_seed(self.master_seed, hand_index)
@@ -132,7 +142,11 @@ class SelfPlayRunner:
         existing = sorted(self.output_dir.glob("*.jsonl"))
         if not existing:
             return 0
-        if not self.resume:
+        # In multi-worker mode the parent owns the non-empty-dir gate; each
+        # worker scans only its own slice and trusts that sibling-worker
+        # records belong there.
+        is_parallel = self.worker_count > 1
+        if not self.resume and not is_parallel:
             raise RunnerError(
                 f"output dir {self.output_dir} is non-empty; pass resume=True to continue"
             )
@@ -147,6 +161,8 @@ class SelfPlayRunner:
             meta = header.get("meta") or {}
             idx = meta.get("hand_index")
             if not isinstance(idx, int):
+                continue
+            if idx % self.worker_count != self.worker_id:
                 continue
             if not self._has_footer(path):
                 # Partial record — delete and replay this hand_index.

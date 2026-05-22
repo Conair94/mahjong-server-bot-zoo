@@ -304,3 +304,179 @@ async def test_wrong_bot_count_rejected(tmp_path: Path) -> None:
             output_dir=tmp_path,
             adapter_factory=_canned_factory,
         )
+
+
+# --- 6.1b: worker partitioning (`--parallel-hands` foundation) ---
+
+
+async def test_worker_partition_plays_only_its_slice(tmp_path: Path) -> None:
+    """worker_count=2 splits hand_index by parity; each worker plays only its slice."""
+    out = tmp_path / "shared"
+    worker0 = SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=4,
+        output_dir=out,
+        adapter_factory=_canned_factory,
+        worker_id=0,
+        worker_count=2,
+    )
+    paths0 = await worker0.run()
+    indices0 = sorted(_read_header(p)["meta"]["hand_index"] for p in paths0)
+    assert indices0 == [0, 2]
+
+    worker1 = SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=4,
+        output_dir=out,
+        adapter_factory=_canned_factory,
+        worker_id=1,
+        worker_count=2,
+    )
+    paths1 = await worker1.run()
+    indices1 = sorted(_read_header(p)["meta"]["hand_index"] for p in paths1)
+    assert indices1 == [1, 3]
+
+    all_records = sorted(out.glob("*.jsonl"))
+    all_indices = sorted(_read_header(p)["meta"]["hand_index"] for p in all_records)
+    assert all_indices == [0, 1, 2, 3]
+
+
+async def test_parallel_equivalence_per_hand_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec fixture 3: serial and partitioned-parallel runs from the same
+    master_seed produce per-hand byte-identical records (keyed by hand_index).
+    """
+    from mahjong.table import manager as mgr
+
+    monkeypatch.setattr(mgr, "_now_ts", lambda: "2026-05-21T00:00:00.000Z")
+
+    serial_dir = tmp_path / "serial"
+    parallel_dir = tmp_path / "parallel"
+
+    serial = SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=4,
+        output_dir=serial_dir,
+        adapter_factory=_canned_factory,
+        hand_id_fn=lambda idx: f"hand-{idx:04d}",
+    )
+    await serial.run()
+
+    for worker_id in (0, 1):
+        await SelfPlayRunner(
+            master_seed=MASTER,
+            bots=["b_random"] * 4,
+            hands=4,
+            output_dir=parallel_dir,
+            adapter_factory=_canned_factory,
+            hand_id_fn=lambda idx: f"hand-{idx:04d}",
+            worker_id=worker_id,
+            worker_count=2,
+        ).run()
+
+    serial_records = {
+        _read_header(p)["meta"]["hand_index"]: p.read_bytes() for p in serial_dir.glob("*.jsonl")
+    }
+    parallel_records = {
+        _read_header(p)["meta"]["hand_index"]: p.read_bytes() for p in parallel_dir.glob("*.jsonl")
+    }
+    assert set(serial_records) == set(parallel_records) == {0, 1, 2, 3}
+    for idx in serial_records:
+        assert serial_records[idx] == parallel_records[idx], f"hand {idx} differs"
+
+
+async def test_worker_does_not_refuse_non_empty_dir(tmp_path: Path) -> None:
+    """In multi-worker mode the parent owns the empty-dir check; the worker
+    must tolerate other workers' records in the shared dir without raising."""
+    # Pre-seed a record belonging to another worker's slice.
+    (tmp_path / "selfplay-00000001.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "HEADER",
+                "seq": 0,
+                "turn_index": 0,
+                "phase": "DEAL",
+                "ts": "2026-05-21T00:00:00.000Z",
+                "meta": {"master_seed": hex(MASTER), "hand_index": 1, "source": "selfplay"},
+            }
+        )
+        + "\n"
+        + json.dumps({"event": "FOOTER", "seq": 1})
+        + "\n"
+    )
+    worker0 = SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=2,
+        output_dir=tmp_path,
+        adapter_factory=_canned_factory,
+        worker_id=0,
+        worker_count=2,
+    )
+    paths = await worker0.run()
+    indices = sorted(_read_header(p)["meta"]["hand_index"] for p in paths)
+    assert indices == [0]
+
+
+async def test_worker_resume_filters_by_slice(tmp_path: Path) -> None:
+    """Worker resume scan only considers files in its own slice; running again
+    on a populated dir skips the hands it already played."""
+    out = tmp_path / "shared"
+    # First pass: worker 0 plays hands 0 and 2 (worker_count=2).
+    await SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=4,
+        output_dir=out,
+        adapter_factory=_canned_factory,
+        worker_id=0,
+        worker_count=2,
+    ).run()
+    # Second pass: worker 0 again, hands extended to 6 — should only play 4.
+    paths = await SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=6,
+        output_dir=out,
+        adapter_factory=_canned_factory,
+        worker_id=0,
+        worker_count=2,
+    ).run()
+    indices = sorted(_read_header(p)["meta"]["hand_index"] for p in paths)
+    assert indices == [4]
+
+
+async def test_invalid_worker_args_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        SelfPlayRunner(
+            master_seed=MASTER,
+            bots=["a"] * 4,
+            hands=1,
+            output_dir=tmp_path,
+            adapter_factory=_canned_factory,
+            worker_count=0,
+        )
+    with pytest.raises(ValueError):
+        SelfPlayRunner(
+            master_seed=MASTER,
+            bots=["a"] * 4,
+            hands=1,
+            output_dir=tmp_path,
+            adapter_factory=_canned_factory,
+            worker_id=2,
+            worker_count=2,
+        )
+    with pytest.raises(ValueError):
+        SelfPlayRunner(
+            master_seed=MASTER,
+            bots=["a"] * 4,
+            hands=1,
+            output_dir=tmp_path,
+            adapter_factory=_canned_factory,
+            worker_id=-1,
+            worker_count=2,
+        )

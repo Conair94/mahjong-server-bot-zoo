@@ -20,12 +20,12 @@ from typing import Any
 class HandOutcome:
     """Parsed outcome extracted from one record file."""
 
-    bot_ids: list[str]        # bot_id per seat, ordered [0, 1, 2, 3]
-    kind: str                 # "HU" | "DRAW"
-    winners: list[int]        # winning seat indices; empty for DRAW
+    bot_ids: list[str]  # bot_id per seat, ordered [0, 1, 2, 3]
+    kind: str  # "HU" | "DRAW"
+    winners: list[int]  # winning seat indices; empty for DRAW
     deal_in_seat: int | None  # seat that dealt into the winning hand
-    fan_total: int            # total fan; 0 for DRAW
-    score_delta: list[int]    # score change per seat, len 4
+    fan_total: int  # total fan; 0 for DRAW
+    score_delta: list[int]  # score change per seat, len 4
 
 
 @dataclass
@@ -60,12 +60,10 @@ class EvalSummary:
     """Aggregated statistics over a collection of records."""
 
     total_hands: int
-    master_seed: str | None           # from first record meta, if present
-    ruleset: str | None               # ruleset id from first record
+    master_seed: str | None  # from first record meta, if present
+    ruleset: str | None  # ruleset id from first record
     bot_ids_config: list[str] | None  # bot assignment from first record
-    per_seat: list[SeatSummary] = field(
-        default_factory=lambda: [SeatSummary() for _ in range(4)]
-    )
+    per_seat: list[SeatSummary] = field(default_factory=lambda: [SeatSummary() for _ in range(4)])
     per_bot: dict[str, SeatSummary] = field(default_factory=dict)
 
 
@@ -211,9 +209,7 @@ def format_summary(summary: EvalSummary) -> str:
 
     header_row = f"{'':20s}" + "".join(f"{'seat ' + str(i):>{col_w}}" for i in range(4))
     lines.append(header_row)
-    lines.append(
-        _row("Win rate", [f"{summary.per_seat[s].win_rate:.3f}" for s in range(4)])
-    )
+    lines.append(_row("Win rate", [f"{summary.per_seat[s].win_rate:.3f}" for s in range(4)]))
     lines.append(
         _row("Avg score/hand", [f"{summary.per_seat[s].avg_score:+.2f}" for s in range(4)])
     )
@@ -239,9 +235,7 @@ def format_summary(summary: EvalSummary) -> str:
         def _bot_row(label: str, vals: list[str]) -> str:
             return f"{label:<20s}" + "".join(f"{v:>{bot_col_w}}" for v in vals)
 
-        lines.append(
-            f"{'':20s}" + "".join(f"{n:>{bot_col_w}}" for n in bot_names)
-        )
+        lines.append(f"{'':20s}" + "".join(f"{n:>{bot_col_w}}" for n in bot_names))
         lines.append(
             _bot_row("Win rate", [f"{summary.per_bot[n].win_rate:.3f}" for n in bot_names])
         )
@@ -262,10 +256,10 @@ def format_summary(summary: EvalSummary) -> str:
 
 
 __all__ = [
+    "EvalSummary",
     "HandOutcome",
     "SeatSummary",
-    "EvalSummary",
-    "parse_record",
     "aggregate",
     "format_summary",
+    "parse_record",
 ]

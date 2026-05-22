@@ -1,17 +1,19 @@
-"""`python -m mahjong selfplay` — serial self-play CLI.
+"""`python -m mahjong selfplay` — self-play CLI.
 
-Spec: docs/specs/selfplay-harness.md § Entry point.
+Spec: docs/specs/selfplay-harness.md § Entry point, § Concurrency.
 
-Step 6.1a wires the serial runner (`mahjong.selfplay.runner.SelfPlayRunner`)
-to a default in-tree bot registry containing `py_reference_v1` and
-`b_random`. Parallel-hands (--parallel-hands) and --eval-summary belong to
-6.1b/6.1c and are deliberately omitted here.
+Step 6.1a wired the serial runner; 6.1b adds `--parallel-hands N`, which
+spawns N worker subprocesses that share an output directory and partition
+the `hand_index` space by parity (worker `k` handles indices where
+`hand_index % N == k`). 6.1c added `--eval-summary` aggregation.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -91,6 +93,26 @@ def _build_argparser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print per-seat and per-bot stats after the run.",
     )
+    parser.add_argument(
+        "--parallel-hands",
+        type=int,
+        default=1,
+        help=(
+            "Spawn N worker subprocesses; each plays the slice of hands where "
+            "hand_index %% N == worker_id. Default: 1 (serial in-process)."
+        ),
+    )
+    # Hidden flags used by the parent to invoke its own workers.
+    parser.add_argument(
+        "--worker-id", dest="worker_id", type=int, default=0, help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--worker-count",
+        dest="worker_count",
+        type=int,
+        default=1,
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -129,6 +151,8 @@ async def _arun(args: argparse.Namespace) -> int:
         ruleset_id=args.ruleset,
         rotation=args.bot_rotation,
         resume=args.resume,
+        worker_id=args.worker_id,
+        worker_count=args.worker_count,
         run_hand_kwargs={
             "decide_timeout_seconds": 30.0,
             "observe_timeout_seconds": 5.0,
@@ -137,16 +161,82 @@ async def _arun(args: argparse.Namespace) -> int:
     )
     written = await runner.run()
     print(f"selfplay: wrote {len(written)} record(s) to {args.output_dir}")
-    if args.eval_summary and written:
+    # Eval-summary is the parent's job in parallel mode (workers shouldn't
+    # print partial summaries). worker_count==1 here means either serial or
+    # a single spawned worker; only the latter sets it via _run_parent.
+    if args.eval_summary and args.worker_count == 1 and written:
         summary = aggregate(iter(written))
         print()
         print(format_summary(summary))
     return 0
 
 
+def _spawn_workers(args: argparse.Namespace) -> int:
+    """Parent path for `--parallel-hands N>1`: pre-flight the output dir,
+    spawn N worker subprocesses, wait for all to finish, aggregate the
+    eval-summary across the shared dir.
+    """
+    n = args.parallel_hands
+    if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.resume:
+        print(
+            f"output dir {args.output_dir} is non-empty; pass --resume to continue",
+            file=sys.stderr,
+        )
+        return 2
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    base_argv = [
+        sys.executable,
+        "-m",
+        "mahjong",
+        "selfplay",
+        "--master-seed",
+        hex(args.master_seed),
+        "--hands",
+        str(args.hands),
+        "--bots",
+        args.bots,
+        "--ruleset",
+        args.ruleset,
+        "--output-dir",
+        str(args.output_dir),
+        "--bot-rotation",
+        args.bot_rotation,
+        # Workers always resume — they may see siblings' records mid-run.
+        "--resume",
+        "--worker-count",
+        str(n),
+    ]
+    procs: list[subprocess.Popen[bytes]] = []
+    for worker_id in range(n):
+        cmd = [*base_argv, "--worker-id", str(worker_id)]
+        procs.append(subprocess.Popen(cmd, env=os.environ.copy()))
+
+    rc = 0
+    for proc in procs:
+        if proc.wait() != 0:
+            rc = proc.returncode or 1
+    if rc != 0:
+        return rc
+
+    if args.eval_summary:
+        records = sorted(args.output_dir.glob("*.jsonl"))
+        if records:
+            summary = aggregate(iter(records))
+            print()
+            print(format_summary(summary))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_argparser()
     args = parser.parse_args(argv)
+    if args.parallel_hands < 1:
+        print(f"--parallel-hands must be >= 1, got {args.parallel_hands}", file=sys.stderr)
+        return 2
+    if args.parallel_hands > 1 and args.worker_count == 1:
+        # Top-level parent invocation in parallel mode.
+        return _spawn_workers(args)
     return asyncio.run(_arun(args))
 
 
