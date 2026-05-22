@@ -22,6 +22,7 @@ from mahjong.adapters.bot_runner import BotRunnerAdapter
 from mahjong.bots.botzone_serializer import BotzoneCsmSerializer
 from mahjong.bots.manifest import BotManifest, parse_manifest
 from mahjong.bots.registry import BotRegistry
+from mahjong.selfplay.eval import aggregate, format_summary
 from mahjong.selfplay.runner import SelfPlayRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +86,11 @@ def _build_argparser() -> argparse.ArgumentParser:
         choices=["none", "round-robin"],
         default="none",
     )
+    parser.add_argument(
+        "--eval-summary",
+        action="store_true",
+        help="Print per-seat and per-bot stats after the run.",
+    )
     return parser
 
 
@@ -131,6 +137,10 @@ async def _arun(args: argparse.Namespace) -> int:
     )
     written = await runner.run()
     print(f"selfplay: wrote {len(written)} record(s) to {args.output_dir}")
+    if args.eval_summary and written:
+        summary = aggregate(iter(written))
+        print()
+        print(format_summary(summary))
     return 0
 
 

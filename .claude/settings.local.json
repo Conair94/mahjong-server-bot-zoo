@@ -70,7 +70,16 @@
       "Bash(mypy mahjong/adapters/bot_runner.py mahjong/bots/botzone_serializer.py mahjong/bots/sdk/)",
       "Bash(pytest tests/adapters/ tests/bots/)",
       "Bash(pytest tests/adapters/test_layer5_e2e.py -v)",
-      "Bash(python -m pytest tests/selfplay/ -x --no-header -q)"
+      "Bash(python -m pytest tests/selfplay/ -x --no-header -q)",
+      "Bash(python -m pytest tests/selfplay/test_eval.py -v)",
+      "Bash(python -c \"import pytest\")",
+      "Bash(find /opt/miniconda3 ~/.local -name \"pytest\" 2>/dev/null | head -5 && find /usr/local /usr -name \"pytest\" 2>/dev/null | head -5)",
+      "Read(//opt/miniconda3/**)",
+      "Read(//usr/local/**)",
+      "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/python -m pytest tests/selfplay/test_eval.py -v)",
+      "Bash(.venv/bin/python -m pytest tests/selfplay/test_eval.py -v)",
+      "Bash(.venv/bin/python -m mypy mahjong/selfplay/eval.py mahjong/cli/selfplay.py)",
+      "Bash(.venv/bin/python -m pytest tests/ -x -q)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

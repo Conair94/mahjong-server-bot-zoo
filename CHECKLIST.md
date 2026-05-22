@@ -365,13 +365,20 @@ Spec: [selfplay-harness.md § Concurrency](docs/specs/selfplay-harness.md).
       `--parallel-hands 4` run from the same `master_seed` produce the same
       set of records (set equality on `hand_id`; per-hand byte-identical).
 
-### Step 6.1c — `--eval-summary` aggregator (deferred until 6.1a green)
+### Step 6.1c — `--eval-summary` aggregator
 
 Spec: [selfplay-harness.md § Eval-summary output](docs/specs/selfplay-harness.md).
 
-- [ ] Aggregator over a directory of records computes per-seat and
-      per-bot win rate, avg score/hand, deal-in rate, avg fan when won.
-- [ ] Eval-summary correctness fixture (spec fixture 6).
+- [x] `mahjong/selfplay/eval.py` — `parse_record`, `aggregate`, `format_summary`;
+      `HandOutcome`, `SeatSummary`, `EvalSummary` dataclasses.
+- [x] Eval-summary correctness fixture (spec fixture 6): 19 unit tests in
+      `tests/selfplay/test_eval.py` covering per-seat and per-bot stats
+      (win rate, avg score, deal-in rate, avg fan when won), wall-exhausted
+      hands, malformed-record skipping, and format output.
+- [x] `--eval-summary` flag wired into `mahjong/cli/selfplay.py`; printed
+      after the run when any records were written.
+- [x] **Gate:** 400 tests passed, 2 skipped (Linux-only sandbox); mypy clean
+      on `mahjong/selfplay/eval.py` and `mahjong/cli/selfplay.py`. *(Local 2026-05-22.)*
 
 ---
 
