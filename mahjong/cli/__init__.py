@@ -19,6 +19,10 @@ def main(argv: list[str] | None = None) -> int:
         from mahjong.cli.play_test import main as play_test_main
 
         return play_test_main(args)
+    if sub == "selfplay":
+        from mahjong.cli.selfplay import main as selfplay_main
+
+        return selfplay_main(args)
     print(f"unknown subcommand: {sub!r}", file=sys.stderr)
     _usage()
     return 1
@@ -28,3 +32,4 @@ def _usage() -> None:
     print("usage: mahjong <subcommand> [args...]", file=sys.stderr)
     print("subcommands:", file=sys.stderr)
     print("  play-test    drive one hand with four canned seats", file=sys.stderr)
+    print("  selfplay     headless N-hand self-play between bots", file=sys.stderr)

@@ -104,6 +104,12 @@ Every event has these common fields:
     "version": "0.1.0",
     "git_sha": "abc123def456",
     "host": "lockhart-mini"
+  },
+
+  "meta": {
+    "master_seed": "0xdeadbeef12345678",
+    "hand_index": 7,
+    "source": "selfplay"
   }
 }
 ```
@@ -115,6 +121,7 @@ The header is sufficient to reconstruct `initial_state(ruleset, seed)`. Everythi
 - `identity.kind` is `"human" | "bot" | "canned" | "spectator-driver"` etc.; full enum in [seat-port.md](seat-port.md).
 - `seed` is the value passed to `initial_state`. Combined with `ruleset.config_hash`, this *fully determines* the initial deal — no need to record the wall contents.
 - `server.version` and `server.git_sha` are post-mortem hooks. "Which build of the server produced this record?"
+- `meta` is an **optional** free-form object for run-level provenance. Live-table records omit it. Self-play runs populate `master_seed` (hex string), `hand_index` (the position in the run), and `source` (`"selfplay"`). The pairing `(master_seed, hand_index)` lets a record be traced back to its run without consulting the run config. Per-hand `seed` is still authoritative for replay — `meta` is provenance, not redundant input.
 
 ### `DEAL` (seq=1, exactly one per hand)
 

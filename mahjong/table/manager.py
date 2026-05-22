@@ -118,6 +118,7 @@ async def run_hand(
     observe_timeout_seconds: float = 0.5,
     seated_timeout_seconds: float = 1.0,
     strike_limit: int = 3,
+    meta: dict[str, Any] | None = None,
 ) -> GameState:
     """Drive one hand from initial deal to TERMINAL.
 
@@ -132,25 +133,26 @@ async def run_hand(
     writer = RecordWriter(record_path)
 
     # --- HEADER ---
-    writer.write_event(
-        {
-            "event": "HEADER",
-            "turn_index": 0,
-            "phase": "DEAL",
-            "ts": _now_ts(),
-            "format_version": 1,
-            "hand_id": hand_id,
-            "match_id": None,
-            "hand_index_in_match": 0,
-            "ruleset": dict(ruleset),
-            "seed": str(seed),
-            "seats": [
-                {"seat": i, "wind": f"F{i + 1}", "identity": dict(adapters[i].identity)}
-                for i in range(4)
-            ],
-            "server": dict(server_info),
-        }
-    )
+    header: dict[str, Any] = {
+        "event": "HEADER",
+        "turn_index": 0,
+        "phase": "DEAL",
+        "ts": _now_ts(),
+        "format_version": 1,
+        "hand_id": hand_id,
+        "match_id": None,
+        "hand_index_in_match": 0,
+        "ruleset": dict(ruleset),
+        "seed": str(seed),
+        "seats": [
+            {"seat": i, "wind": f"F{i + 1}", "identity": dict(adapters[i].identity)}
+            for i in range(4)
+        ],
+        "server": dict(server_info),
+    }
+    if meta is not None:
+        header["meta"] = dict(meta)
+    writer.write_event(header)
 
     # --- seated ---
     contexts: list[SeatContext] = [

@@ -280,13 +280,98 @@ Scope split (per 2026-05-21 conversation):
 
 ## Layer 6 — self-play harness
 
-### Step 6.1 — `selfplay` subcommand
+Split (per 2026-05-21 conversation) into 6.1a (serial runner + resume), 6.1b
+(parallel-hands workers), 6.1c (eval-summary aggregator). Each ships with a
+clean gate; 6.1a is the load-bearing piece — parallel and eval are
+optimizations layered on top of the same serial driver.
 
-Spec: [selfplay-harness.md](docs/specs/selfplay-harness.md).
+### Step 6.1a — Serial runner, seeds, resume, rotation
 
-- [ ] Tests written: 10-hand determinism golden; crash recovery; parallel-equivalence; god-view privacy gate; rotation determinism; eval-summary correctness.
-- [ ] `mahjong/cli/selfplay.py`, `mahjong/selfplay/{seeds,runner,parallel}.py`.
-- [ ] **Gate:** harness produces deterministic, resumable runs.
+Spec: [selfplay-harness.md § Seed management, § Run lifecycle, § `SelfPlayDriverAdapter`](docs/specs/selfplay-harness.md), [record-format.md § HEADER `meta`](docs/specs/record-format.md).
+
+Scope decisions (implementer-level, not spec changes):
+
+- `meta` in HEADER is opt-in via a new `run_hand(meta=...)` kwarg. Live-table
+  callers leave it unset; self-play stamps `{master_seed, hand_index, source}`.
+  Record-format addendum landed alongside this step.
+- Bot resolution: `--bots b_rule_v1,b_random,...` looks up each `bot_id` in a
+  `BotRegistry` populated from a default manifest set. The CLI accepts
+  `--manifest-dir` to override; default is `bots/python-reference/`.
+- `b_random` is added as a tiny in-tree bot (`bots/python-reference/random_bot.py`
+  plus `manifest.json`) — needed for non-trivial rotation tests and to give the
+  default eval recipe in the spec ("rule_v1 vs three randoms") something to
+  resolve.
+- Output dir layout: `{output_dir}/{hand_id}.jsonl` (flat, no date subdir) for
+  self-play. Spec calls for `{year}/{month}/` in live records but says the
+  self-play `output-dir` is "a flag, not the global path"; flat keeps resume
+  scans cheap.
+- Resume scan: list `*.jsonl` in output_dir, read each HEADER, take
+  `max(meta.hand_index) + 1`. Files without `meta.hand_index` (legacy or
+  hand-placed records) are ignored with a warning. Partial records (no
+  FOOTER) are detected by tailing the file and deleted before resume.
+
+- [x] Tests written (before implementation):
+  - [x] `hand_seed(master, idx)` matches the spec-derived formula for
+        `master_seed=0xDEADBEEF12345678, idx ∈ {0,1,7,42,10000}`.
+  - [x] `hand_seed` decorrelation: 64 indices give 64 distinct seeds, and
+        master+1 produces a disjoint set.
+  - [x] `rotate_bots(bots, hand_index)` round-robin: identity at idx 0;
+        right-cyclic shift by `idx % 4`; deterministic across calls.
+  - [x] Serial 3-hand run: produces three `.jsonl` records; each HEADER
+        carries the expected `meta.master_seed` (hex string) and
+        `meta.hand_index`; each `seed` field matches `hand_seed(master, idx)`.
+  - [x] Determinism: a 2-hand serial run produces byte-identical files
+        across two invocations from a clean output dir (with `ts`
+        monkey-patched — wall-clock is the only non-determinism source).
+  - [x] Resume — refusal: rerunning into a non-empty output dir without
+        `resume=True` raises `RunnerError`.
+  - [x] Resume — happy path: run 2 hands, then run again with `resume=True,
+        hands=4`; finds hands 0/1, plays hands 2/3, end state is 4 records
+        with `meta.hand_index` ∈ {0,1,2,3}.
+  - [x] Resume — partial cleanup: a HEADER-only file in the output dir is
+        deleted on `resume=True` and that `hand_index` is replayed.
+  - [x] Privacy gate: default mode (no driver) — each adapter's
+        `seated().initial_view["seats"][other]["concealed"]` is the
+        count-only `SeatViewOpponent` dict, never a tile list;
+        `allow_god_view` is unset.
+  - [x] Rotation determinism: `rotation="round-robin"` yields the expected
+        seat assignment per `hand_index`; HEADER `seats[i].identity.bot_id`
+        reflects the rotation.
+  - [x] CLI smoke: `selfplay_main([...])` exits 0 and writes one record;
+        unknown bot_id returns exit code 2.
+- [x] `mahjong/selfplay/seeds.py` — `hand_seed`, `rotate_bots`.
+- [x] `mahjong/selfplay/runner.py` — `SelfPlayRunner` orchestrating one run:
+      resume scan, per-hand seat assignment, per-hand `run_hand` invocation,
+      `meta` plumbing.
+- [x] `mahjong/cli/selfplay.py` — `argparse` subcommand wired into
+      `mahjong/cli/__init__.py`.
+- [x] `bots/python-reference/random_bot.py` for `b_random`. (No on-disk
+      manifest JSON in 6.1a; the CLI builds the default `BotRegistry` from
+      in-code factories.)
+- [x] `mahjong/cli/__init__.py` — `selfplay` subcommand alongside `play-test`.
+- [x] `mahjong/table/manager.py` — `run_hand` gains optional `meta` kwarg;
+      live-table callers omit it.
+- [x] **Gate:** serial runs are deterministic, resumable, and respect the
+      privacy contract. *(Local 2026-05-21: 26 selfplay tests pass; full
+      suite 381 passed, 2 skipped (Linux-only sandbox); ruff format + lint
+      clean; mypy clean across 46 source files. Cross-platform CI pending push.)*
+
+### Step 6.1b — `--parallel-hands` workers (deferred until 6.1a green)
+
+Spec: [selfplay-harness.md § Concurrency](docs/specs/selfplay-harness.md).
+
+- [ ] Subprocess-worker model with disjoint `hand_index` partitions per spec.
+- [ ] Parallel-equivalence fixture (spec fixture 3): a serial run and a
+      `--parallel-hands 4` run from the same `master_seed` produce the same
+      set of records (set equality on `hand_id`; per-hand byte-identical).
+
+### Step 6.1c — `--eval-summary` aggregator (deferred until 6.1a green)
+
+Spec: [selfplay-harness.md § Eval-summary output](docs/specs/selfplay-harness.md).
+
+- [ ] Aggregator over a directory of records computes per-seat and
+      per-bot win rate, avg score/hand, deal-in rate, avg fan when won.
+- [ ] Eval-summary correctness fixture (spec fixture 6).
 
 ---
 

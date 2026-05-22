@@ -69,7 +69,8 @@
       "Bash(git submodule *)",
       "Bash(mypy mahjong/adapters/bot_runner.py mahjong/bots/botzone_serializer.py mahjong/bots/sdk/)",
       "Bash(pytest tests/adapters/ tests/bots/)",
-      "Bash(pytest tests/adapters/test_layer5_e2e.py -v)"
+      "Bash(pytest tests/adapters/test_layer5_e2e.py -v)",
+      "Bash(python -m pytest tests/selfplay/ -x --no-header -q)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
