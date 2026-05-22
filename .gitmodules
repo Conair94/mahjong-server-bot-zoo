@@ -1,0 +1,3 @@
+[submodule "bots/sample-botzone"]
+	path = bots/sample-botzone
+	url = https://github.com/ailab-pku/Chinese-Standard-Mahjong
