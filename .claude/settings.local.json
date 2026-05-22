@@ -61,7 +61,15 @@
       "Bash(pytest tests/adapters/test_bot_runner.py -v)",
       "Bash(pytest tests/adapters/test_bot_runner.py)",
       "Bash(pytest tests/adapters/)",
-      "Bash(mypy mahjong/)"
+      "Bash(mypy mahjong/)",
+      "Bash(git ls-remote *)",
+      "Bash(rm -rf csm-localsim)",
+      "Bash(git clone *)",
+      "Bash(grep -nB1 -A5 'event_kind\\\\|\"DEAL\"\\\\|\"DRAW\"\\\\|\"DISCARD\"\\\\|\"CLAIM\\\\|\"HAND_END\"' mahjong/table/manager.py)",
+      "Bash(git submodule *)",
+      "Bash(mypy mahjong/adapters/bot_runner.py mahjong/bots/botzone_serializer.py mahjong/bots/sdk/)",
+      "Bash(pytest tests/adapters/ tests/bots/)",
+      "Bash(pytest tests/adapters/test_layer5_e2e.py -v)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

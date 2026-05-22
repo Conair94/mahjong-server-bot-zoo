@@ -23,8 +23,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import Callable
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from mahjong.adapters.base import (
     BotIdentity,
@@ -48,23 +47,51 @@ _ACK_MODE_VALUES = ("long_running", "short_running")
 
 AckMode = Literal["long_running", "short_running"]
 
-HistorySerializer = Callable[[list[dict[str, Any]], Prompt], str]
 
+class HistorySerializer(Protocol):
+    """Per-seat stateful serializer used by `BotRunnerAdapter`.
 
-def default_history_serializer(history: list[dict[str, Any]], prompt: Prompt) -> str:
-    """Placeholder JSON serializer used by Step 5.2.
+    Implementations accumulate observe events between decides and emit a
+    wire payload for the bot on each decide. After the bot replies, the
+    adapter calls `record_response` with the parsed action so the next
+    payload can reflect it.
 
-    Step 5.3 replaces this with a Botzone-CSM typed-line serializer. The SDK's
-    `parse_request` understands this default; test bots written against the
-    SDK don't need to know about either format until 5.3.
+    Two implementations ship with the project:
+      - `JsonHistorySerializer` (Step 5.2 default) — opaque JSON-per-decide.
+      - `mahjong.bots.botzone_serializer.BotzoneCsmSerializer` (Step 5.3) —
+        Botzone CSM `{"requests":[...], "responses":[...]}` envelope.
     """
-    payload = {
-        "kind": prompt["kind"],
-        "legal_actions": list(prompt["legal_actions"]),
-        "default_action": prompt["default_action"],
-        "history_len": len(history),
-    }
-    return json.dumps(payload)
+
+    def on_observe(self, event: dict[str, Any], view: dict[str, Any]) -> None: ...
+    def on_decide(self, prompt: Prompt) -> str: ...
+    def record_response(self, action: Action) -> None: ...
+
+
+class JsonHistorySerializer:
+    """Default serializer: emits the prompt's `kind` + `legal_actions` as JSON.
+
+    Used by SDK-based test bots that pick `default_action` and reply. Does
+    not maintain a per-seat history view — designed for tests, not for
+    judge-faithful bots.
+    """
+
+    def __init__(self) -> None:
+        self._observed = 0
+
+    def on_observe(self, event: dict[str, Any], view: dict[str, Any]) -> None:
+        self._observed += 1
+
+    def on_decide(self, prompt: Prompt) -> str:
+        payload = {
+            "kind": prompt["kind"],
+            "legal_actions": list(prompt["legal_actions"]),
+            "default_action": prompt["default_action"],
+            "history_len": self._observed,
+        }
+        return json.dumps(payload)
+
+    def record_response(self, action: Action) -> None:
+        return None
 
 
 # --- Action-string parsing (Botzone CSM grammar) ---------------------------
@@ -183,11 +210,13 @@ class BotRunnerAdapter:
         self,
         manifest: BotManifest,
         *,
-        history_serializer: HistorySerializer = default_history_serializer,
+        history_serializer: HistorySerializer | None = None,
         hello_timeout_override_s: float | None = None,
     ) -> None:
         self._manifest = manifest
-        self._history_serializer = history_serializer
+        self._history_serializer: HistorySerializer = (
+            history_serializer if history_serializer is not None else JsonHistorySerializer()
+        )
         self._hello_timeout_override_s = hello_timeout_override_s
 
         self.identity = {
@@ -199,7 +228,6 @@ class BotRunnerAdapter:
 
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
-        self._history: list[dict[str, Any]] = []
         self._mode: AckMode = "long_running"
         self._handshake_skipped: bool = False
 
@@ -210,7 +238,7 @@ class BotRunnerAdapter:
         await self._do_hello(ctx)
 
     async def observe(self, event: dict[str, Any], view: SeatView) -> None:
-        self._history.append(event)
+        self._history_serializer.on_observe(event, cast(dict[str, Any], view))
 
     async def decide(self, prompt: Prompt) -> Action:
         # In short-running mode, the subprocess exits after each response;
@@ -228,7 +256,7 @@ class BotRunnerAdapter:
             min(budget_s, deadline_remaining) if deadline_remaining > 0 else budget_s
         )
 
-        request_body = self._history_serializer(self._history, prompt)
+        request_body = self._history_serializer.on_decide(prompt)
         await self._write(request_body + "\n" + REQUEST_END_SENTINEL + "\n")
 
         assert self._proc is not None
@@ -262,7 +290,7 @@ class BotRunnerAdapter:
 
         action_line = next((line for line in lines if line.strip()), "")
         try:
-            return parse_action_string(action_line, prompt)
+            action = parse_action_string(action_line, prompt)
         except _ParseError as e:
             err = SeatError(
                 f"bot {self._manifest.bot_id} parse error: {e} (bytes_read={bytes_read})"
@@ -270,6 +298,8 @@ class BotRunnerAdapter:
             err.bot_error = "parse_error"  # type: ignore[attr-defined]
             err.raw_response = action_line[:_RAW_RESPONSE_CAP]  # type: ignore[attr-defined]
             raise err from e
+        self._history_serializer.record_response(action)
+        return action
 
     async def left(self, reason: LeaveReason) -> None:
         await self._teardown()
@@ -425,6 +455,6 @@ __all__ = [
     "AckMode",
     "BotRunnerAdapter",
     "HistorySerializer",
-    "default_history_serializer",
+    "JsonHistorySerializer",
     "parse_action_string",
 ]

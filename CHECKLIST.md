@@ -248,9 +248,33 @@ Scope decisions (implementer-level, not spec changes):
 
 Spec: [bot-runner-protocol.md fixture 1](docs/specs/bot-runner-protocol.md), [server-plan.md S1](docs/server-plan.md).
 
-- [ ] `bots/sample-botzone/` vendored or submoduled.
-- [ ] Tests written: four-sample-bot hand completes (each action type covered across fixtures); Botzone judge accepts exported log.
-- [ ] **Gate: S1 exit artifact.** Judge-accepted records checked in.
+Scope split (per 2026-05-21 conversation):
+
+- **5.3a (this layer):** vendor upstream, build the Botzone CSM history serializer, run four in-tree Python reference bots through a hand, confirm Botzone log export is structurally well-formed.
+- **5.3b (deferred):** compile the upstream C++ `sample-bot-Botzone/sample.cpp` + judge from `bots/sample-botzone/judge/`, run four C++ bots through a hand, feed the exported log to the judge, gate on judge acceptance. Blocked on a C++ toolchain + `jsoncpp` + `MahjongGB-CPP` build setup (none in repo today). This is the **real S1 exit** — the file currently calling the step "done" only refers to 5.3a.
+
+#### 5.3a — In-tree Botzone integration
+
+- [x] `bots/sample-botzone/` added as a git submodule pointing at `https://github.com/ailab-pku/Chinese-Standard-Mahjong` (master, commit `5e81821`). Fetched via `git submodule update --init`.
+- [x] `bots/python-reference/bot.py` — in-tree Python rule-based bot using `mahjong.bots.sdk` + `latest_botzone_request`. Plays the drawn tile (tsumogiri); PASSes on all claims.
+- [x] `mahjong/bots/botzone_serializer.py` — `BotzoneCsmSerializer(seat)` with `on_observe` / `on_decide` / `record_response`. Mirrors `mahjong/records/botzone_export.py`'s typed-line conventions (init `0`, deal `1`, draw `2`, public events `3`); preserves the response-length invariant.
+- [x] `mahjong/adapters/bot_runner.py` refactored: `HistorySerializer` is now a Protocol (was a plain Callable); `JsonHistorySerializer` is the Step 5.2 default; Botzone serialization plugs in by passing `BotzoneCsmSerializer` to the adapter.
+- [x] `mahjong/bots/sdk/__init__.py` — `latest_botzone_request(envelope)` helper for bots that match on type codes.
+- [x] `bots/README.md` documents the submodule + deferred 5.3b compilation.
+- [x] Tests:
+  - [x] `tests/bots/test_botzone_serializer.py` — 16 unit tests covering init/deal/draw/discard/claim mapping, private-vs-public visibility per `judge.cpp` `roundStage`, response invariant, CHI middle-tile encoding, `action_to_botzone_string` round-trip.
+  - [x] `tests/bots/test_python_reference_bot.py` — 4 unit tests on the reference bot's `decide` branches.
+  - [x] `tests/adapters/test_layer5_e2e.py::test_four_python_reference_bots_play_a_hand` — gate: four `BotRunnerAdapter` + `BotzoneCsmSerializer` pairs complete a hand via `mahjong.table.manager.run_hand`; record reaches FOOTER; `export_to_botzone` produces a non-empty log with non-empty token lists.
+  - [x] `tests/adapters/test_layer5_e2e.py::test_botrunner_works_with_canned_seats` — sanity: 1 Botzone-serializer bot + 3 CannedAdapters also completes.
+- [x] **Gate (5.3a):** four-bot hand completes; structural Botzone-log export check passes; full suite 355 passed, 2 skipped (Linux-only sandbox); ruff + mypy clean. *(Local 2026-05-21.)*
+
+#### 5.3b — Deferred (real S1 exit)
+
+- [ ] Build script for the C++ sample bot. Likely a `bots/sample-botzone-build.sh` that compiles `sample-bot-Botzone/sample.cpp` with `jsoncpp` + `MahjongGB-CPP` and produces an executable consumable by `BotRunnerAdapter` (`limits.command` points at the binary).
+- [ ] Build script for the judge (`bots/sample-botzone/judge/main.cpp`). Same toolchain.
+- [ ] Per-event-prompt mode for the Botzone serializer — currently the serializer batches events between decides; the real judge expects one request per state-change with a response from every bot. Adding this without quadrupling round-trips needs a fake-decide path that auto-PASSes for passive observations without hitting the subprocess. Likely a new "auto-pass for observe events that don't trigger this seat's decide" hook on the serializer + adapter.
+- [ ] Judge-acceptance fixture: run four C++ bots → export log → feed to the judge binary → assert no disagreement on legality or scoring. Each of `PASS`, `PLAY`, `PENG`, `CHI`, `GANG`, `BUGANG`, `HU` represented at least once across the fixture suite.
+- [ ] **Gate (5.3b):** judge-accepted record set checked in.
 
 ---
 

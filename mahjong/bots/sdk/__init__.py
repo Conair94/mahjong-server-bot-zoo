@@ -54,8 +54,9 @@ def parse_request(lines: list[str]) -> dict[str, Any]:
     """Parse the default JSON request body produced by BotRunnerAdapter.
 
     The body is a single JSON object on one line, followed by zero or more
-    blank lines and the REQUEST_END sentinel. Bots that target the Botzone
-    typed-line format (Step 5.3) should bypass this helper.
+    blank lines and the REQUEST_END sentinel. Works for both the
+    `JsonHistorySerializer` payload (`{"kind","legal_actions",...}`) and the
+    `BotzoneCsmSerializer` envelope (`{"requests":[...], "responses":[...]}`).
     """
     payload = next((line for line in lines if line.strip()), "")
     if not payload:
@@ -67,6 +68,27 @@ def parse_request(lines: list[str]) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         return {"raw": payload}
     return parsed
+
+
+def latest_botzone_request(envelope: dict[str, Any]) -> tuple[str, list[str]]:
+    """Extract the most recent typed-line from a Botzone envelope.
+
+    Returns `(type_code, tokens)` where `type_code` is the first space-
+    separated token of `requests[-1]` and `tokens` is the remainder. Useful
+    for bots that match on type codes:
+
+        code, args = latest_botzone_request(envelope)
+        if code == "2":  # own draw
+            return f"PLAY {args[0]}"
+        return "PASS"
+    """
+    requests = envelope.get("requests") or []
+    if not requests:
+        return "", []
+    parts = str(requests[-1]).split()
+    if not parts:
+        return "", []
+    return parts[0], parts[1:]
 
 
 def run_bot(
@@ -125,6 +147,7 @@ def run_bot(
 __all__ = [
     "REQUEST_END_SENTINEL",
     "RESPONSE_END_SENTINEL",
+    "latest_botzone_request",
     "parse_request",
     "run_bot",
 ]
