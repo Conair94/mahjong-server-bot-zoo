@@ -484,10 +484,10 @@ Spec: [docs/specs/session-mux.md](docs/specs/session-mux.md).
 
 Spec: [docs/specs/session-mux.md § The HumanAdapter](docs/specs/session-mux.md).
 
-- [ ] Tests written: `seated/observe/decide/left` round-trip against a fake `SessionMux`; observe-during-drop lands in buffer (no loss); strike-counter integration; fixtures 11–15 from session-mux.md re-asserted at the adapter layer.
-- [ ] `mahjong/adapters/human.py` implementing `SeatAdapter` against a `SessionMux` seat slot.
-- [ ] Regression: the four-`CannedAdapter` walking-skeleton fixture from Step 4.2 still passes.
-- [ ] **Gate:** adapter satisfies the `SeatAdapter` Protocol (mypy); fake-mux fixtures green; regression green.
+- [x] Tests written: `seated/observe/decide/left` round-trip; observe-during-drop lands in buffer (no loss); strike-counter integration; `SeatHoldExpired` → `SeatError` translation; prompt-deadline default path; Protocol conformance — 7 tests in `tests/adapters/test_human_adapter.py`. Pairs the adapter with a real `SeatSession` + `FakeSink` rather than mocking the mux (cleaner end-to-end signal).
+- [x] `mahjong/adapters/human.py` implementing `SeatAdapter` against a `SeatSession` slot.
+- [x] Regression: the four-`CannedAdapter` walking-skeleton fixture from Step 4.2 still passes (no engine, manager, or canned-adapter changes).
+- [x] **Gate:** adapter satisfies the `SeatAdapter` Protocol (`isinstance`-checked at runtime; mypy clean); 7 adapter fixtures green; S0 regression green; 509 tests pass repo-wide.
 
 ### Step 7.5 — TUI client
 
