@@ -163,7 +163,7 @@ GameState = {
 A bot or human player sees less than the canonical state. The projection is a pure function:
 
 ```python
-def project(state: GameState, seat: int) -> SeatView: ...
+def project(state: GameState, seat: int | None) -> SeatView: ...
 ```
 
 Where `SeatView` is the same shape as `GameState` except:
@@ -174,6 +174,32 @@ Where `SeatView` is the same shape as `GameState` except:
 - `last_drawn` is omitted entirely — it's an engine hint, not a public field. Opponents already see the act of drawing via turn order; they don't see the tile.
 - `pending_claims` is filtered to only include this seat's own opportunities.
 - `terminal.fan` and `terminal.score_delta` are full (everyone sees the score).
+
+### Public (spectator) projection: `seat = None`
+
+`project(state, seat=None)` returns the *public* view that no specific seat owns. Used for spectators and any non-privileged observer. The view shape is identical to a per-seat `SeatView`; only the privacy rules tighten:
+
+- For **every** seat (no own-seat exception), `seats[i].concealed` is replaced with `{"count": N}`. A spectator never sees concealed tiles.
+- `pending_claims` is `[]`. A public observer holds no claim opportunities of their own.
+- All other rules carry over from the per-seat projection: `wall.remaining` hidden, `rng` omitted, `last_drawn` omitted, `terminal` fully visible (fan, score_delta, final_hands, winner).
+- Meld tile-identity (including for `GANG_CONCEALED`) is preserved, matching the existing opponent-view behavior. Tightening this is out of scope for the v1 amendment; if/when we tighten it, it lands as a second amendment in its own step.
+
+Two callers, one function. The `seat: int | None` widening is *additive*: existing `seat: int` callers behave identically; the new `None` value adds the spectator/public path.
+
+### Per-event projection: `project_event`
+
+The engine's per-step `diff_to_events` emits unprojected events (full tile identity). Adapters need projected events the same way they need projected states. The companion pure function:
+
+```python
+def project_event(event: dict, seat: int | None) -> dict: ...
+```
+
+Strips private fields from a single record event for the given recipient:
+
+- `DRAW`: the `tile` field is private to the drawing seat. Stripped when `seat is None` or `seat != event["seat"]`.
+- All other event kinds (`DISCARD`, `CLAIM_WINDOW`, `CLAIM_DECISION`, `CLAIM_RESOLUTION`, `HAND_END`) are publicly visible in full. `HAND_END.final_hands` is intentionally public — terminal reveal is a feature, not a leak.
+
+The function returns a fresh dict; the input is never mutated. Idempotent: `project_event(project_event(e, s), s) == project_event(e, s)` for any `(e, s)`.
 
 The projection is what every adapter, bot, and overlay actually receives. The full canonical state is only seen by the engine, the table manager, the record store (writes the unprojected event log), and the self-play driver (which is allowed god-mode for training purposes — see [research-ideas.md](../research-ideas.md) for oracle-guiding, which deliberately uses this).
 
@@ -324,8 +350,10 @@ These are the fixtures S0 must produce to claim conformance with this spec. They
 
 1. **Tile-token round-trip.** Every legal tile token serializes to itself; every Botzone-format example file we pull in parses to tokens matching this spec.
 2. **Canonical-form invariance.** Two states constructed by different paths but representing the same game position serialize to byte-identical JSON. (Specifically: concealed tiles are sorted; meld order matches call order; phase is set correctly.)
-3. **Projection privacy.** For every (state, seat) pair in the fixture suite, `project(state, seat)` contains zero tile tokens from other seats' concealed hands and zero tiles from the wall remaining-list. Automated check, not manual review.
-4. **Projection reversibility for own seat.** For every state, `project(state, seat).seats[seat] == state.seats[seat]` (the projecting seat sees their own concealed hand unchanged).
+3. **Projection privacy.** For every (state, seat) pair in the fixture suite (including `seat=None`), `project(state, seat)` contains zero tile tokens from other seats' concealed hands and zero tiles from the wall remaining-list. For `seat=None`, *every* seat's `concealed` is the count form. Automated check, not manual review.
+4. **Projection reversibility for own seat.** For every state, `project(state, seat).seats[seat] == state.seats[seat]` (the projecting seat sees their own concealed hand unchanged). For `seat=None`, no such reversibility — every seat appears as count form.
+4a. **Public-projection consistency.** For every state and every seat S in 0..3, `project(state, None).seats[S]` equals the opponent-form view of seat S as it appears in `project(state, S')` for any `S' != S` (public fields agree across viewers).
+4b. **`project_event` privacy.** For every event in the fixture suite, `project_event(event, None)` strips the `DRAW.tile` field; `project_event(draw, seat=draw.seat)` preserves it; `project_event(draw, seat=other)` strips it. All other event kinds are preserved field-for-field. Idempotency: applying twice equals applying once.
 5. **Phase transitions.** A table of (phase, action_type) → resulting_phase is checked-in; the engine's transitions match the table exhaustively.
 6. **`legal_actions` ∩ `apply_action` consistency.** For every state in the fixture suite and every seat, every action returned by `legal_actions` succeeds when passed to `apply_action`; every action *not* returned raises `IllegalAction`.
 7. **Initial-state determinism.** `initial_state(ruleset, seed)` is byte-identical across runs for the same `(ruleset, seed)` pair. Cross-platform check (Linux + macOS) because Python's RNG is platform-stable but we should prove it.

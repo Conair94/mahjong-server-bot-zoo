@@ -393,8 +393,203 @@ Spec: [selfplay-harness.md § Eval-summary output](docs/specs/selfplay-harness.m
 
 ---
 
-## After Layer 6
+## Layer 7 — networking + human adapter (S2)
 
-Per [docs/server-plan.md](docs/server-plan.md), the next phases are S2 (TUI + WebSocket), S3 (accounts/sessions/SQLite), S4 (analysis overlays), S5 (home rules), S7 (ops hardening), S8 (spectator table). Each gets its own implementation-order pass when its phase comes up.
+Specs drafted 2026-05-22; implementation pending. Build order: state-schema amendment → codec → transport → session-mux → HumanAdapter → TUI → end-to-end S2 gate.
+
+### Step 7.0 — `project(state, seat=None)` amendment
+
+Spec: [docs/specs/state-schema.md § Per-seat projection](docs/specs/state-schema.md) (additive edit).
+
+- [x] Tests written (before implementation):
+  - [x] Public-projection privacy: `project(state, seat=None)` has zero `concealed` tokens anywhere; own-draw events strip `tile`.
+        (Concealed-gang tile-identity elision deferred — preserves existing per-seat opponent-view behavior; see state-schema.md amendment for rationale.)
+  - [x] Round-trip: `project(state, seat=None)` is byte-stable (canonical hash) across two calls.
+        Pinned by `tests/engine/test_state.py::test_project_public_view_byte_stable_across_calls`.
+  - [x] For every seat S: the per-seat projection's public fields agree with the `seat=None` projection.
+        Pinned by `tests/engine/test_state.py::test_project_public_view_agrees_with_opponent_view_per_seat`.
+  - [x] `project_event` privacy: DRAW.tile stripped for public + non-owning seats; idempotent; non-mutating.
+        Pinned by `tests/engine/test_state.py::test_project_event_*` (6 cases).
+- [x] state-schema.md amendment lands: signature `project(state: GameState, seat: int | None)`,
+      public-view rule field-by-field, `project_event` rule, fixtures 3 / 4 / 4a / 4b updated.
+- [x] `mahjong/engine/state.py`: broadened `project`; new `project_event(event, seat)`.
+- [x] Existing callsites (three in `mahjong/table/manager.py`, plus tests) accept `int | None`
+      without behavior change — broadening is additive; full suite green.
+- [x] **Gate:** 422 tests passed (2 Linux-only skipped); ruff clean; mypy clean across 47 source files.
+      *(Local 2026-05-22.)*
+
+### Step 7.1 — Wire-protocol codec
+
+Spec: [docs/specs/wire-protocol.md § Message catalog, § Message framing](docs/specs/wire-protocol.md).
+
+- [x] Tests written: round-trip fixture per message kind (27 parameterized cases covering
+      HELLO server/client, HEARTBEAT, ERROR, AUTH_REQUEST/RESPONSE ok+fail, RESUME,
+      LIST_TABLES/TABLE_LIST, ATTACH/ATTACHED, DETACH client+server, DETACHED,
+      SPECTATE/SPECTATING/STOP_SPECTATING, EVENT, PROMPT, ACTION, HAND_END,
+      CREATE_TABLE/TABLE_CREATED, CLOSE_TABLE); corrupted-frame rejection (invalid JSON,
+      non-object, missing `kind`, non-string `kind`, empty bytes, invalid UTF-8);
+      forward-compat (unknown optional fields tolerated; unknown `kind` raises
+      `WireDecodeError`); privacy (player vs spectator EVENT differ on `DRAW.tile`
+      after `project_event`). Pinned by `tests/wire/test_codec.py` (41 cases).
+- [x] `mahjong/wire/codec.py` with typed `WireMessage` union over 25 TypedDicts;
+      `encode(msg) -> bytes` (sorted-key tight UTF-8 JSON) and `decode(bytes) -> dict`.
+- [x] `mahjong/wire/errors.py` with `WireError` base, `WireDecodeError`,
+      `WireFramingError`, `WireVersionError`.
+- [x] `shutting_down` error code added to [wire-protocol.md § Error codes](docs/specs/wire-protocol.md);
+      `rate_limit` also pinned in the table while we were there.
+- [x] **Gate:** 463 tests passed (2 Linux-only skipped); ruff clean; ruff-format clean;
+      mypy clean across 50 source files. *(Local 2026-05-22.)*
+
+### Step 7.2 — WebSocket transport
+
+Spec: [docs/specs/wire-protocol.md § Transport](docs/specs/wire-protocol.md).
+
+- [ ] Tests written: real-loopback connect → HELLO → close round-trip; subprotocol mismatch refused; binary frame closes with 1003; ping/pong handled transparently; framing-error closes with documented code.
+- [ ] `mahjong/wire/server.py` wrapping `websockets` library; connection-id allocation; HTTP handler hook for `/health`.
+- [ ] **Gate:** real-socket fixtures green; mypy clean on `mahjong/wire/`.
+
+### Step 7.3 — Session multiplexer
+
+Spec: [docs/specs/session-mux.md](docs/specs/session-mux.md).
+
+- [ ] Tests written (all 21 session-mux fixtures):
+  - [ ] State-machine transition coverage (fixture 1).
+  - [ ] Buffered replay in order (fixture 2); overflow → fresh snapshot (fixture 3).
+  - [ ] Pending prompt across reconnect (fixture 4); defaults while HELD (fixture 5).
+  - [ ] Seat-hold expiry no-prompt (fixture 6) and with prompt (fixture 7).
+  - [ ] Same-user takeover (fixture 8); different-user rejection (fixture 9).
+  - [ ] Hand-end while HELD (fixture 10); graceful shutdown drain (fixture 11).
+  - [ ] No-prompt action (12); stale prompt_id (13); illegal action + strike (14); idempotent reconnect cycles (15).
+  - [ ] Spectator subscribe + public projection (16); immediate drop (17); identical streams across spectators (18); max-per-table (19); across-hand subscription (20); own-draw projection rule (21).
+- [ ] `mahjong/sessions/mux.py`: per-table `SessionMux` with seat state machine + spectator set.
+- [ ] `mahjong/sessions/timers.py`: idempotent `asyncio.call_later` wrappers.
+- [ ] **Gate:** all 21 fixtures green; cross-platform CI green; mypy clean.
+
+### Step 7.4 — `HumanAdapter`
+
+Spec: [docs/specs/session-mux.md § The HumanAdapter](docs/specs/session-mux.md).
+
+- [ ] Tests written: `seated/observe/decide/left` round-trip against a fake `SessionMux`; observe-during-drop lands in buffer (no loss); strike-counter integration; fixtures 11–15 from session-mux.md re-asserted at the adapter layer.
+- [ ] `mahjong/adapters/human.py` implementing `SeatAdapter` against a `SessionMux` seat slot.
+- [ ] Regression: the four-`CannedAdapter` walking-skeleton fixture from Step 4.2 still passes.
+- [ ] **Gate:** adapter satisfies the `SeatAdapter` Protocol (mypy); fake-mux fixtures green; regression green.
+
+### Step 7.5 — TUI client
+
+Spec: [docs/specs/tui-client.md](docs/specs/tui-client.md).
+
+- [ ] Tests written: `Pilot`-driven scripted-keystroke fixture per screen (login, lobby, player_table, spectator_table, hand_end); spectator privacy defense-in-depth (rendering refuses to draw concealed tiles even if wire sends them); bilingual EN/ZH label rendering per tile and action; crash-resistance (broken render → placeholder, WebSocket stays open).
+- [ ] `mahjong/tui/app.py` — `MahjongApp(textual.App)` owning the `ConnectionManager`.
+- [ ] `mahjong/tui/screens/{login,lobby,player_table,spectator_table,hand_end}.py`.
+- [ ] `mahjong/tui/render/` — tile rendering, meld layout, discard-pile widget.
+- [ ] `mahjong/cli/tui.py` — `python -m mahjong tui` entry point.
+- [ ] **Gate:** every screen has a passing pilot fixture; spectator-privacy assertion green; locale rendering matches the spec's bilingual rule.
+
+### Step 7.6 — End-to-end S2 fixture
+
+Spec: [docs/s2-s3-plan.md §"S2 exit"](docs/s2-s3-plan.md).
+
+- [ ] Tests written: in-process server + four TUI pilots play one hand → byte-identical record fixture; drop/reconnect inside seat-hold window → no auto-pass marker; drop past window → `AutoPassAdapter` substitution + `replaced_by_auto_pass` event; spectator subscription receives public-projected stream and never a `PROMPT`.
+- [ ] **Gate: S2 exit artifact** checked in. `python -m mahjong serve` + four scripted TUIs play a hand whose record replays byte-identically; drop/reconnect and spectator fixtures green cross-platform.
+
+---
+
+## Layer 8 — accounts, sessions, persistence (S3)
+
+Specs drafted 2026-05-22; implementation pending. Build order: schema → auth → persistence-api → multi-table orchestrator → lifecycle → end-to-end S3 gate.
+
+### Step 8.1 — SQLite schema + migrations
+
+Spec: [docs/specs/sqlite-schema.md](docs/specs/sqlite-schema.md).
+
+- [ ] Tests written (all 12 sqlite-schema.md fixtures):
+  - [ ] Initial migration applies to fresh DB → `schema_version.version == 1` (fixture 1).
+  - [ ] Forward migration placeholder (fixture 2; collapses to fixture 1 at v1).
+  - [ ] Foreign-key enforcement (fixture 3).
+  - [ ] Username uniqueness behavior (fixture 4).
+  - [ ] CHECK constraints (fixtures 5, 6).
+  - [ ] Cascade delete on `hand_index` → `hand_participants` (fixture 7).
+  - [ ] SET NULL on `accounts` → `hand_participants` (fixture 8).
+  - [ ] WAL + busy_timeout (fixture 9).
+  - [ ] Schema snapshot stability (fixture 10) — load-bearing.
+  - [ ] Round-trip hand record (fixture 11); rebuild from records (fixture 12).
+- [ ] `mahjong/persistence/migrations/__init__.py` with `apply_migrations`.
+- [ ] `mahjong/persistence/migrations/0001_initial.py` creating every table + index.
+- [ ] `mahjong/persistence/db.py` opening connection with pragmas.
+- [ ] `tests/persistence/expected_schema.sql` snapshot.
+- [ ] **Gate:** fresh-apply matches snapshot byte-identically; CI matrix green on Linux + macOS.
+
+### Step 8.2 — Auth module
+
+Spec: [docs/specs/auth.md](docs/specs/auth.md).
+
+- [ ] Tests written: argon2id round-trip and PHC format; needs-rehash on parameter change; constant-time failure (wrong-username == wrong-password timing); session token issue/validate/renew/revoke lifecycle; sliding-renewal updates `last_seen_ms`/`expires_at_ms`; bot-account auth via same flow; disabled-account refused without external "disabled" leak.
+- [ ] `mahjong/auth/hasher.py` — argon2-cffi wrapper with documented parameters + `STATIC_INVALID_HASH`.
+- [ ] `mahjong/auth/sessions.py` — token issuance (32-byte hex), validation, renewal, revocation.
+- [ ] `mahjong/auth/service.py` — `authenticate` / `validate_session` flows.
+- [ ] Wire handlers for `AUTH_REQUEST` / `RESUME` calling into `auth.service`.
+- [ ] **Gate:** auth.md fixtures green; mypy strict on `mahjong/auth/`.
+
+### Step 8.3 — Persistence API
+
+Spec: [docs/specs/persistence-api.md](docs/specs/persistence-api.md).
+
+- [ ] Tests written (all 13 persistence-api.md fixtures):
+  - [ ] `reserve_hand` round-trip (1); atomicity (3).
+  - [ ] `finalize_hand` round-trip (2).
+  - [ ] `find_hands_by_account` ordering + pagination (4, 5); `find_hands_by_match` ordering (6).
+  - [ ] `integrity_check` missing files (7), orphans (8), checksum mismatches (9).
+  - [ ] Rebuild from records equivalence (10) — load-bearing.
+  - [ ] Rebuild idempotency (11).
+  - [ ] Session CRUD round-trip (12); account CRUD round-trip (13).
+- [ ] `mahjong/persistence/__init__.py` re-exporting `Persistence`.
+- [ ] `mahjong/persistence/{accounts,sessions,hands,rebuild}.py`.
+- [ ] Table-manager hooks at HEADER and FOOTER write call `reserve_hand` / `finalize_hand`.
+- [ ] **Gate:** all 13 fixtures green; zero raw SQL outside `mahjong/persistence/`.
+
+### Step 8.4 — Multi-table orchestrator
+
+Spec: [docs/specs/server-lifecycle.md § Table registry](docs/specs/server-lifecycle.md).
+
+- [ ] Tests written: two-table isolation (server-lifecycle.md fixture 17); `CREATE_TABLE` rejected post-drain (18); `CLOSE_TABLE` admin gating (non-admin → `permission_denied`); `LIST_TABLES` reflects post-create / post-close transitions.
+- [ ] `mahjong/server/registry.py` — `TableRegistry` with `create_table`/`list_tables`/`get_table`/`close_table`/`drain_all`.
+- [ ] `TableHandle` bundling `TableManager` + `SessionMux`.
+- [ ] Wire handlers for `CREATE_TABLE` / `LIST_TABLES` / `CLOSE_TABLE` (admin-gated).
+- [ ] Shared `Persistence` threaded into every table's hand-end hook.
+- [ ] **Gate:** multi-table fixtures green; single-table regression (Layer 4 walking skeleton) still passes.
+
+### Step 8.5 — Server lifecycle
+
+Spec: [docs/specs/server-lifecycle.md](docs/specs/server-lifecycle.md).
+
+- [ ] Tests written (server-lifecycle.md fixtures 1–16, 18–21):
+  - [ ] Config defaults (1); validation (2); unknown-var warning (3).
+  - [ ] Startup happy path (4); existing DB (5); corrupt DB exit (6); bind failure (7); in-flight ABORTED reconciliation (8).
+  - [ ] `/health` 200/503/500 (9, 10, 11).
+  - [ ] `SIGTERM` drain happy path (12) — load-bearing.
+  - [ ] New-connection rejection during drain (13); drain timeout escalation (14); WAL checkpoint TRUNCATE on drain (15).
+  - [ ] SIGKILL recovery (16) — load-bearing.
+  - [ ] `CREATE_TABLE` rejected after drain begins (18; shared with 8.4 but re-asserted at the lifecycle layer).
+  - [ ] Periodic session cleanup (19); periodic WAL checkpoint (20).
+  - [ ] Structured logging emits valid JSON with no leaked secrets (21).
+- [ ] `mahjong/server/config.py` — `load_config_from_env` with the documented `MAHJONG_*` table and unknown-var warning.
+- [ ] `mahjong/server/logging.py` — structured-JSON formatter + dev console formatter.
+- [ ] `mahjong/server/health.py` — `/health` HTTP handler.
+- [ ] `mahjong/server/lifecycle.py` — startup sequence, signal handlers, `drain()`, periodic tasks.
+- [ ] `mahjong/cli/serve.py` — `python -m mahjong serve` entry point.
+- [ ] **Gate:** every listed fixture green; mypy clean on `mahjong/server/`.
+
+### Step 8.6 — End-to-end S3 fixture
+
+Spec: [docs/s2-s3-plan.md §"S3 exit"](docs/s2-s3-plan.md), [docs/specs/server-lifecycle.md fixture 22](docs/specs/server-lifecycle.md).
+
+- [ ] Tests written: fresh data dir → admin inserts account → TUI logs in → joins a new table → plays one hand against three `CannedAdapter`s → server restart → `find_hands_by_account` returns the played hand. Multi-table fixture re-asserted in the end-to-end harness. Migration-from-previous placeholder (collapses to fresh-apply for v1).
+- [ ] **Gate: S3 exit artifact** checked in. All four bullets in [docs/server-plan.md § S3 exit criteria](docs/server-plan.md) are green and checked in.
+
+---
+
+## After Layer 8
+
+Per [docs/server-plan.md](docs/server-plan.md), the next phases are S4 (analysis overlays), S5 (home rules), S7 (ops hardening), S8 (spectator table). Each gets its own implementation-order pass when its phase comes up.
 
 Per the AI plan, training work begins after the server is hostable (post-S3) and the self-play harness can generate corpus data (after Layer 6 here).

@@ -25,6 +25,18 @@ Tier 2 specs (internal structure; one consumer each, lower blast radius if wrong
 | 6 | [engine-api.md](engine-api.md) | Full public surface of the rules engine: function signatures, exception taxonomy, the single PyMahjongGB integration seam, pure-function discipline, internal submodule layout. | Table manager (calls), tests (call & stub). |
 | 9 | [selfplay-harness.md](selfplay-harness.md) | The headless self-play driver: CLI, seed-derivation scheme, concurrency model, record output, crash recovery, eval-summary metrics, god-view gate. | AI training pipeline (consumes records), evaluation harness. |
 
+S2 / S3 specs (drafted 2026-05-22, pre-implementation; tier per `s2-s3-plan.md`):
+
+| # | Spec | Tier | Pins | Consumed by |
+| --- | --- | --- | --- | --- |
+| 10 | [wire-protocol.md](wire-protocol.md) | 1 | The WebSocket message contract between server and every client: framing, message catalog (player + spectator), error model, version handshake, reconnect token format. Privacy enforced at the wire via `SeatView`-projected payloads. | TUI client, session-mux, `HumanAdapter`, any future non-TUI client. |
+| 11 | [session-mux.md](session-mux.md) | 1 | Per-table state machine that binds a WebSocket connection to a seat: attach, detach, reconnect within seat-hold window, replace, and the parallel spectator-set lifecycle. | Server lifecycle, `HumanAdapter`, table manager (consumes substitution events). |
+| 12 | [tui-client.md](tui-client.md) | 2 | Textual app architecture: screen layout, input bindings, rendering pipeline over `SeatView` / public projection, spectator screen, plain-mode-only constraint. | TUI client only. |
+| 13 | [sqlite-schema.md](sqlite-schema.md) | 2 | DB tables (`accounts`, `sessions`, `hand_index`, `hand_participants`, `schema_version`), indexes, constraints, hand-rolled migration mechanics. | auth, persistence-api, server-lifecycle, tests. |
+| 14 | [auth.md](auth.md) | 2 | Argon2id parameters, password hashing round-trip, session token issuance/validation/expiry/revocation, bot-account auth path, no-account-existence-leak failure mode. | session-mux (login on attach), wire-protocol (auth messages), persistence-api. |
+| 15 | [persistence-api.md](persistence-api.md) | 2 | Python query/write layer over SQLite + record files. Transactional `reserve_hand` / `finalize_hand`; startup integrity check; records-as-source-of-truth rebuild path. | Table manager (hand-end hook), server-lifecycle, future overlay/stats code. |
+| 16 | [server-lifecycle.md](server-lifecycle.md) | 2 | Process startup, env-var configuration (`MAHJONG_*`), `/health` endpoint, multi-table orchestration (`TableRegistry`), graceful `SIGTERM` drain, crash recovery, periodic tasks, structured logging. | `python -m mahjong serve` entry point, ops tests. |
+
 ## Implementation order
 
 The bottom-up build sequence that respects the dependencies above lives in [implementation-order.md](implementation-order.md). It groups work into layers, names the fixtures that gate each step, and reaches the S0 walking skeleton, S1 Botzone-bot integration, and the self-play harness in a single linear sequence.

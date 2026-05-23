@@ -228,6 +228,226 @@ def test_project_invalid_seat_raises() -> None:
         state.project(s, -1)
 
 
+# --- project(state, seat=None): public/spectator view (Step 7.0) ---
+
+
+def test_project_public_view_hides_every_concealed() -> None:
+    """`project(state, seat=None)` shows count form for *every* seat — no own-seat exception."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, None)
+    for i, seat_view in enumerate(view["seats"]):
+        assert isinstance(seat_view["concealed"], dict), (
+            f"project(state, None).seats[{i}].concealed must be a dict (count), "
+            f"got {type(seat_view['concealed'])}"
+        )
+        assert "count" in seat_view["concealed"]
+        assert seat_view["concealed"]["count"] == len(s["seats"][i]["concealed"])
+
+
+def test_project_public_view_no_tile_tokens_in_concealed() -> None:
+    """No tile token appears anywhere under any seat's `concealed` in the public view."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, None)
+    for seat_view in view["seats"]:
+        _assert_no_tile_strings(seat_view["concealed"])
+
+
+def test_project_public_view_pending_claims_empty() -> None:
+    """A public observer has no claim opportunities of their own."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    s = dict(s)  # type: ignore[assignment]
+    s["pending_claims"] = [
+        {"seat": 0, "claim": "PENG"},
+        {"seat": 2, "claim": "HU"},
+    ]
+    view = state.project(s, None)  # type: ignore[arg-type]
+    assert view["pending_claims"] == []
+
+
+def test_project_public_view_wall_is_count_only() -> None:
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, None)
+    assert "remaining" not in view["wall"]
+    assert view["wall"]["remaining_count"] == len(s["wall"]["remaining"])
+    assert view["wall"]["drawn_count"] == s["wall"]["drawn_count"]
+
+
+def test_project_public_view_omits_rng_and_last_drawn() -> None:
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, None)
+    assert "rng" not in view
+    assert "last_drawn" not in view
+
+
+def test_project_public_view_byte_stable_across_calls() -> None:
+    """`project(state, None)` is byte-stable across two calls (pure function)."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    v1 = state.project(s, None)
+    v2 = state.project(s, None)
+    assert canonical_hash(v1) == canonical_hash(v2)  # type: ignore[arg-type]
+    assert v1 == v2
+
+
+def test_project_public_view_agrees_with_opponent_view_per_seat() -> None:
+    """For every seat S, the public view's seats[S] equals the opponent-form
+    view of seat S as seen from any other seat S' != S."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    public = state.project(s, None)
+    for s_target in range(4):
+        for viewer in range(4):
+            if viewer == s_target:
+                continue
+            per_seat = state.project(s, viewer)
+            assert public["seats"][s_target] == per_seat["seats"][s_target], (
+                f"public seat[{s_target}] disagrees with viewer-{viewer}'s opponent view"
+            )
+
+
+def test_project_public_view_terminal_fully_visible() -> None:
+    """Terminal fields (winner, fan, score_delta) are public — full reveal at hand-end."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    s = dict(s)  # type: ignore[assignment]
+    s["terminal"] = {
+        "kind": "HU",
+        "winner": 2,
+        "win_tile": "B5",
+        "win_type": "self_draw",
+        "deal_in_seat": None,
+        "fan": [{"name": "All Pungs", "value": 6}],
+        "fan_total": 6,
+        "score_delta": [-8, -8, 24, -8],
+    }
+    view = state.project(s, None)  # type: ignore[arg-type]
+    assert view["terminal"] == s["terminal"]
+
+
+# --- project_event(event, seat=...) (Step 7.0) ---
+
+
+def test_project_event_draw_strips_tile_for_public() -> None:
+    """`project_event(DRAW, seat=None)` removes the `tile` field."""
+    draw = {
+        "event": "DRAW",
+        "turn_index": 5,
+        "phase": "DISCARD",
+        "ts": "2026-05-22T10:00:00Z",
+        "seat": 2,
+        "tile": "B5",
+        "flower_replacements": [],
+    }
+    projected = state.project_event(draw, None)
+    assert "tile" not in projected
+    # other fields preserved
+    assert projected["event"] == "DRAW"
+    assert projected["seat"] == 2
+    assert projected["turn_index"] == 5
+    # input not mutated
+    assert draw["tile"] == "B5"
+
+
+def test_project_event_draw_keeps_tile_for_own_seat() -> None:
+    """The drawing seat sees its own drawn tile."""
+    draw = {
+        "event": "DRAW",
+        "turn_index": 5,
+        "phase": "DISCARD",
+        "ts": "ts",
+        "seat": 2,
+        "tile": "B5",
+        "flower_replacements": [],
+    }
+    projected = state.project_event(draw, 2)
+    assert projected["tile"] == "B5"
+
+
+def test_project_event_draw_strips_tile_for_other_seats() -> None:
+    """A non-drawing seat does not see the drawn tile."""
+    draw = {
+        "event": "DRAW",
+        "turn_index": 5,
+        "phase": "DISCARD",
+        "ts": "ts",
+        "seat": 2,
+        "tile": "B5",
+        "flower_replacements": [],
+    }
+    for viewer in (0, 1, 3):
+        projected = state.project_event(draw, viewer)
+        assert "tile" not in projected, f"viewer {viewer} should not see seat 2's draw tile"
+
+
+def test_project_event_discard_preserved_in_full() -> None:
+    """DISCARD is publicly visible — every field carries through."""
+    discard = {
+        "event": "DISCARD",
+        "turn_index": 6,
+        "phase": "CLAIM_WINDOW",
+        "ts": "ts",
+        "seat": 2,
+        "tile": "B5",
+        "from_hand": True,
+    }
+    for viewer in (None, 0, 1, 2, 3):
+        assert state.project_event(discard, viewer) == discard
+
+
+def test_project_event_hand_end_preserved_in_full() -> None:
+    """HAND_END is the terminal reveal — public, including final_hands."""
+    he = {
+        "event": "HAND_END",
+        "turn_index": 30,
+        "phase": "TERMINAL",
+        "ts": "ts",
+        "kind": "HU",
+        "winner": [2],
+        "win_tile": "B5",
+        "win_type": "self_draw",
+        "deal_in_seat": None,
+        "fan": [{"name": "All Pungs", "value": 6}],
+        "fan_total": 6,
+        "score_delta": [-8, -8, 24, -8],
+        "final_hands": [
+            {"seat": 0, "concealed": ["B1"], "melds": [], "flowers": []},
+        ],
+        "state_hash": "sha256:abc",
+    }
+    for viewer in (None, 0, 1, 2, 3):
+        assert state.project_event(he, viewer) == he
+
+
+def test_project_event_is_idempotent() -> None:
+    """Applying `project_event` twice equals applying once."""
+    draw = {
+        "event": "DRAW",
+        "turn_index": 5,
+        "phase": "DISCARD",
+        "ts": "ts",
+        "seat": 2,
+        "tile": "B5",
+        "flower_replacements": [],
+    }
+    for viewer in (None, 0, 1, 2, 3):
+        once = state.project_event(draw, viewer)
+        twice = state.project_event(once, viewer)
+        assert twice == once
+
+
+def test_project_event_does_not_mutate_input() -> None:
+    draw = {
+        "event": "DRAW",
+        "turn_index": 5,
+        "phase": "DISCARD",
+        "ts": "ts",
+        "seat": 2,
+        "tile": "B5",
+        "flower_replacements": [],
+    }
+    snapshot = dict(draw)
+    state.project_event(draw, None)
+    state.project_event(draw, 2)
+    assert draw == snapshot
+
+
 # --- is_terminal ---
 
 

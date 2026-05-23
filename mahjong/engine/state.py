@@ -114,17 +114,20 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
     return state
 
 
-def project(state: GameState, seat: int) -> SeatView:
+def project(state: GameState, seat: int | None) -> SeatView:
     """Privacy-filtered view of `state` for `seat`.
 
-    Spec: state-schema.md § Per-seat projection.
+    `seat` may be `None` for the public (spectator) projection: every seat's
+    `concealed` is reduced to a count and `pending_claims` is empty.
+
+    Spec: state-schema.md § Per-seat projection, § Public (spectator) projection.
     """
-    if seat < 0 or seat >= 4:
-        raise ValueError(f"seat must be in 0..3, got {seat!r}")
+    if seat is not None and (seat < 0 or seat >= 4):
+        raise ValueError(f"seat must be in 0..3 or None, got {seat!r}")
 
     seats_view: list[Seat | SeatViewOpponent] = []
     for i, s in enumerate(state["seats"]):
-        if i == seat:
+        if seat is not None and i == seat:
             own: Seat = {
                 "seat": s["seat"],
                 "seat_wind": s["seat_wind"],
@@ -153,9 +156,11 @@ def project(state: GameState, seat: int) -> SeatView:
         "total": state["wall"]["total"],
     }
 
-    own_claims: list[PendingClaim] = [
-        cast(PendingClaim, dict(c)) for c in state["pending_claims"] if c["seat"] == seat
-    ]
+    own_claims: list[PendingClaim] = (
+        []
+        if seat is None
+        else [cast(PendingClaim, dict(c)) for c in state["pending_claims"] if c["seat"] == seat]
+    )
 
     view: SeatView = {
         "ruleset": cast(RuleSetRef, dict(state["ruleset"])),
@@ -176,6 +181,22 @@ def project(state: GameState, seat: int) -> SeatView:
         ),
     }
     return view
+
+
+def project_event(event: dict[str, Any], seat: int | None) -> dict[str, Any]:
+    """Privacy-filtered view of a record event for `seat`.
+
+    `seat=None` is the public (spectator) projection. The DRAW event's `tile`
+    field is private to the drawing seat; all other event kinds are public.
+    Pure: returns a fresh dict; never mutates the input.
+
+    Spec: state-schema.md § Per-event projection.
+    """
+    if event.get("event") == "DRAW" and (seat is None or seat != event.get("seat")):
+        projected = dict(event)
+        projected.pop("tile", None)
+        return projected
+    return dict(event)
 
 
 def is_terminal(state: GameState) -> bool:

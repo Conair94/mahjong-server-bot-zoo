@@ -92,7 +92,22 @@
       "Bash(.venv/bin/python -m ruff format --check mahjong/ tests/)",
       "Bash(rm -rf selfplay_parallel_smoke)",
       "Bash(.venv/bin/python --version)",
-      "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/python -m mahjong selfplay --master-seed 0x1 --hands 4 --bots b_random,b_random,b_random,b_random --output-dir /tmp/selfplay_parallel_smoke --parallel-hands 2 --eval-summary)"
+      "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/python -m mahjong selfplay --master-seed 0x1 --hands 4 --bots b_random,b_random,b_random,b_random --output-dir /tmp/selfplay_parallel_smoke --parallel-hands 2 --eval-summary)",
+      "Bash(python -m pytest tests/engine/test_state.py -x --tb=short -k \"public_view or project_event\")",
+      "Bash(.venv/bin/python -m pytest tests/engine/test_state.py -x --tb=short -k \"public_view or project_event\")",
+      "Bash(.venv/bin/python -m pytest tests/engine/test_state.py --tb=short)",
+      "Bash(.venv/bin/python -m pytest --tb=short)",
+      "Bash(.venv/bin/python -m ruff check mahjong/engine/state.py tests/engine/test_state.py)",
+      "Bash(.venv/bin/python -m ruff format --check mahjong/engine/state.py tests/engine/test_state.py)",
+      "Bash(.venv/bin/python -m mypy mahjong/engine/state.py)",
+      "Bash(.venv/bin/python -m ruff format mahjong/engine/state.py tests/engine/test_state.py)",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_codec.py --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/wire/ --tb=short)",
+      "Bash(.venv/bin/python -m ruff check mahjong/wire/ tests/wire/)",
+      "Bash(.venv/bin/python -m ruff format --check mahjong/wire/ tests/wire/)",
+      "Bash(.venv/bin/python -m mypy mahjong/wire/)",
+      "Bash(.venv/bin/python -m ruff check --fix mahjong/wire/ tests/wire/)",
+      "Bash(.venv/bin/python -m ruff format mahjong/wire/ tests/wire/)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
