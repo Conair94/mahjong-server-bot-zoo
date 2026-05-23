@@ -444,9 +444,24 @@ Spec: [docs/specs/wire-protocol.md § Message catalog, § Message framing](docs/
 
 Spec: [docs/specs/wire-protocol.md § Transport](docs/specs/wire-protocol.md).
 
-- [ ] Tests written: real-loopback connect → HELLO → close round-trip; subprotocol mismatch refused; binary frame closes with 1003; ping/pong handled transparently; framing-error closes with documented code.
-- [ ] `mahjong/wire/server.py` wrapping `websockets` library; connection-id allocation; HTTP handler hook for `/health`.
-- [ ] **Gate:** real-socket fixtures green; mypy clean on `mahjong/wire/`.
+- [x] Tests written (11 real-loopback integration cases):
+      connect → HELLO round-trip; client→server inbound frame surfaces as
+      decoded dict; subprotocol mismatch (`mahjong-v2`) refused at handshake;
+      missing-subprotocol refused; binary frame → server close with code 1003;
+      oversized frame (>`max_size`) → close with 1009; ping/pong keepalive
+      survives an idle connection; `/health` GET invokes the optional
+      `health_handler`; default `/health` returns 503 when unconfigured;
+      `stop_accepting()` blocks new connects but leaves existing alive;
+      `port` is bound after `start()`. Pinned by `tests/wire/test_server.py`.
+- [x] `mahjong/wire/server.py` wrapping `websockets` v16 (`websockets.asyncio.server.serve`);
+      per-connection id allocation; `Connection` async-iterator over decoded
+      `WireMessage` dicts; `start()` / `stop_accepting()` / `close()` lifecycle;
+      HTTP `/health` route on the same listener via `process_request` hook.
+- [x] Added `websockets>=12.0` as a runtime dependency in `pyproject.toml`
+      (installed `websockets-16.0`).
+- [x] **Gate:** 474 tests passed (2 Linux-only skipped); ruff clean;
+      ruff-format clean; mypy clean across 51 source files.
+      *(Local 2026-05-22.)*
 
 ### Step 7.3 — Session multiplexer
 

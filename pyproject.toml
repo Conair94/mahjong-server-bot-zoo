@@ -14,6 +14,9 @@ dependencies = [
     # Runtime deps land here as layers come online.
     # PyMahjongGB is required for Layer 1.2; pin loosely until we measure stability.
     "PyMahjongGB>=1.0",
+    # WebSocket transport for the S2 server (Layer 7.2). The wire codec itself
+    # has no dep on websockets; only the listener does.
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]

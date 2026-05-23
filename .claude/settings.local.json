@@ -107,7 +107,22 @@
       "Bash(.venv/bin/python -m ruff format --check mahjong/wire/ tests/wire/)",
       "Bash(.venv/bin/python -m mypy mahjong/wire/)",
       "Bash(.venv/bin/python -m ruff check --fix mahjong/wire/ tests/wire/)",
-      "Bash(.venv/bin/python -m ruff format mahjong/wire/ tests/wire/)"
+      "Bash(.venv/bin/python -m ruff format mahjong/wire/ tests/wire/)",
+      "Bash(.venv/bin/python -c \"import websockets; print\\(websockets.__version__\\)\")",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_server.py --tb=line)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_server.py --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_server.py --tb=short --timeout=30 -x)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_server.py --tb=short -x)",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_server.py::test_port_is_bound_after_start --tb=short)",
+      "Bash(pkill -9 -f \"pytest tests/wire/test_server\")",
+      "Bash(.venv/bin/python -m pytest tests/wire/test_server.py::test_subprotocol_mismatch_refused tests/wire/test_server.py::test_stop_accepting_refuses_new_connections --tb=short)",
+      "Bash(pkill -9 -f \"wire.server\\\\|smoke\")",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r kill -9)",
+      "Bash(.venv/bin/python -m pytest tests/wire/ -q)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
