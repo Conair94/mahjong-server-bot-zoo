@@ -6,8 +6,9 @@ Wraps the `websockets` library (v16+, `websockets.asyncio.server`) and
 surfaces a small, mahjong-shaped API:
 
 - `WebSocketServer` binds a host:port, enforces the `mahjong-v1` subprotocol,
-  serves a single HTTP route (`/health`) on the same listener, and dispatches
-  each accepted WebSocket to a caller-supplied handler.
+  serves HTTP routes (`/health`, plus optional `/` and `/static/<path>` for the
+  web client per `tui-client.md`) on the same listener, and dispatches each
+  accepted WebSocket to a caller-supplied handler.
 - `Connection` is the per-client object the handler receives. It is an async
   iterator of decoded wire-message dicts, with a `send()` for outbound and a
   `close()` for explicit teardown. The codec sits inside `recv()` so the
@@ -28,9 +29,11 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from websockets.asyncio.server import Server, ServerConnection, serve
+from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
@@ -42,6 +45,21 @@ DEFAULT_MAX_SIZE: int = 16 * 1024  # 16 KiB, per wire-protocol §Rate limiting.
 
 HealthHandler = Callable[[], "tuple[int, bytes]"]
 ConnectionHandler = Callable[["Connection"], Awaitable[None]]
+
+# Static-asset content-type map. Extensions not in this map are served as
+# application/octet-stream. Kept small on purpose; tui-client.md §Server-side
+# static asset serving documents the v1 set.
+_CONTENT_TYPES: dict[str, str] = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+}
 
 _logger = logging.getLogger(__name__)
 
@@ -121,6 +139,7 @@ class WebSocketServer:
         *,
         handler: ConnectionHandler,
         health_handler: HealthHandler | None = None,
+        static_dir: Path | None = None,
         max_size: int = DEFAULT_MAX_SIZE,
         subprotocol: str = SUBPROTOCOL,
     ) -> None:
@@ -128,6 +147,9 @@ class WebSocketServer:
         self._port = port
         self._handler = handler
         self._health_handler = health_handler
+        # Resolve eagerly so the traversal check in `_serve_static` can compare
+        # against a canonical path.
+        self._static_dir: Path | None = static_dir.resolve() if static_dir else None
         self._max_size = max_size
         self._subprotocol = subprotocol
         self._server: Server | None = None
@@ -188,14 +210,44 @@ class WebSocketServer:
                 return connection.respond(503, "service unhealthy or unconfigured\n")
             status, body = self._health_handler()
             return connection.respond(status, body.decode("utf-8", errors="replace"))
+        # Static assets served at `/` and `/static/<path>` when a static dir
+        # is configured. A WS upgrade attempt carries a `Sec-WebSocket-Protocol`
+        # header; plain browser GETs do not, so we only try the static path
+        # when the subprotocol header is absent.
+        offered = request.headers.get_all("Sec-WebSocket-Protocol")
+        if not offered and self._static_dir is not None:
+            static_response = self._serve_static(connection, path)
+            if static_response is not None:
+                return static_response
         # Reject the WS upgrade unless `mahjong-v1` was offered. This is the
         # single enforcement point for the subprotocol; the library's own
         # negotiation is permissive (it accepts handshakes without a matching
         # subprotocol), which is not what the spec wants.
-        offered = request.headers.get_all("Sec-WebSocket-Protocol")
         if not offered or self._subprotocol not in _flatten_subprotocols(offered):
             return connection.respond(400, "subprotocol mahjong-v1 required\n")
         return None  # proceed with the WS upgrade
+
+    def _serve_static(self, connection: ServerConnection, path: str) -> Response | None:
+        assert self._static_dir is not None
+        if path == "/":
+            target = self._static_dir / "index.html"
+        elif path.startswith("/static/"):
+            rel = path[len("/static/") :]
+            # `resolve` collapses `..`; the `is_relative_to` check then rejects
+            # anything that escaped the static root.
+            target = (self._static_dir / rel).resolve()
+            if not target.is_relative_to(self._static_dir):
+                return connection.respond(404, "not found\n")
+        else:
+            return None  # not a static path; let WS-upgrade path handle it
+        if not target.is_file():
+            return connection.respond(404, "not found\n")
+        body = target.read_bytes()
+        ctype = _CONTENT_TYPES.get(target.suffix, "application/octet-stream")
+        headers = Headers()
+        headers["Content-Type"] = ctype
+        headers["Content-Length"] = str(len(body))
+        return Response(200, "OK", headers, body)
 
     async def _ws_handler(self, ws: ServerConnection) -> None:
         # Defense-in-depth: the library should have rejected mismatches via

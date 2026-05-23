@@ -37,6 +37,7 @@ async def _running_server(
     handler: Any,
     *,
     health_handler: Any = None,
+    static_dir: Any = None,
     max_size: int = 16 * 1024,
 ) -> AsyncIterator[WebSocketServer]:
     """Start a server on a free port, yield it, then close cleanly."""
@@ -45,6 +46,7 @@ async def _running_server(
         port=0,
         handler=handler,
         health_handler=health_handler,
+        static_dir=static_dir,
         max_size=max_size,
     )
     await server.start()
@@ -301,3 +303,112 @@ async def test_port_is_bound_after_start() -> None:
         assert server.port < 65536
     finally:
         await server.close()
+
+
+# --- static asset serving (tui-client.md §Server-side static asset serving) ---
+
+
+async def test_static_root_serves_index_html(tmp_path: Any) -> None:
+    """GET / returns index.html with text/html content-type."""
+    (tmp_path / "index.html").write_text("<!doctype html><title>mahjong</title>")
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler, static_dir=tmp_path) as server:
+        url = f"http://127.0.0.1:{server.port}/"
+        loop = asyncio.get_running_loop()
+        body, status, ctype = await loop.run_in_executor(None, _fetch_with_ctype, url)
+        assert status == 200
+        assert b"<!doctype html>" in body
+        assert ctype.startswith("text/html")
+
+
+async def test_static_serves_nested_assets(tmp_path: Any) -> None:
+    """GET /static/<path> returns the file under static_dir with the right content-type."""
+    (tmp_path / "app.js").write_text("export const x = 1;")
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler, static_dir=tmp_path) as server:
+        url = f"http://127.0.0.1:{server.port}/static/app.js"
+        loop = asyncio.get_running_loop()
+        body, status, ctype = await loop.run_in_executor(None, _fetch_with_ctype, url)
+        assert status == 200
+        assert body == b"export const x = 1;"
+        assert ctype.startswith("text/javascript")
+
+
+async def test_static_path_traversal_returns_404(tmp_path: Any) -> None:
+    """A `..` escape attempt is rejected — never reaches the filesystem."""
+    secret = tmp_path.parent / "secret.txt"
+    secret.write_text("PRIVATE")
+    try:
+
+        async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+            return
+
+        async with _running_server(ws_handler, static_dir=tmp_path) as server:
+            url = f"http://127.0.0.1:{server.port}/static/../secret.txt"
+            loop = asyncio.get_running_loop()
+            _body, status = await loop.run_in_executor(None, _fetch, url)
+            assert status == 404
+    finally:
+        secret.unlink(missing_ok=True)
+
+
+async def test_static_missing_file_returns_404(tmp_path: Any) -> None:
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler, static_dir=tmp_path) as server:
+        url = f"http://127.0.0.1:{server.port}/static/does-not-exist.js"
+        loop = asyncio.get_running_loop()
+        _body, status = await loop.run_in_executor(None, _fetch, url)
+        assert status == 404
+
+
+async def test_static_disabled_when_no_dir_configured() -> None:
+    """Without a static_dir, GET / falls through to the subprotocol gate (400)."""
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler) as server:
+        url = f"http://127.0.0.1:{server.port}/"
+        loop = asyncio.get_running_loop()
+        _body, status = await loop.run_in_executor(None, _fetch, url)
+        assert status == 400  # subprotocol mahjong-v1 required
+
+
+async def test_ws_upgrade_still_works_when_static_configured(tmp_path: Any) -> None:
+    """Static dir doesn't interfere with WS handshakes — subprotocol header
+    short-circuits the static path before file lookup."""
+    (tmp_path / "index.html").write_text("ignored")
+
+    async def ws_handler(conn: Connection) -> None:
+        await conn.send({"kind": "HELLO", "seq": 1, "protocol_version": 1, "server_id": "t"})
+        try:
+            async for _ in conn:
+                pass
+        except ConnectionClosedError:
+            pass
+
+    async with _running_server(ws_handler, static_dir=tmp_path) as server:
+        url = f"ws://127.0.0.1:{server.port}/socket"
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
+            msg = json.loads(await ws.recv())
+            assert msg["kind"] == "HELLO"
+
+
+def _fetch_with_ctype(url: str) -> tuple[bytes, int, str]:
+    """Like `_fetch`, but also returns the Content-Type header."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=2.0) as resp:
+            return resp.read(), resp.status, resp.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as exc:
+        return exc.read(), exc.code, exc.headers.get("Content-Type", "")

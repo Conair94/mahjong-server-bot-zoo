@@ -1,0 +1,42 @@
+/* Terminal aesthetic — sparse, monospace, ASCII-friendly.
+ * Per docs/specs/tui-client.md §Tech stack.
+ */
+
+:root {
+  --fg: #c5d4d6;
+  --fg-dim: #6a7a7c;
+  --bg: #0b0f10;
+  --accent: #6fdc8c;
+  --warn: #f2c94c;
+  --error: #ff7b72;
+  --border: #1f2a2c;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  line-height: 1.35;
+  font-variant-ligatures: none;
+}
+
+body {
+  min-height: 100vh;
+  padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+mahjong-app {
+  display: block;
+  max-width: 100ch;
+  margin: 0 auto;
+}
+
+pre {
+  margin: 0;
+  white-space: pre;
+  font-family: inherit;
+}
