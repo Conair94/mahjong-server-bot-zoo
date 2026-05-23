@@ -1,100 +1,113 @@
-# Session handoff — 2026-05-23
+# Session handoff — 2026-05-23 (end of 7.5a)
 
 Snapshot of Layer 7 implementation status. Read this to pick up where this session left off.
 
 ## Where we are
 
-**Layer 7 is 4 of 7 sub-steps complete. All committed on `main`.** Layer 7 has 7 sub-steps total (7.0–7.6); 7.5 is next.
+**Layer 7 is 5 of 7+ sub-steps complete. All committed on `main`.** Step 7.5 was split into 7.5a/b/c after a mid-session pivot: the TUI is now a **browser-served ASCII client**, not a Textual terminal app.
 
 | # | Step | Commit | Notes |
 | --- | --- | --- | --- |
 | 7.0 | Public projection amendment | `aa35890` (in 7.2 bundle) | `project(state, seat: int \| None)`, `project_event` |
 | 7.1 | Wire codec | `aa35890` | 25 TypedDicts, `encode`/`decode`, `KNOWN_KINDS` |
 | 7.2 | WebSocket transport | `aa35890` / `4cd666f` | `WebSocketServer`, subprotocol gate, `/health` |
-| **7.3** | **Session multiplexer** | **`e74d265`** | **`TableSessions`, `SeatSession`, `Spectator`, ring buffer, hold timer** |
-| **7.4** | **HumanAdapter** | **`a49bcf6`** | **`SeatAdapter` impl wrapping a `SeatSession`** |
-| 7.5 | TUI client | pending | Textual app, 5 screens, bilingual EN/ZH |
-| 7.6 | End-to-end S2 fixture | pending | Scripted keystrokes → server → engine → record |
+| 7.3 | Session multiplexer | `e74d265` | `TableSessions`, `SeatSession`, `Spectator`, ring buffer, hold timer |
+| 7.4 | HumanAdapter | `a49bcf6` | `SeatAdapter` impl wrapping a `SeatSession` |
+| **7.5a** | **Web-client walking skeleton** | **`694b790`** | **Browser + Lit + WS round-trip; visually verified** |
+| 7.5b | Pane-toggle shell + stub panes | pending | Authorized "shell-early" by user |
+| 7.5c | Fill game pane (real snapshot render + PROMPT/ACTION) | pending | — |
+| 7.6 | End-to-end S2 fixture | pending | The S2 exit gate |
 
-**Verification at end of session:** ruff clean · ruff-format clean · mypy clean (55 source files) · **509 tests pass repo-wide** (2 Linux-only skipped on macOS). S0 walking-skeleton regression (Step 4.2 gate) still byte-identical.
+**Verification at end of session:** ruff clean · ruff-format clean · mypy clean (57 source files; +2 from `mahjong/web/`) · **515 tests pass repo-wide** (6 new + 509 prior; 2 Linux-only skipped on macOS). S0 walking-skeleton regression (Step 4.2 gate) still byte-identical.
 
-## What landed this session (7.3 + 7.4)
+## The 7.5 pivot (read this first if you're new to the session)
 
-### Step 7.3 — Session multiplexer (`e74d265`)
+**Decision 2026-05-23:** Layer 7.5 is no longer a Textual terminal app. It is a **web-based ASCII client** accessed via a browser. The terminal aesthetic (monospace, ASCII glyphs, sparse color, no animations) is preserved; the runtime is a browser, not a TTY.
 
-Files added:
+**Why:** install friction. Target users are home-hosted MCR mahjong players (friends, family) who won't install Python or use a terminal. A URL is the lowest-friction handshake.
+
+**What this changed:**
+
+- `docs/specs/tui-client.md` rewritten in place — Textual → Lit web components, `Pilot` → Playwright, "screens" → "pages with toggleable panes." Stack-agnostic contracts (privacy DiD, bilingual EN/ZH, crash resistance, event-application-client-side) preserved verbatim.
+- Wire-protocol layer (7.0–7.4) **unaffected** — that's the payoff for building wire-first.
+- 7.5 split into 7.5a/b/c so the walking skeleton, shell, and content land separately.
+
+**Locked vision:**
+
+- Browser-served, no client install.
+- Aesthetic: monospace, ASCII glyphs (🀇 …), sparse color, no animations.
+- **Window model: fixed layout with toggleable panes.** Not free-floating draggable windows.
+- Four planned panes: **game** (primary), **chat**, **stats**, **spectator-of-another-table**. Only game is mandatory in v1; the others land per scope decision below.
+- **Wire-protocol gaps surfaced and not yet addressed:** no CHAT frames; no stats request/response (cross-game stats also need Layer 8 / SQLite); spectate-while-playing will use a second WebSocket per spectated table rather than a multi-subscription wire amendment.
+
+See [project_client_vision_web_ascii memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_client_vision_web_ascii.md) for the locked decisions; [project_layer7_status memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_layer7_status.md) for the broader Layer 7 progress.
+
+## What landed this session (7.5a)
+
+### Step 7.5a — Web-client walking skeleton (`694b790`)
+
+Files added / modified:
 
 | Path | Purpose |
 | --- | --- |
-| `mahjong/sessions/__init__.py` | Package exports |
-| `mahjong/sessions/timers.py` | `IdempotentTimer` wrapping `asyncio.call_later` |
-| `mahjong/sessions/mux.py` | `TableSessions`, `SeatSession` (UNBOUND↔LIVE↔HELD), `Spectator`, `OutboundSink` Protocol, `SeatPrompt`, `SeatHoldExpired`, `AttachOutcome`, `SpectateOutcome` |
-| `tests/sessions/__init__.py` | (empty) |
-| `tests/sessions/conftest.py` | `FakeSink`, `make_table_sessions`, `make_seat_session`, `make_prompt` |
-| `tests/sessions/test_state_machine.py` | Fixtures 1, 8, 9, 10, 14, 15 |
-| `tests/sessions/test_ring_buffer.py` | Fixtures 2, 3 |
-| `tests/sessions/test_pending_prompt.py` | Fixtures 4, 5, 6, 7, 12, 13 |
-| `tests/sessions/test_shutdown.py` | Fixture 11 |
-| `tests/sessions/test_spectators.py` | Fixtures 16, 17, 18, 19, 20, 21 |
+| `docs/specs/tui-client.md` | Rewritten in place: web/Lit/Playwright/panes architecture, 18 verification fixtures |
+| `mahjong/wire/server.py` | Adds `static_dir=` kwarg to `WebSocketServer`; `/` and `/static/<path>` routes alongside `/health`; path-traversal defense via `Path.resolve().is_relative_to`; content-type map for HTML/JS/CSS/JSON/SVG/woff/etc |
+| `mahjong/web/__init__.py` | `static_root()` returns the bundled-assets path |
+| `mahjong/web/demo.py` | `python -m mahjong.web.demo` boots a server with the static dir and a scripted handler (HELLO + ERROR-echo) |
+| `mahjong/web/static/index.html` | Page shell, import-map for Lit from jsDelivr |
+| `mahjong/web/static/style.css` | Terminal aesthetic — monospace, dark green-on-black, no ligatures |
+| `mahjong/web/static/app.js` | `ConnectionManager` (WebSocket wrapper, dispatches CustomEvents) + `<mahjong-app>` + `<game-pane>` (wire log) |
+| `tests/wire/test_server.py` | 6 new tests: static root, nested asset, path traversal, missing file, no-static-dir fallthrough, WS-upgrade-still-works-with-static-configured |
 
-28 test methods covering all 21 spec fixtures from [session-mux.md § Verification fixtures](specs/session-mux.md).
+### Verification artifact (manual browser smoke)
 
-### Step 7.4 — HumanAdapter (`a49bcf6`)
-
-Files added:
-
-| Path | Purpose |
-| --- | --- |
-| `mahjong/adapters/human.py` | `HumanAdapter` — `SeatAdapter` Protocol impl against a `SeatSession` |
-| `tests/adapters/test_human_adapter.py` | 7 tests pairing adapter + real `SeatSession` + `FakeSink` |
-
-The adapter owns just the translation: stable `prompt_id` from `(seat, turn_index, phase)`, monotonic-to-Unix-epoch-ms deadline conversion, `SeatHoldExpired` → `SeatError` exception remap. `seated()` is a no-op (ATTACHED is sent at bind time, not hand-start). `observe()` ignores the `view` arg (session re-projects from the canonical event).
-
-`left(reason)` mapping:
-
-- `HAND_ENDED` → `session.hand_ended(...)`
-- `TABLE_CLOSED` → `session.shutdown(reason="table_closed")`
-- `REPLACED` → `session.shutdown(reason="replaced_by_autopass")`
-- `ERROR` → `session.shutdown(reason="internal_error")`
+User ran `.venv/bin/python -m mahjong.web.demo` and opened `http://127.0.0.1:8400/` in a real browser. Observed: ASCII header painted, `Connection: connected` (green), HELLO frame rendered in the wire log. The end-to-end loop closes.
 
 ## Pinned decisions reaffirmed or added this session
 
-1. **Codec is dumb (7.1).** Projection is the caller's job. Session-mux applies `project_event` before handing events to the codec. Single-responsibility; bug location is unambiguous.
-2. **`stop_accepting()` non-blocking; `close()` blocking (7.2).** Splits the two halves of `Server.close()` so drain semantics work — listener stops immediately, existing connections finish naturally, `close()` blocks at process exit. Conflating them caused a test hang during dev.
-3. **Mux owns outbound `seq`, not the sink (7.3).** Each `_Outbound(sink, next_seq)` pair holds its own counter; on takeover/resume, a new `_Outbound` is allocated so the new connection starts at seq=1. The buffer stores already-*projected* event payloads (no wire envelope, no seq); replay wraps them with fresh seqs at send time. This matches the spec's "outer seq is a fresh one for the new connection" rule.
-4. **`SeatHoldExpired` future-resolution path is exception-only (7.3).** Three resolution paths race in `SeatSession.decide()`: inbound ACTION → `set_result`, prompt deadline → `set_result(default_action)`, seat-hold timer → `set_exception(SeatHoldExpired)`. Whichever wins; the others short-circuit on `future.done()`. Fixture 5 vs fixture 7 distinguishes prompt-deadline-first (default action) from seat-hold-first (SeatError).
-5. **Shutdown of HELD seat with pending prompt defaults rather than errors (7.3).** Fixture 11 commentary says "either is acceptable"; we chose default to match prompt-deadline outcome — table manager applies `default_action` on drain, no special SeatError handling needed.
-6. **HumanAdapter `seated()` is a no-op (7.4).** The `ATTACHED` frame is sent by `TableSessions.attach()` at *bind time*, not when the table manager calls `adapter.seated()` at *hand-start time*. The seat-port lifecycle hook does nothing for HumanAdapter beyond stashing `ctx` for prompt-id derivation. If multi-hand orchestration ever needs to re-emit ATTACHED between hands, the orchestrator (7.6+) will drive that, not the adapter.
-7. **HumanAdapter ignores the `view` arg to `observe` (7.4).** The seat-port hands both `event` and `view` to adapters; the session-mux re-projects from the canonical event via `project_event(event, seat)`. Forwarding both would be two sources of truth for "what does this seat see?" — keep the engine's projection rule as the only one.
+Numbered continuing from prior sessions in `project_layer7_status` memory — decisions 1–7 are pre-7.5a; 8–12 below are new this session.
 
-## Known limitation deferred
+- **(8) Static assets served from the same Python listener.** Not a separate process / reverse proxy. The `_process_request` hook in `mahjong/wire/server.py` was already serving `/health`; extending it for `/` and `/static/<path>` is a ~30-line addition. Matches the home-server deployment target.
+- **(9) Lit loaded from a CDN via import map** in `index.html`. No build step, no vendoring. Trade-off: requires internet at first page load. Acceptable for v1; vendor locally if offline becomes a requirement (1-file drop + import-map path edit).
+- **(10) Path-traversal defense via `Path.resolve().is_relative_to(static_root)`.** `resolve()` collapses `..`; `is_relative_to` rejects anything that escaped. Unit-tested with `GET /static/../secret.txt` returning 404.
+- **(11) WS-upgrade requests skip the static lookup** via the `Sec-WebSocket-Protocol` header check. Avoids any pathological collision between a WS path and a static file.
+- **(12) 7.5b scope decision: shell-early.** User authorized building the pane-toggle architecture next (over filling the game pane first), so the modular-windows vision is visible before content lands. Cheaper to iterate the shell when it's empty than when it's full.
 
-**HAND_END double-emit risk.** The engine emits `HAND_END` as a record event during the run-loop, and `SeatSession.observe()` would wrap it in an `EVENT` wire frame — but per `wire-protocol.md`, HAND_END is its own top-level frame, not EVENT-wrapped. Not blocking 7.3/7.4 (unit tests fan events explicitly via `TableSessions.fanout_hand_end`); will surface in **7.6** end-to-end. Likely fix: filter HAND_END out of `SeatSession.observe()`'s EVENT path, since the HAND_END frame is delivered via the separate `fanout_hand_end` codepath.
+## Known limitations carried forward
+
+- **HAND_END double-emit risk.** Engine emits HAND_END as a record event; `SeatSession.observe()` would wrap it in EVENT, but per `wire-protocol.md` HAND_END is its own top-level frame. Not blocking 7.3/7.4/7.5a (unit tests fan via explicit `fanout_hand_end`; 7.5a demo handler isn't driving an engine). Will surface in 7.6 e2e. Likely fix: filter HAND_END out of `SeatSession.observe()`'s EVENT path.
+- **The 7.5a demo handler is scripted, not a real table manager.** It sends HELLO and ERROR-echoes everything else. The bridge between the web client and a real `TableManager` + `TableSessions` lands in 7.5c / 7.6.
 
 ## What remains for next session
 
 The remaining Layer 7 sub-steps, in order:
 
-- **7.5 — TUI client.** Textual `App` wiring the wire-protocol `Connection` to an interactive renderer. Per [CHECKLIST.md § 7.5](../CHECKLIST.md):
-  - Tests: `Pilot`-driven scripted-keystroke fixture per screen (login, lobby, player_table, spectator_table, hand_end); spectator-privacy defense-in-depth (rendering refuses to draw concealed tiles even if wire sends them); bilingual EN/ZH label rendering per tile and action; crash-resistance (broken render → placeholder, WebSocket stays open).
-  - Files: `mahjong/tui/app.py` (owns `ConnectionManager`), `mahjong/tui/screens/{login,lobby,player_table,spectator_table,hand_end}.py`, `mahjong/tui/render/` (tile rendering, meld layout, discard-pile widget), `mahjong/cli/tui.py` (`python -m mahjong tui` entry).
-  - Largest sub-step in Layer 7 by surface area. **Consider splitting authorization** — one screen at a time vs. all at once — before starting.
-- **7.6 — End-to-end S2 fixture.** The S2 milestone gate. A real server hosting a hand with a TUI client driving one seat and the others as `CannedAdapter`s; record byte-identical to a checked-in fixture. Closes Layer 7 and the S2 milestone.
+- **7.5b — Pane-toggle shell + stub panes.** User-authorized for next. Scope:
+  - Extract `<table-page>` as a host element on `<mahjong-app>`.
+  - Add `<chat-pane>`, `<stats-pane>`, `<spectator-pane>` as Lit elements with placeholder content (`(chat pane — not yet implemented)` etc).
+  - CSS Grid layout per `tui-client.md` (game on left, chat+stats stacked right, spectator across the bottom).
+  - Per-pane visibility state held on `<mahjong-app>` (survives route transitions).
+  - **Hotkey collision warning:** player-action keys include `C` (Chi), `P` (Pass/Peng), `H` (Hu), `S` doesn't collide. Pane-toggle hotkeys should pick a namespace that doesn't collide — recommend Alt-modifier (Alt+C, Alt+S) or a chord prefix (`,c`, `,s`). Resolve this before binding.
+  - Game-pane content stays as today's wire-log render. The shell change is purely structural.
+  - Spec fixture 17 (pane toggle) is the explicit verification target.
+- **7.5c — Fill the game pane.** Render `ATTACHED.snapshot` as the real ASCII table layout (three opponent rows, discard pool, own hand, prompt bar). Implement `applyEventToLocalState`. Wire PROMPT → ACTION round-trip. Bilingual EN/ZH rendering. Spec fixtures 5–9 land here.
+- **7.6 — End-to-end S2 fixture.** The S2 exit gate. Stand up a real `TableManager` + `TableSessions` + `HumanAdapter` behind the WS server; Playwright drives a browser instance through one seat while three `CannedAdapter`s play the others; record byte-identical to a checked-in fixture. Closes Layer 7 and the S2 milestone.
 
 Then Layer 8 (sub-steps 8.1–8.6) is the full S3 surface — SQLite, auth, persistence, multi-table, server-lifecycle.
 
 ## Outstanding questions / decisions for the user
 
-- **Authorize 7.5 in one go, or screen-by-screen?** Pending. 7.5 is the largest 7.x sub-step.
-- **Memory consolidation still recommended** (6 sessions over 1 day at start of this session). Run `/extract-learnings` in consolidation mode when convenient.
+- **7.5b hotkey scheme.** Modifier keys (Alt+C / Alt+S) vs chord prefix (`,c` / `,s`) vs distinct keys (`F2` / `F3`) for pane toggles, so they don't collide with the player-action keys (`C` for Chi, `H` for Hu, etc). Decide before binding.
+- **Playwright setup.** Not yet installed. Defer until 7.5b lands or earlier — one-time cost.
+- **Chat wire-protocol amendment.** Required before chat pane can do anything real. Not blocking 7.5b's stub.
 
 ## Resumption checklist for the next session
 
 - [ ] Read this file.
-- [ ] Read [project_layer7_status.md](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_layer7_status.md) (memory).
-- [ ] Verify `git log --oneline -5` shows `a49bcf6` (Step 7.4) at HEAD.
-- [ ] Run `.venv/bin/python -m pytest` and confirm 509 passing, 2 Linux-only skipped.
-- [ ] Decide 7.5 scope (all screens or one at a time) before starting.
-- [ ] Open [tui-client.md](specs/tui-client.md) and re-skim the screen-by-screen contract.
-- [ ] Start at 7.5 tests-first per project TDD discipline. Note: TUI cosmetics are explicitly carved out of strict TDD in CLAUDE.md — only the protocol/render-privacy/crash-resistance contracts need tests-first.
-- [ ] Address the HAND_END double-emit limitation (above) before 7.6 e2e.
+- [ ] Read [project_layer7_status memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_layer7_status.md) and [project_client_vision_web_ascii memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_client_vision_web_ascii.md).
+- [ ] Verify `git log --oneline -5` shows `694b790` (Step 7.5a) at HEAD.
+- [ ] Run `.venv/bin/python -m pytest` and confirm 515 passing, 2 Linux-only skipped.
+- [ ] Optional sanity: `.venv/bin/python -m mahjong.web.demo` → open `http://127.0.0.1:8400/` → confirm HELLO renders.
+- [ ] Decide hotkey scheme for 7.5b pane toggles before binding.
+- [ ] Start 7.5b shell extraction. Spec fixture 17 is the test-first target.
+- [ ] Address the HAND_END double-emit limitation before 7.6 e2e.
