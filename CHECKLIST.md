@@ -467,18 +467,18 @@ Spec: [docs/specs/wire-protocol.md § Transport](docs/specs/wire-protocol.md).
 
 Spec: [docs/specs/session-mux.md](docs/specs/session-mux.md).
 
-- [ ] Tests written (all 21 session-mux fixtures):
-  - [ ] State-machine transition coverage (fixture 1).
-  - [ ] Buffered replay in order (fixture 2); overflow → fresh snapshot (fixture 3).
-  - [ ] Pending prompt across reconnect (fixture 4); defaults while HELD (fixture 5).
-  - [ ] Seat-hold expiry no-prompt (fixture 6) and with prompt (fixture 7).
-  - [ ] Same-user takeover (fixture 8); different-user rejection (fixture 9).
-  - [ ] Hand-end while HELD (fixture 10); graceful shutdown drain (fixture 11).
-  - [ ] No-prompt action (12); stale prompt_id (13); illegal action + strike (14); idempotent reconnect cycles (15).
-  - [ ] Spectator subscribe + public projection (16); immediate drop (17); identical streams across spectators (18); max-per-table (19); across-hand subscription (20); own-draw projection rule (21).
-- [ ] `mahjong/sessions/mux.py`: per-table `SessionMux` with seat state machine + spectator set.
-- [ ] `mahjong/sessions/timers.py`: idempotent `asyncio.call_later` wrappers.
-- [ ] **Gate:** all 21 fixtures green; cross-platform CI green; mypy clean.
+- [x] Tests written (all 21 session-mux fixtures; 28 test methods across 5 files):
+  - [x] State-machine transition coverage (fixture 1) — `tests/sessions/test_state_machine.py` (5 transitions).
+  - [x] Buffered replay in order (fixture 2); overflow → fresh snapshot (fixture 3) — `tests/sessions/test_ring_buffer.py`.
+  - [x] Pending prompt across reconnect (fixture 4); defaults while HELD (fixture 5) — `tests/sessions/test_pending_prompt.py`.
+  - [x] Seat-hold expiry no-prompt (fixture 6) and with prompt (fixture 7) — `tests/sessions/test_pending_prompt.py`.
+  - [x] Same-user takeover (fixture 8); different-user rejection (fixture 9; both LIVE and HELD) — `tests/sessions/test_state_machine.py`.
+  - [x] Hand-end while HELD (fixture 10); graceful shutdown drain (fixture 11) — `test_state_machine.py` + `test_shutdown.py`.
+  - [x] No-prompt action (12); stale prompt_id (13); illegal action + strike (14); idempotent reconnect cycles (15) — `test_pending_prompt.py` + `test_state_machine.py`.
+  - [x] Spectator subscribe + public projection (16); immediate drop (17); identical streams across spectators (18); max-per-table (19); across-hand subscription (20); own-draw projection rule (21) — `tests/sessions/test_spectators.py`.
+- [x] `mahjong/sessions/mux.py`: per-table `TableSessions` with `SeatSession` state machine + `Spectator` set + `OutboundSink` Protocol + `SeatPrompt` shape.
+- [x] `mahjong/sessions/timers.py`: `IdempotentTimer` wrapping `asyncio.call_later`.
+- [x] **Gate:** all 21 fixtures green (28 test methods); ruff clean; ruff-format clean; mypy clean (54 source files); 502 tests pass repo-wide (2 Linux-only skipped).
 
 ### Step 7.4 — `HumanAdapter`
 
