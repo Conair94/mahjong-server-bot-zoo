@@ -1,15 +1,15 @@
-// Web client entry — Step 7.5b pane-toggle shell.
+// Web client entry — Step 7.5c.i snapshot rendering.
 //
-// Scope: introduces <table-page> as the host element for the four-pane grid.
-// <game-pane> still renders the 7.5a wire-log walking skeleton (real snapshot
-// rendering lands in 7.5c). <chat-pane>, <stats-pane>, <spectator-pane> are
-// stubs with placeholder content. Pane visibility is held on <mahjong-app>
-// so it survives route transitions; toggle hotkeys are Alt+C / Alt+S / Alt+W
-// to keep the bare-letter keys (C/P/H/G/B) reserved for player actions.
+// <game-pane> now renders a real SeatView (state-schema.md § Per-seat
+// projection) into the ASCII table layout when an ATTACHED frame arrives.
+// The wire log is kept as a collapsible debug pane below the table — useful
+// while we're still smoke-testing the wire shape.
 //
-// Per docs/specs/tui-client.md fixture 17.
+// applyEvent (7.5c.ii), PROMPT bar (7.5c.iii), and bilingual rendering
+// (7.5c.iv) follow in subsequent commits.
 
 import { LitElement, html, css } from "lit";
+import { renderTable } from "/static/render.js";
 
 // --- ConnectionManager --------------------------------------------------
 
@@ -106,15 +106,97 @@ function paneHeader(title, hotkey, onClose) {
 class GamePane extends LitElement {
   static properties = {
     status: { type: String },
+    seatView: { state: true },
+    ownSeat: { state: true },
+    tileStyle: { type: String },
     frames: { state: true },
+    showLog: { state: true },
   };
 
   static styles = [
     paneChromeStyles,
     css`
+      .status { color: var(--fg-dim); margin-bottom: 0.5rem; }
+      .status.connected { color: var(--accent); }
+      .status.error { color: var(--error); }
+
+      .table-ascii {
+        color: var(--fg);
+        font-family: inherit;
+        margin: 0.25rem 0 0.75rem;
+        padding: 0.5rem 0;
+        border-top: 1px dashed var(--border);
+        border-bottom: 1px dashed var(--border);
+      }
+      .table-ascii .section {
+        margin: 0;
+        padding: 0.25rem 0;
+        white-space: pre;
+        font-family: inherit;
+        color: inherit;
+      }
+      .table-ascii hr.ascii-rule {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 0.4rem 0;
+        height: 0;
+      }
+      .waiting {
+        color: var(--fg-dim);
+        font-style: italic;
+        padding: 1rem 0;
+      }
+
+      /* --- Tile colors. These rules live inside the component's shadow
+       * root because document-level CSS does not pierce shadow DOM.
+       * Custom properties (--suit-bamboo etc.) DO inherit through, so the
+       * theme system still works.
+       *
+       * Tiles render slightly larger than surrounding labels — Unicode
+       * mahjong glyphs are rendered small in most fonts, and even the
+       * ASCII shorthand reads as the "main object" on the table. line-
+       * height: 1 keeps row spacing stable as tile-size grows.
+       */
+      .tile {
+        display: inline;
+        font-size: 1.8em;
+        line-height: 1;
+        vertical-align: baseline;
+      }
+      .tile.dragon, .tile.face-down { font-size: 2.2em; }
+      .tile .rank { color: var(--fg); }
+      .tile .suit-bamboo,
+      .tile.suit-bamboo { color: var(--suit-bamboo); }
+      .tile .suit-character,
+      .tile.suit-character { color: var(--suit-character); }
+      .tile .suit-dots,
+      .tile.suit-dots { color: var(--fg); }
+      .tile.wind, .tile.flower { color: var(--fg); }
+      .tile.face-down { color: var(--fg-dim); }
+      .tile.dragon.dragon-red   { color: var(--dragon-red); }
+      .tile.dragon.dragon-green { color: var(--dragon-green); }
+      .tile.dragon.dragon-white { color: var(--dragon-white); }
+      .empty { color: var(--fg-dim); }
+      .seat-label { color: var(--accent); }
+      .seat-position { color: var(--fg-dim); }
+      .flower-tag { color: var(--warn); }
+      .hdr-label { color: var(--fg-dim); }
+
+      .log-toggle {
+        background: none;
+        border: none;
+        color: var(--fg-dim);
+        font-family: inherit;
+        font-size: inherit;
+        cursor: pointer;
+        padding: 0.25rem 0;
+      }
+      .log-toggle:hover { color: var(--accent); }
+
       .log {
-        max-height: 50vh;
+        max-height: 30vh;
         overflow-y: auto;
+        margin-top: 0.5rem;
       }
       .log pre {
         border-bottom: 1px dashed var(--border);
@@ -122,19 +204,22 @@ class GamePane extends LitElement {
         color: var(--fg-dim);
         white-space: pre-wrap;
         word-break: break-all;
+        font-size: 0.85em;
       }
       .log pre.kind-HELLO { color: var(--accent); }
+      .log pre.kind-ATTACHED { color: var(--accent); }
       .log pre.kind-ERROR { color: var(--error); }
-      .status { color: var(--fg-dim); margin-bottom: 0.5rem; }
-      .status.connected { color: var(--accent); }
-      .status.error { color: var(--error); }
     `,
   ];
 
   constructor() {
     super();
     this.status = "connecting";
+    this.seatView = null;
+    this.ownSeat = null;
+    this.tileStyle = "ascii";
     this.frames = [];
+    this.showLog = false;
   }
 
   pushFrame(msg) {
@@ -145,18 +230,42 @@ class GamePane extends LitElement {
     this.status = status;
   }
 
+  setSnapshot(seatView, ownSeat) {
+    this.seatView = seatView;
+    this.ownSeat = ownSeat;
+  }
+
+  _toggleLog() {
+    this.showLog = !this.showLog;
+  }
+
   render() {
+    const tableContent = this.seatView
+      ? renderTable(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
+      : null;
+
     return html`
       <div class="pane">
-        ${paneHeader("Game pane (walking skeleton)", null, null)}
+        ${paneHeader("Game pane", null, null)}
         <div class="status ${this.status}">Connection: ${this.status}</div>
-        <div class="log">
-          ${this.frames.length === 0
-            ? html`<pre class="empty">(no frames yet)</pre>`
-            : this.frames.map(
-                (f) => html`<pre class="kind-${f.kind || "?"}">${JSON.stringify(f, null, 2)}</pre>`,
-              )}
-        </div>
+        ${tableContent !== null
+          ? html`<div class="table-ascii">${tableContent}</div>`
+          : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
+
+        <button class="log-toggle" @click=${this._toggleLog}>
+          ${this.showLog ? "▼" : "▶"} wire log (${this.frames.length} frame${this.frames.length === 1 ? "" : "s"})
+        </button>
+        ${this.showLog
+          ? html`
+              <div class="log">
+                ${this.frames.length === 0
+                  ? html`<pre class="empty">(no frames yet)</pre>`
+                  : this.frames.map(
+                      (f) => html`<pre class="kind-${f.kind || "?"}">${JSON.stringify(f, null, 2)}</pre>`,
+                    )}
+              </div>
+            `
+          : ""}
       </div>
     `;
   }
@@ -236,6 +345,7 @@ const PANE_HOTKEYS = {
 class TablePage extends LitElement {
   static properties = {
     panes: { type: Object },
+    tileStyle: { type: String },
   };
 
   static styles = css`
@@ -285,6 +395,7 @@ class TablePage extends LitElement {
   constructor() {
     super();
     this.panes = { chat: false, stats: false, spectator: false };
+    this.tileStyle = "ascii";
     this._onKeydown = this._handleKeydown.bind(this);
     this._onPaneClose = this._handlePaneClose.bind(this);
   }
@@ -353,7 +464,7 @@ class TablePage extends LitElement {
         </span>
       </div>
       <div class=${gridClasses.join(" ")}>
-        <div class="slot-game"><game-pane></game-pane></div>
+        <div class="slot-game"><game-pane .tileStyle=${this.tileStyle}></game-pane></div>
         ${!sideEmpty
           ? html`
               <div class="slot-side">
@@ -384,6 +495,9 @@ customElements.define("table-page", TablePage);
 const THEME_STORAGE_KEY = "mahjong-theme";
 const THEMES = ["dark", "light"];
 
+const TILE_STYLE_STORAGE_KEY = "mahjong-tile-style";
+const TILE_STYLES = ["ascii", "unicode"];
+
 function loadInitialTheme() {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -394,11 +508,22 @@ function loadInitialTheme() {
   return "dark";
 }
 
+function loadInitialTileStyle() {
+  try {
+    const stored = localStorage.getItem(TILE_STYLE_STORAGE_KEY);
+    if (TILE_STYLES.includes(stored)) return stored;
+  } catch {
+    // ignore.
+  }
+  return "ascii";
+}
+
 class MahjongApp extends LitElement {
   static properties = {
     route: { type: String },
     panes: { state: true },
     theme: { state: true },
+    tileStyle: { state: true },
   };
 
   static styles = css`
@@ -416,6 +541,8 @@ class MahjongApp extends LitElement {
       display: flex;
       gap: 0.5rem;
       align-items: center;
+      flex-wrap: wrap;
+      flex-shrink: 0;
     }
     .theme-btn {
       background: transparent;
@@ -425,6 +552,8 @@ class MahjongApp extends LitElement {
       font-size: inherit;
       padding: 0.25rem 0.75rem;
       cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .theme-btn:hover { color: var(--accent); border-color: var(--accent); }
     .theme-btn .hint { color: var(--fg-dim); margin-left: 0.5rem; }
@@ -436,6 +565,7 @@ class MahjongApp extends LitElement {
     // Pane visibility lives here so it survives route transitions.
     this.panes = { chat: false, stats: false, spectator: false };
     this.theme = loadInitialTheme();
+    this.tileStyle = loadInitialTileStyle();
     this._conn = null;
     this._onKeydown = this._handleKeydown.bind(this);
   }
@@ -460,12 +590,16 @@ class MahjongApp extends LitElement {
   }
 
   _handleKeydown(e) {
-    // Alt+T toggles theme. Other Alt-chords belong to <table-page>; we early-
-    // return on those to avoid double-handling.
+    // Alt+T toggles theme; Alt+U toggles tile style. Other Alt-chords belong
+    // to <table-page>; we early-return on those to avoid double-handling.
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    if (e.code !== "KeyT") return;
-    e.preventDefault();
-    this._toggleTheme();
+    if (e.code === "KeyT") {
+      e.preventDefault();
+      this._toggleTheme();
+    } else if (e.code === "KeyU") {
+      e.preventDefault();
+      this._toggleTileStyle();
+    }
   }
 
   _toggleTheme() {
@@ -474,6 +608,15 @@ class MahjongApp extends LitElement {
       localStorage.setItem(THEME_STORAGE_KEY, this.theme);
     } catch {
       // Storage unavailable — theme will simply not persist. Non-fatal.
+    }
+  }
+
+  _toggleTileStyle() {
+    this.tileStyle = this.tileStyle === "ascii" ? "unicode" : "ascii";
+    try {
+      localStorage.setItem(TILE_STYLE_STORAGE_KEY, this.tileStyle);
+    } catch {
+      // ignore — non-fatal.
     }
   }
 
@@ -488,7 +631,13 @@ class MahjongApp extends LitElement {
       this._conn.addEventListener("open", () => pane.setStatus("connected"));
       this._conn.addEventListener("close", (e) => pane.setStatus(`closed (${e.detail.code})`));
       this._conn.addEventListener("error", () => pane.setStatus("error"));
-      this._conn.addEventListener("message", (e) => pane.pushFrame(e.detail));
+      this._conn.addEventListener("message", (e) => {
+        const frame = e.detail;
+        pane.pushFrame(frame);
+        if (frame.kind === "ATTACHED" && frame.snapshot) {
+          pane.setSnapshot(frame.snapshot, frame.seat ?? 0);
+        }
+      });
       this._conn.connect();
     });
 
@@ -498,12 +647,13 @@ class MahjongApp extends LitElement {
   }
 
   render() {
-    const next = this.theme === "dark" ? "light" : "dark";
+    const nextTheme = this.theme === "dark" ? "light" : "dark";
+    const nextTile = this.tileStyle === "ascii" ? "unicode" : "ascii";
     return html`
       <header>
         <pre>
  ╔══════════════════════════════════════════════════════════╗
- ║   Mahjong / 麻将        — web client, step 7.5b shell    ║
+ ║   Mahjong / 麻将        — web client, step 7.5c.i        ║
  ╚══════════════════════════════════════════════════════════╝</pre>
         <div class="controls">
           <button
@@ -511,11 +661,18 @@ class MahjongApp extends LitElement {
             @click=${this._toggleTheme}
             title="Toggle theme (Alt+T)"
           >
-            [ ${this.theme} → ${next} ]<span class="hint">Alt+T</span>
+            [ ${this.theme} → ${nextTheme} ]<span class="hint">Alt+T</span>
+          </button>
+          <button
+            class="theme-btn"
+            @click=${this._toggleTileStyle}
+            title="Toggle tile style (Alt+U)"
+          >
+            [ tiles: ${this.tileStyle} → ${nextTile} ]<span class="hint">Alt+U</span>
           </button>
         </div>
       </header>
-      <table-page .panes=${this.panes}></table-page>
+      <table-page .panes=${this.panes} .tileStyle=${this.tileStyle}></table-page>
     `;
   }
 }

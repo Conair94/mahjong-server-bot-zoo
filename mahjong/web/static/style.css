@@ -1,9 +1,15 @@
 /* Terminal aesthetic — sparse, monospace, ASCII-friendly.
  * Per docs/specs/tui-client.md §Tech stack.
  *
- * Themes are defined as CSS custom properties on :root. Shadow-DOM Lit
- * components inherit these via the cascade, so no per-component theming
- * is needed. Toggle by setting document.documentElement.dataset.theme.
+ * Themes are CSS-custom-property swaps on :root[data-theme=…]. Shadow-DOM
+ * Lit components inherit via the cascade; no per-component theming. Toggle
+ * by setting document.documentElement.dataset.theme.
+ *
+ * Suit colors:
+ *   - bamboo  (display letter B) → --suit-bamboo (jade green)
+ *   - characters (display letter C) → --suit-character (vermilion red)
+ *   - dots / winds / white dragon / flowers → foreground (theme-adaptive)
+ *   - dragons: red / green / white, always colored.
  */
 
 /* Dark — default. Terminal aesthetic. */
@@ -13,25 +19,34 @@
   --fg-dim: #6a7a7c;
   --bg: #0b0f10;
   --accent: #6fdc8c;
-  --accent-red: #d96d61;   /* cinnabar — decorative red, distinct from --error */
+  --accent-red: #d96d61;
   --warn: #f2c94c;
   --error: #ff7b72;
   --border: #1f2a2c;
+
+  --suit-bamboo: #6fdc8c;      /* jade — matches --accent */
+  --suit-character: #d96d61;   /* cinnabar — matches --accent-red */
+  --dragon-red: #ff5252;
+  --dragon-green: #4cd964;
+  --dragon-white: #f4f4f4;
 }
 
-/* Light — classic MCR tile palette. Ivory tile-face background, jade-bamboo
- * green for active/positive state, vermilion-character red for chrome + warn
- * + error, near-black for body text. The bamboo-green / character-red pairing
- * is the recognizable identity of a real mahjong tile face. */
+/* Light — classic MCR tile palette. */
 :root[data-theme="light"] {
   --fg: #1a1a1a;
   --fg-dim: #6b675a;
-  --bg: #fbf8ee;           /* ivory tile face */
-  --accent: #1f7a3a;       /* bamboo jade */
-  --accent-red: #b8362a;   /* character-tile vermilion (decorative) */
-  --warn: #c97a1a;         /* aged-brass */
-  --error: #962014;        /* deeper vermilion for errors so it reads as alarm */
-  --border: #c9c2ad;       /* tile-edge tan */
+  --bg: #fbf8ee;
+  --accent: #1f7a3a;
+  --accent-red: #b8362a;
+  --warn: #c97a1a;
+  --error: #962014;
+  --border: #c9c2ad;
+
+  --suit-bamboo: #1f7a3a;      /* bamboo jade */
+  --suit-character: #b8362a;   /* character vermilion */
+  --dragon-red: #b8362a;
+  --dragon-green: #1f7a3a;
+  --dragon-white: #1a1a1a;     /* on ivory, "white dragon" reads as black outline */
 }
 
 html, body {
@@ -40,8 +55,8 @@ html, body {
   background: var(--bg);
   color: var(--fg);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: 17px;
+  line-height: 1.4;
   font-variant-ligatures: none;
 }
 
@@ -53,7 +68,7 @@ body {
 
 mahjong-app {
   display: block;
-  max-width: 100ch;
+  max-width: 130ch;
   margin: 0 auto;
 }
 
@@ -62,3 +77,8 @@ pre {
   white-space: pre;
   font-family: inherit;
 }
+
+/* Tile glyphs — colored by suit / dragon. The selectors below are document-
+ * level so they reach into shadow-DOM components via CSS Custom Properties.
+ * Tile classes themselves are scoped per shadow root, so we mirror the
+ * critical color rules in each component's static styles too. */

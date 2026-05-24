@@ -335,7 +335,21 @@ Every user-visible string passes through a `t(key, locale)` lookup against `mahj
 - All tile names (1–9 of each suit, winds, dragons, flowers).
 - Screen titles, button labels, error messages.
 
-Tile glyphs (the `🀇` characters) are Unicode "mahjong tiles" code points (U+1F000..U+1F02B). Browsers with system mahjong fonts handle these. The fallback rendering — ASCII shorthand like `[W3]`, `[B5]` — is selectable via `?tile_style=ascii` URL param for environments where glyph rendering breaks.
+Tile glyphs (the `🀇` characters) are Unicode "mahjong tiles" code points (U+1F000..U+1F02B). Browsers with system mahjong fonts handle these. The fallback rendering — ASCII shorthand — is the **default** since system mahjong font support is uneven; Unicode is toggleable via `Alt+U` (also via the header button, also via `?tile_style=unicode` URL param). The two modes share one renderer and persist independently of theme.
+
+**ASCII shorthand convention (locked 2026-05-23):**
+
+| Engine token | ASCII display | Notes |
+| --- | --- | --- |
+| `W1`..`W9` (wan / characters) | `1C`..`9C` | Suit letter `C` colored vermilion red (`--suit-character`). |
+| `B1`..`B9` (bing / dots) | `1D`..`9D` | Suit letter `D` in foreground. |
+| `T1`..`T9` (tiao / bamboo) | `1B`..`9B` | Suit letter `B` colored bamboo green (`--suit-bamboo`). |
+| `F1`..`F4` (winds) | `EW SW WW NW` | Direction letter (E/S/W/N) + W. Foreground color. |
+| `J1`..`J3` (dragons) | `🀄 🀅 🀆` | **Always Unicode**, colored red / green / fg respectively — even in ASCII mode. |
+| `H1`..`H8` (flowers) | `1F`..`8F` | Foreground color. |
+| Face-down | `▒▒` (ASCII) / `🀫` (Unicode) | Dim foreground. |
+
+Suit-letter remapping (engine `W` → display `C`, engine `B` → display `D`, engine `T` → display `B`) is intentional: the on-screen letter matches the suit's English name, which is more learnable than the Botzone romanization. Rank-first ordering (`1B` not `B1`) reads as natural English ("one bamboo").
 
 ## Error and disconnect UX
 
@@ -359,7 +373,7 @@ Keys:
 | --- | --- | --- |
 | `server` | (same origin as the page, `ws://` derived) | Where to connect. |
 | `locale` | `bilingual` | `en` / `zh` / `bilingual`. |
-| `tile_style` | `unicode` | `unicode` (🀇) / `ascii` ([W3]). |
+| `tile_style` | `ascii` | `ascii` (`1B`/`1C`/`1D` shorthand — default) / `unicode` (🀇 glyphs). Dragons are always Unicode regardless. Persisted to `localStorage["mahjong-tile-style"]`; toggled via `Alt+U` or the header button. |
 | `no_auth` | `false` | S2 local-dev: skip login, hardcoded user. |
 | `theme` | `dark` | `dark` (terminal green-on-black) / `light` (MCR tile palette: ivory bg, bamboo green, character vermilion). Persisted to `localStorage["mahjong-theme"]`; toggled via `Alt+T` or the header button. Implemented as CSS-custom-property swaps on `:root[data-theme=…]`. |
 
