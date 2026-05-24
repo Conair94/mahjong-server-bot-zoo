@@ -1,10 +1,10 @@
-# Session handoff — 2026-05-24 (end of 7.6.ii)
+# Session handoff — 2026-05-24 (end of Layer 7 / S2)
 
 Snapshot of Layer 7 implementation status. Read this to pick up where this session left off.
 
 ## Where we are
 
-**Layer 7 is 10 of 11 effective sub-steps complete.** This session landed **7.6.ii (orchestrator + Fixture F1)**: a real `TableSessions` + `manager.run_hand` is now behind the WS, and a byte-identical record fixture pins the full stack. F2/F3 (drop/reconnect) and F4 (spectator) remain.
+**Layer 7 is complete. S2 milestone is reached.** This session landed **7.6.iii (F2 + F3)** and **7.6.iv (F4 + spectator fanout plumbing)** as one combined commit. All four end-to-end fixtures pass; the orchestrator hosts a real hand, supports drop/reconnect, escalates to autopass on persistent disconnect, and broadcasts publicly-projected events to spectators.
 
 | # | Step | Commit | Notes |
 | --- | --- | --- | --- |
@@ -18,123 +18,108 @@ Snapshot of Layer 7 implementation status. Read this to pick up where this sessi
 | 7.5c.i | Snapshot rendering | `f566340` | `SeatView` → ASCII table; tile styling; Unicode toggle |
 | 7.5c.ii | applyEvent reducer | `e376cde` | Live SeatView mutation per EVENT; demo drives real engine |
 | 7.5c.iii | PROMPT bar + ACTION round-trip + illegal-action banner | `7f871aa` | Spec fixtures 7, 8, 9 GREEN via Playwright async API |
-| ~~7.5c.iv~~ | ~~Bilingual EN/ZH rendering~~ | **DEFERRED to a later edition** | User decided 2026-05-24 to skip; not blocking S2. |
+| ~~7.5c.iv~~ | ~~Bilingual EN/ZH rendering~~ | **DEFERRED** | Decision 28; not blocking S2 |
 | 7.6.i | HAND_END double-emit fix | `9ed9370` | Routed HAND_END as top-level frame; +6 tests |
-| **7.6.ii** | **Orchestrator + Fixture F1 (byte-identical record)** | **THIS SESSION (`de15be7`)** | **`mahjong/web/server.py`; full stack + 2 new tests; 528 passing** |
-| 7.6.iii | Fixtures F2 + F3 (drop/reconnect inside-hold + past-hold autopass) | pending | |
-| 7.6.iv | Fixture F4 (spectator subscription, public-only projection) | pending | Closes Layer 7 and the S2 milestone |
+| 7.6.ii | Orchestrator + F1 (byte-identical record) | `de15be7` | `mahjong/web/server.py`; +2 tests |
+| **7.6.iii + 7.6.iv** | **F2 + F3 + F4 + spectator fanout plumbing** | **THIS SESSION (`2337042`)** | **+3 tests; 531 passing repo-wide; Layer 7 / S2 complete** |
 
-**Verification at end of session:** ruff clean · ruff-format clean · mypy clean (58 source files; +1 over 7.6.i) · **528 tests pass repo-wide** (526 prior + 2 new F1 e2e tests; 2 Linux-only skipped). No regressions in S0 walking-skeleton byte-identical, 7.5c.iii prompt-bar, or 7.6.i HAND_END routing.
+**Verification at end of session:** ruff clean · ruff-format clean · mypy clean (58 source files; unchanged) · **531 tests pass repo-wide** (528 prior + 3 new e2e tests; 2 Linux-only skipped). All four S2 fixtures (F1 byte-identical, F2 drop/reconnect, F3 drop→autopass, F4 spectator) GREEN. No regressions in S0 walking-skeleton, 7.5c.iii prompt-bar, 7.6.i HAND_END routing, or 7.6.ii orchestrator.
 
 ## Decisions reached this session
 
-- **(32) Spectator fanout shape: option (a).** When 7.6.iv lands, the orchestrator will pass an `event_callback: Callable[[dict], Awaitable[None]] | None` to `mgr.run_hand`. The callback fires once per record event after the manager's adapter fanout and is wired to a new `TableSessions.fanout_event_to_spectators(event)` method (spectator-only — does NOT re-hit `SeatSession.observe`, which `HumanAdapter.observe` already triggers via the adapter path). Smallest manager surgery, cleanest separation. Not implemented yet — F1 has no spectator and doesn't need it; defer to 7.6.iv.
-- **(33) F1 uses a contrived "all-default" hand, not a hand-tailored short script.** Seat 0's client echoes `default_action` on every PROMPT; seats 1-3 are `CannedAdapter(actions=[])` which already returns `default_action`. Result: identical engine path to the S0 walking-skeleton fixture (`seed=12345`), so the F1 record is byte-identical to the S0 record except at HEADER's `seats[0].identity` (`human` vs `canned`) and the FOOTER checksum. 221 events total, 31941 bytes. This is the simplest fixture that exercises the full stack; the byte-identical assertion is robust because it shares the engine path with an already-pinned fixture.
-- **(34) F1 uses a raw `websockets` client, not Playwright.** The handoff spec wording suggested Playwright; we picked raw-WS because the browser UI's wire handling is already pinned by `tests/web/test_prompt.py` (7.5c.iii), and F1's contract is the orchestrator + record determinism — routing it through Chromium adds launch cost without strengthening the assertion. Playwright-driven e2e can be added later as a SEPARATE test if we want to gate UI wire handling against the full stack rather than a `FakeWireServer`.
-- **(35) Clock seam stays as monkeypatch.** `mgr._now_ts` is monkeypatched in test (same pattern as `tests/table/test_s0_walking_skeleton.py`). `run_hand`'s signature stays unchanged. The two F1 tests both apply the patch; the wire-level PROMPT `deadline_ms` field uses `time.time()` (real clock), but PROMPTs don't appear in the record so they don't affect byte-identity.
-- **(36) Single-hand orchestrator for v1.** `WebOrchestrator` runs ONE hand per instance — the hand kicks off on first successful ATTACH and the orchestrator stays up afterward. Multi-hand orchestration (between-hand state, hand_index increment, new dealer rotation, score carry-over) lands in Layer 8. This matches the project's walking-skeleton-before-depth scope rule.
-- **(37) `OutboundSink.send` narrowed from `Mapping[str, Any]` to `dict[str, Any]`.** Reason: `mahjong.wire.server.Connection.send` already takes `dict[str, Any]`; the Protocol's wider `Mapping` declaration prevented it from satisfying the Protocol structurally (function-input parameter contravariance). Every actual caller (`SeatSession`, `Spectator`, `WebOrchestrator`) constructs a fresh dict per send, so the narrower input type costs nothing and lets `Connection` flow through `TableSessions.attach(conn, ...)` without casting. Worth knowing in case a future sink type wants to pass `MappingProxy`/`UserDict`.
+- **(38) F3 framing corrected mid-session: spec-aligned, not 'no-markers'.** The 7.6.ii handoff posed F3 as choosing between (a) defaults-without-marker and (b) proper autopass marker. Discovered when writing F3 that (a) was never achievable — `seat-port.md` § Failure modes (lines 13, 144-149, 181) is explicit: every prompt that hits its deadline gets `timeout: true` written on the resulting event, counts a strike, and after `strike_limit` strikes the seat is swapped to `AutoPassAdapter` whose events carry `auto_pass: true`. The existing strike-escalation path already produces the correct shape — no new `on_hold_expired` plumbing was needed. F3 now asserts the documented escalation pattern. **Lesson for future planning:** when the framing of a choice gets ambiguous, read the spec for the prior art before committing — I bounced through a failing test before going back to confirm spec intent.
+- **(39) Order F4 → F2 → F3 was the right call.** F4 required the only manager-touching plumbing change (`event_callback`), so building it first established the manager-shape decision before F2/F3 confirmed the existing infra worked. F2 and F3 needed no manager changes at all — just orchestrator constructor knobs (`hold_seconds`, `strike_limit`) wired through to `TableSessions` / `mgr.run_hand`.
+- **(40) `event_callback` is the spectator seam.** Added as an optional kwarg to `mgr.run_hand`; fires once per record event from inside `_fanout_observe` after the adapter gather completes. Bounded by the same `observe_timeout_seconds` and silently absorbs errors — same independence guarantee as adapters. The orchestrator wires it to a new `TableSessions.fanout_event_to_spectators(record_event)` (spectator-only — does NOT iterate seats, since the manager's adapter loop already drives `HumanAdapter.observe` → `SeatSession.observe`). Two callers for spectator fanout now exist: `fanout_event` (seats + spectators, for old code paths and tests) and `fanout_event_to_spectators` (the orchestrator's path). Both correct in their contexts.
+- **(41) Race-avoidance in F3 via short `decide_timeout_seconds=0.1`.** The race between `SeatSession._on_prompt_deadline` and the manager's `asyncio.wait_for` timeout (both armed off the same prompt deadline) does fire — manager's wait_for wins, producing `timeout: true` on the event. This is correct per spec § 144-149 ("does not return by `prompt.deadline`" → timeout). The race isn't a bug; it's the spec's design. F3 sets `decide_timeout_seconds=0.1` to make the test run in ~3s (≈30 seat-0 prompts).
 
 ## What this session built
 
-### 7.6.ii — `WebOrchestrator` + F1
+### 7.6.iv plumbing — `event_callback` + spectator-only fanout
 
-**[mahjong/web/server.py](../mahjong/web/server.py)** (new, ~240 lines):
+**[mahjong/table/manager.py](../mahjong/table/manager.py):**
 
-- `WebOrchestrator(host, port, ruleset, seed, hand_id, record_path, server_info, canned_seat_actions, identity_factory, static_dir, table_id, decide_timeout_seconds)`.
-- Pre-builds `initial_state(ruleset, seed)` at construction so `TableSessions.snapshot_provider` returns a correct snapshot at ATTACH time (before `run_hand` runs). Same seed → identical state inside `run_hand`, so no drift.
-- Constructs three `CannedAdapter`s for seats 1-3 (empty actions ⇒ defaults). The orchestrator owns them.
-- Lifecycle: `start()` boots the `WebSocketServer`, `close()` cancels the in-flight `run_hand` task (if any) and tears the server down, `port` exposes the bound port, `wait_hand_complete(timeout=...)` blocks until `run_hand` returns.
-- Handler flow:
-  1. Send HELLO.
-  2. Await first inbound (5s timeout).
-  3. ATTACH → `TableSessions.attach(conn, user_id=identity.user_id, seat=msg.seat)`. Only seat 0 accepted (others get `seat_not_yours`). On success, under a lock, kick `_run_hand` as a background task if not already running.
-  4. SPECTATE → `TableSessions.spectate(...)`. (Wired but no F4 fixture yet — covered in 7.6.iv.)
-  5. Inbound loop forwards every subsequent message to `TableSessions.handle_inbound(conn, msg)`.
-  6. On socket close: `TableSessions.on_socket_dropped(conn)`.
-- `_run_hand` constructs the 4-adapter list (`HumanAdapter` for seat 0, the three pre-built CannedAdapters for 1-3) and calls `mgr.run_hand(...)` with the orchestrator's seed/hand_id/record_path/server_info. Sets `_hand_done` event in `finally`.
-- `IdentityFactory` is `Callable[[Connection], HumanIdentity]`. Default derives from `conn.connection_id`; tests inject a fixed identity for byte-identical assertions.
+- New type alias `EventCallback = Callable[[dict[str, Any]], Awaitable[None]]`.
+- `run_hand` accepts `event_callback: EventCallback | None = None`. Threaded through `_step_discard`, `_step_claim_window`, `_apply_all_pass`.
+- `_fanout_observe` now accepts `event_callback`; after the adapter `asyncio.gather` completes, calls `event_callback(event)` once with the same per-observe timeout and silent error handling. Preserves the manager's independence guarantee (one slow consumer doesn't block others).
 
-**[tests/web/test_e2e_s2.py](../tests/web/test_e2e_s2.py)** (new, 2 tests):
+**[mahjong/sessions/mux.py](../mahjong/sessions/mux.py):**
 
-- `test_s2_e2e_record_is_byte_identical_to_fixture` — the S2 exit gate. Boots `WebOrchestrator(seed=12345, hand_id=01970e8a-..., server_info=s0-fixture)`, raw-WS client connects, ATTACHes seat 0 (identity = `{kind: human, user_id: u_test, display: Tester}`), echoes `default_action` on every PROMPT, breaks on HAND_END. After hand complete, asserts the temp record bytes == `tests/_fixtures/s2_e2e_record.jsonl` byte-for-byte.
-- `test_s2_e2e_no_double_emit_hand_end` — wire-level invariant. Same setup but client drains for 500 ms after the first HAND_END and the test asserts exactly one HAND_END frame was received with a non-empty `terminal` payload. Pins the 7.6.i invariant at the wire level (the byte-identical record check only constrains record events).
-- Both use `mgr._now_ts = lambda: f"2026-05-20T00:00:00.{i:03d}Z"` monkeypatch (same pattern as `tests/table/test_s0_walking_skeleton.py`).
+- `TableSessions.fanout_event_to_spectators(record_event)` — new method. Iterates `self._spectators` only; calls `Spectator.send_event(record_event, hand_index)` which handles both EVENT (project_event(seat=None)) and HAND_END (wire HAND_END frame) shapes.
+- `TableSessions.fanout_event` refactored to delegate spectator-fanout to the new method. Same external behavior; preserved for callers that drive both seat and spectator fanout themselves (legacy / direct tests).
 
-**[tests/_fixtures/s2_e2e_record.jsonl](../tests/_fixtures/s2_e2e_record.jsonl)** (new, 31941 bytes, 221 lines):
+**[mahjong/web/server.py](../mahjong/web/server.py):**
 
-- Diff vs `s0_walking_skeleton_seed_12345.jsonl`: 2 lines differ. Line 0 (HEADER): `seats[0].identity` is `{kind: human, user_id: u_test, display: Tester}` instead of `{kind: canned, script: pass}`. Line 220 (FOOTER): different `checksum` (the SHA-256 over the record bytes, which differ at HEADER).
-- Replays correctly to the same `state_hash_final` as the FOOTER asserts (defense in depth: the engine path is byte-equivalent to S0).
+- `WebOrchestrator.__init__` accepts `hold_seconds` (default `DEFAULT_HOLD_SECONDS` = 60s) and `strike_limit` (default 3). Both wired through to `TableSessions` / `mgr.run_hand` respectively.
+- `_run_hand` passes `event_callback=self._sessions.fanout_event_to_spectators` to `mgr.run_hand`. This is the orchestrator → spectator path.
 
-**[mahjong/sessions/mux.py](../mahjong/sessions/mux.py)** — one-line type fix:
+### F2 — drop and reconnect within hold
 
-- `OutboundSink.send` parameter changed from `Mapping[str, Any]` to `dict[str, Any]`. See decision 37 above.
+**[tests/web/test_e2e_s2.py](../tests/web/test_e2e_s2.py)** `test_s2_e2e_drop_and_reconnect_within_hold_is_byte_identical`:
+
+- Player opens WS, ATTACHes, receives the first PROMPT, drops the WS WITHOUT sending ACTION. Server's `_handler` exits its `async for msg in conn` loop and calls `on_socket_dropped` → seat goes HELD with prompt outstanding.
+- Player reconnects (fresh WS), sends ATTACH with same user_id (via `_fixed_identity` factory injecting `u_test`). Server's `TableSessions.attach` hits the HELD + same-user resume path, replays buffer (empty in this scenario), re-emits the same PROMPT via `_reprompt_if_pending`.
+- Player echoes `default_action` on every PROMPT to hand end.
+- Assertion: record bytes byte-identical to F1's fixture. Drop/reconnect was invisible to the record because no engine events fire during the wire-level transition.
+- `hold_seconds=5.0` (generous; reconnect happens in ~100 ms after a small sleep).
+
+### F3 — drop without reconnect; strike → autopass
+
+**[tests/web/test_e2e_s2.py](../tests/web/test_e2e_s2.py)** `test_s2_e2e_drop_without_reconnect_strikes_then_autopasses`:
+
+- Player connects, ATTACHes, closes WS without ever sending ACTION.
+- Hand proceeds. Each seat-0 prompt: manager's `_decide_or_default` `asyncio.wait_for` times out at `decide_timeout_seconds=0.1`. Per spec § 144-149: `default_action` is submitted to the engine; event is written with `timeout: true`; strike counter incremented.
+- After 3 timeouts, `_maybe_swap_to_autopass` substitutes `AutoPassAdapter`. Subsequent seat-0 events carry `auto_pass: true` (and no longer `timeout: true` — AutoPassAdapter returns synchronously).
+- Hand reaches HAND_END without deadlock.
+- Assertions: at least one timeout marker AND at least one auto_pass marker on seat-0 actions; no markers after the autopass swap carry both; seats 1-3 unaffected; HAND_END reached.
+- `hold_seconds=30.0` (well above hand duration so the hold timer is moot — the spec uses prompt-deadline-based escalation, not hold-timer).
+
+### F4 — spectator subscription, public projection
+
+**[tests/web/test_e2e_s2.py](../tests/web/test_e2e_s2.py)** `test_s2_e2e_spectator_sees_public_events_only`:
+
+- Two clients run concurrently. Spectator connects first, sends SPECTATE, captures all received frames, signals a `spectator_ready` event after receiving SPECTATING. Player waits on `spectator_ready` before sending ATTACH — ensures spectator is subscribed when the hand kicks.
+- Assertions:
+  1. Spectator's first non-HELLO frame is SPECTATING.
+  2. Spectator never receives PROMPT.
+  3. Spectator receives exactly one HAND_END (top-level frame with non-empty `terminal`), and the `terminal` payload matches the record's HAND_END event stripped of wrapper fields.
+  4. Spectator's EVENT count equals the record's non-meta event count, and each EVENT payload is byte-equal to `project_event(record_event_stripped_of_seq, seat=None)`. The seq strip is because `RecordWriter` stamps `seq` on events when persisting; the in-memory event passed to `event_callback` doesn't carry it. The wire EVENT frame has its own outer `seq` and the inner payload is the raw projection.
 
 ## Known limitations carried forward
 
-- **Spectator fanout not yet wired.** Decision 32 above documents the design; implementation lands in 7.6.iv when F4 needs it. `WebOrchestrator._handle_spectate` accepts SPECTATE frames and registers the spectator with `TableSessions`, but record events from `run_hand` don't fan out to spectators yet — currently only seats receive events (via the manager's adapter-observe path). A spectator-only test would observe nothing.
-- **Single hand per orchestrator instance** (see decision 36). Restarting between hands means a fresh orchestrator + fresh `TableSessions`. Acceptable for v1 (S2 is single-hand).
+- **Single hand per orchestrator instance.** `WebOrchestrator` runs ONE hand per instance. Multi-hand orchestration (between-hand state, hand_index increment, dealer rotation, score carry-over) is Layer 8.
 - **No authentication.** ATTACH carries no user_id at the wire layer; orchestrator derives one from `Connection.connection_id` (or a test-injected factory). Production auth (per `wire-protocol.md` AUTH_REQUEST/AUTH_RESPONSE) is Layer 8.
-- **`mahjong/web/demo.py` still hand-rolled.** It's the toy reference handler for visual verification; `mahjong/web/server.py` is now the real one. Demo doesn't yet use `WebOrchestrator`; we could replace it but it's been useful as a minimum-dependency probe. Leave for now.
-- **Phase-transition prompt clearing** (carried). Still TBD. The browser may need to clear a stale PROMPT bar when the server moves on without re-prompting seat 0 (e.g. CLAIM_WINDOW where seat 0 wasn't the discarder). Has not surfaced in F1 because seat 0 plays through every prompt. Will likely surface in F2 (mid-hand drop) or in a Playwright e2e variant.
-- **Opponent meld formation can't reconstruct which specific concealed tiles left.** Unchanged from 7.5c.ii.
-- **Concealed tile sorting after DRAW.** Unchanged from 7.5c.ii.
-- **Bilingual EN/ZH rendering** is explicitly deferred (decision 28 from 7.6.i session).
+- **`mahjong/web/demo.py` still hand-rolled.** It's the toy reference handler for visual verification; `mahjong/web/server.py` is now the real one. Could be retired in Layer 8.
+- **Phase-transition prompt clearing** — not surfaced in any S2 fixture because seat-0 either plays through every prompt or is dropped. Likely surfaces when CLAIM_WINDOW races introduce stale prompts on the wire after the engine has moved on. Defer until a UI report.
+- **Opponent meld formation can't reconstruct which specific concealed tiles left** (carried from 7.5c.ii).
+- **Concealed tile sorting after DRAW** (carried from 7.5c.ii).
+- **Bilingual EN/ZH rendering** (decision 28, carried).
 
-## What remains for next session
+## What remains
 
-### 7.6.iii — Fixtures F2 + F3 (drop/reconnect)
+**Layer 7 is closed.** Tick CHECKLIST.md Step 7.6 if it hasn't been already.
 
-**F2 — drop & reconnect within hold window.**
+**Next layer: Layer 8 (ops hardening + multi-hand / multi-table).** Per [docs/server-plan.md](server-plan.md). Major themes:
 
-- Spec: extend `tests/web/test_e2e_s2.py` with `test_s2_e2e_drop_and_reconnect_within_hold`.
-- Setup: same `WebOrchestrator` as F1, but the client is split into two phases.
-  - Phase A: connect, ATTACH seat 0, echo defaults for the first N PROMPTs, then disconnect abruptly (`await ws.close()` mid-handler — not `STOP_SPECTATING`/`DETACH`).
-  - Phase B: reconnect with a new WS, send `ATTACH {table_id: 1, seat: 0}` again with the SAME user_id. Per spec § Conflict resolution (HELD + same user → resume), `TableSessions.attach` should replay the buffer and re-emit the pending PROMPT (if any). Continue echoing defaults to hand end.
-- Assertion: record file is still byte-identical to the F1 fixture (same engine path, no auto_pass markers because the seat was held, not replaced). This is the load-bearing assertion — drop/reconnect is invisible to the record.
-- Required: deterministic `user_id` across both phases. The default `_default_identity_factory` derives from `connection_id` which increments per connection — TEST must inject a fixed identity_factory (same pattern as F1).
-- Watch: the orchestrator's `_handle_attach` currently kicks `run_hand` only on the FIRST attach (`if self._hand_task is None`). The reconnect path will go through `_handle_attach` again and skip the task spawn — correct, but verify.
-- Watch: `SeatSession._resume` replays the buffer as wire EVENTs/HAND_ENDs. Phase B's client will see catch-up frames before the pending PROMPT. Echo-default logic still works because catch-up doesn't include PROMPTs (they're re-emitted separately via `_reprompt_if_pending`).
-
-**F3 — drop, hold expires, AutoPassAdapter substitution.**
-
-- Spec: `test_s2_e2e_drop_past_hold_replaces_with_autopass`.
-- Setup: construct orchestrator with `MAHJONG_SEAT_HOLD_SECONDS` equivalent low (today, the constant lives in `TableSessions.__init__` defaulting to `DEFAULT_HOLD_SECONDS=60.0`; pass `hold_seconds=1.0` or thread through). After ATTACH, drop the client, wait 2s, do not reconnect.
-- Assertion: record contains seat-0 events marked `replaced_by_auto_pass` (or `auto_pass`-flagged) for any prompt that fired after the hold expired. The hand still completes.
-- Required: thread `hold_seconds` through `WebOrchestrator` constructor → `TableSessions(hold_seconds=...)`.
-- Required: `on_hold_expired` callback on `TableSessions` must trigger the manager to swap the seat to `AutoPassAdapter`. Today the manager's strike-based escalation (`_maybe_swap_to_autopass`) only fires on per-decision failures (timeout/illegal/crash). The hold-expired path resolves the pending future with `SeatHoldExpired` which `HumanAdapter.decide` re-raises as `SeatError`, which `_decide_or_default` treats as `crashed=True` and counts as a strike. So after `strike_limit=3` hold-expiries-on-this-hand, autopass kicks in. For F3 with `strike_limit=1` we'd see autopass after the very next prompt. Confirm this matches spec § Error model before writing the test; may need to add a direct hold-expired → autopass path that doesn't wait for strike accumulation.
-
-### 7.6.iv — Fixture F4 (spectator)
-
-**F4 — spectator subscription, public-only projection.**
-
-- Spec: `test_s2_e2e_spectator_sees_public_events_only`.
-- Setup: F1 setup + a SECOND client that sends SPECTATE before/during the hand.
-- Assertion 1: spectator receives EVENTs throughout the hand, projected with `project_event(event, seat=None)` (no concealed-hand leaks).
-- Assertion 2: spectator never receives PROMPT frames.
-- Assertion 3: spectator receives HAND_END at the end.
-- **Implementation prerequisite (decision 32):** add an `event_callback: Callable[[dict], Awaitable[None]] | None = None` parameter to `mgr.run_hand`, threaded through `_fanout_observe` (or called directly after each `writer.write_event`). Add `TableSessions.fanout_event_to_spectators(event)` (spectator-only — iterates `self._spectators` and calls `spec.send_event`). `WebOrchestrator._run_hand` passes `event_callback=self._sessions.fanout_event_to_spectators`.
-- After F4 passes: Layer 7 is complete, S2 milestone is reached, [docs/CHECKLIST.md](CHECKLIST.md) Step 7.6 gets a tick.
-
-### After 7.6 — cleanup before tagging S2
-
-- Refresh [project_layer7_status memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_layer7_status.md) with 7.6.{i,ii,iii,iv} and the design decisions above.
-- Consider whether `mahjong/web/demo.py` should be retired in favor of `mahjong/web/server.py` or kept as a low-dep visual probe.
-- Run `/extract-learnings` (consolidation flagged at 11+ sessions over 2 days).
+- **Multi-hand orchestration.** Between-hand state, dealer rotation, score persistence, hand_index increment. The current `WebOrchestrator`'s single-hand assumption is the load-bearing thing to refactor — probably split into a `Table` (long-lived) and `Hand` (per-run_hand) abstraction.
+- **Multi-table.** One `WebSocketServer` hosts N tables. Wire-protocol's `ATTACH {table_id}` and `LIST_TABLES` / `CREATE_TABLE` come into play.
+- **Auth.** AUTH_REQUEST/AUTH_RESPONSE + session token + argon2 (per existing memory). User identity becomes server-tracked rather than connection-id-derived.
+- **Linux deployment.** Sandbox tests currently skip on Darwin. Hosting target is RPi 5 / mini PC + Tailscale (see hosting-target memory). Need a deploy story + systemd unit (or equivalent) + health monitoring + log rotation.
+- **Score persistence.** Per-hand scores → match scores → ELO/skill update math for bot zoo evaluation. SQLite (per design-doc style memory).
+- **Cleanup before tagging:** retire `mahjong/web/demo.py` if `WebOrchestrator` covers all visual-verification use cases; consolidate memory (12+ sessions over 2-3 days now, `/extract-learnings` recommended).
 
 ## Outstanding questions / decisions for the user
 
-- **F2 reconnect identity persistence.** When auth lands in Layer 8, user_id will come from session token. For F2 today (no auth), the test injects a fixed identity_factory. Production behavior with a real returning user is out of scope for 7.6.iii. Acknowledged?
-- **F3 hold-expired → autopass path.** As written above, it'd work via the strike counter (3 strikes after 3 hold expiries). Check whether spec wants a more direct path (one hold expiry → immediate autopass). If so, the orchestrator needs to wire a real `on_hold_expired` callback that escalates without going through the strike loop.
-- **Phase-transition prompt clearing** — likely surfaces in F2 if the resumed PROMPT differs from what the client expected. Plan: add a wire frame or rely on the new PROMPT's `prompt_id` differing from the stale one. Decision deferred to when it bites.
-- **Chat wire-protocol amendment** — still required for `<chat-pane>` to do anything real. Not blocking S2 or 7.6.
+- **Layer 8 entry decision.** Server plan lists multi-table, auth, deploy as Layer 8 themes. Which to attack first? Lean: multi-hand orchestration since it's the immediate restructure of what we just built (and unblocks the demo from being "one hand and you're done").
+- **`mahjong/web/demo.py` fate.** Retire or keep as a low-dep visual probe? It's been useful but `WebOrchestrator` now subsumes it.
+- **Chat wire-protocol amendment** — still required for `<chat-pane>` to do anything real. Not blocking Layer 8 entry but blocks the chat-pane stub from becoming functional.
+- **Phase-transition prompt clearing** — not surfaced in S2; will surface in real human play. Plan: rely on new PROMPT's `prompt_id` differing from the stale one + client-side stale-prompt-id detection. Defer until reported.
 
 ## Resumption checklist for the next session
 
 - [ ] Read this file.
-- [ ] Read [project_layer7_status memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_layer7_status.md) (will be refreshed with 7.6.ii on next consolidation).
-- [ ] Verify `git log --oneline -5` shows the 7.6.ii commit at HEAD.
-- [ ] Run `.venv/bin/python -m pytest` and confirm 528 passing, 2 Linux-only skipped.
-- [ ] Decide between starting F2 (drop/reconnect inside hold) or F4 (spectator) first. They're independent; F4 requires the `event_callback` plumbing (decision 32) but unblocks closing the S2 milestone.
-- [ ] If F2 first: scaffold `test_s2_e2e_drop_and_reconnect_within_hold`, watch it fail, then verify the resume path works without orchestrator changes (it should — `TableSessions.attach` already handles HELD + same user).
-- [ ] If F4 first: add `event_callback` to `mgr.run_hand`, add `TableSessions.fanout_event_to_spectators`, wire from `WebOrchestrator._run_hand`, then write F4.
+- [ ] Read [project_layer7_status memory](../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/project_layer7_status.md) (will be refreshed with 7.6.iii/iv on next consolidation).
+- [ ] Verify `git log --oneline -5` shows the 7.6.iii/iv commit (`2337042`) at HEAD.
+- [ ] Run `.venv/bin/python -m pytest` and confirm 531 passing, 2 Linux-only skipped.
+- [ ] Run `/extract-learnings` to consolidate memory (recommended — 12+ sessions over 2-3 days).
+- [ ] If continuing into Layer 8: read [docs/server-plan.md](server-plan.md), pick a Layer 8 theme, build a CHECKLIST stub or update `docs/CHECKLIST.md`.
+- [ ] If pausing: tag the commit (e.g., `git tag s2-exit`) so it's easy to find again.
