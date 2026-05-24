@@ -167,22 +167,33 @@ The main game view. Hosts a fixed-layout grid of **panes**, of which only the **
 
 ```text
  ┌──────────────────────────────────────────────────────────────────────┐
- │ Table #17  MCR-2006  Hand 1/N  Wind: East  Wall: 38   Panes: G C S Sp│
+ │ Table #17  MCR-2006  Hand 1/N  Wind: E  Wall: 38   Panes: [G] C·S·W   │
  ├────────────────────────────────────────────┬─────────────────────────┤
  │                                            │                         │
  │            <game-pane>                     │     <chat-pane>          │
- │   (full table layout, own hand, prompt)    │   (toggle: C)            │
+ │   (full table layout, own hand, prompt)    │   (toggle: Alt+C)        │
  │                                            │                         │
  │                                            ├─────────────────────────┤
  │                                            │     <stats-pane>         │
- │                                            │   (toggle: S)            │
+ │                                            │   (toggle: Alt+S)        │
  ├────────────────────────────────────────────┴─────────────────────────┤
  │            <spectator-pane>                                          │
- │   (watch another table; toggle: Sp)                                  │
+ │   (watch another table; toggle: Alt+W)                               │
  └──────────────────────────────────────────────────────────────────────┘
 ```
 
 Pane visibility is held in `<mahjong-app>` so it survives route transitions; toggling a pane re-runs CSS Grid template auto-fitting. Each pane is *independent* — closing the chat pane does not disconnect the WebSocket, does not stop receiving chat events (when wire support exists), and does not affect the game pane.
+
+**Pane-toggle hotkeys use the Alt modifier**, so they share no codepoint with the bare-letter player-action keys inside `<game-pane>` (`C` Chi, `P` Pass/Peng, `H` Hu, `G` Gang, `B` Bugang). The bindings:
+
+| Hotkey | Toggles |
+| --- | --- |
+| `Alt+C` | `<chat-pane>` |
+| `Alt+S` | `<stats-pane>` |
+| `Alt+W` | `<spectator-pane>` (W = watch) |
+| `Alt+T` | Theme — dark ↔ light (mahjong-tile palette); persisted to `localStorage["mahjong-theme"]` |
+
+The Alt-modifier keydown listener lives on `<table-page>`. The game pane itself ignores any keystroke with `event.altKey` set, so an Alt-chord can never be misread as a game action. Pane-header `[ × ]` buttons are an alternate toggle path for mouse users.
 
 **v1 (7.5a walking skeleton) ships only the game pane.** The pane-toggle shell and other pane stubs are deferred to 7.5b. Reason: smallest verifiable artifact first.
 
@@ -350,6 +361,20 @@ Keys:
 | `locale` | `bilingual` | `en` / `zh` / `bilingual`. |
 | `tile_style` | `unicode` | `unicode` (🀇) / `ascii` ([W3]). |
 | `no_auth` | `false` | S2 local-dev: skip login, hardcoded user. |
+| `theme` | `dark` | `dark` (terminal green-on-black) / `light` (MCR tile palette: ivory bg, bamboo green, character vermilion). Persisted to `localStorage["mahjong-theme"]`; toggled via `Alt+T` or the header button. Implemented as CSS-custom-property swaps on `:root[data-theme=…]`. |
+
+## Future: themed ASCII background art (deferred)
+
+The terminal aesthetic admits ASCII background art — bamboo stalks, dragons, mountains — that would sit behind the pane grid without interrupting it. **Not in 7.5; recorded here so it isn't forgotten.** Design constraints when this lands:
+
+- Art files live as plain `.txt` under `mahjong/web/static/art/` (one file per piece). Adding a new piece is a one-file drop with no JS changes.
+- Art must stay monospace-grid-aligned so pane borders render cleanly on top.
+- Foreground text contrast is non-negotiable: art renders at `--fg-dim` (or a new very-low-contrast variable like `--bg-art`), never near `--fg`.
+- No animation. Static glyphs only.
+- Selectable per-user via a future settings panel (alongside theme, locale, tile-style, hotkey customization). Persisted to `localStorage`.
+- "None" is a first-class option — some users will want a blank background.
+
+The settings panel itself is a separate scope item: a new pane/modal on `<mahjong-app>` exposing all the keys in the configuration table above, plus the art selector. Out of scope for 7.5; revisit after 7.6 or whenever the art work is reopened.
 
 ## Server-side static asset serving
 
@@ -424,7 +449,7 @@ Acceptance criteria for impl step 7.5 (web client). 7.5a (walking skeleton) only
 14. **`<hand-end-modal>` shows fan list.** Given a `HAND_END` fixture, the modal renders the terminal block, fan list, and total in both EN and ZH labels.
 15. **Bilingual rendering.** Snapshot test for the same page under `en`, `zh`, `bilingual` locales — three checked-in text fixtures, all byte-stable.
 16. **Render error placeholder doesn't crash app.** Force a render exception in a Lit component; assert the error boundary renders the placeholder and the rest of the page remains interactive.
-17. **Pane toggle.** Playwright: in `<table-page>`, press `C` to toggle the chat pane on, assert `<chat-pane>` mounts. Press `C` again, assert it unmounts. Repeat for stats and spectator panes.
+17. **Pane toggle.** Playwright: in `<table-page>`, press `Alt+C` to toggle the chat pane on, assert `<chat-pane>` mounts. Press `Alt+C` again, assert it unmounts. Repeat for `Alt+S` (stats) and `Alt+W` (spectator). Also assert that a bare `C` keystroke with `currentPrompt` set fires the Chi action and does *not* toggle the chat pane.
 18. **End-to-end scripted hand.** The S2 exit fixture from server-plan.md §S2: a Playwright script drives one browser instance against a real server (other three seats are `CannedAdapter`s); the resulting record file replays byte-identically. (Same fixture that wire-protocol.md fixture 16 pins on the server side.)
 
 Fixture 18 is the load-bearing one for the S2 exit gate.
