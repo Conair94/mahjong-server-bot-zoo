@@ -210,7 +210,9 @@
       "Bash(curl -s http://127.0.0.1:8401/health)",
       "Bash(curl -s -o /dev/null -w \"GET / -> %{http_code}\\\\n\" http://127.0.0.1:8401/)",
       "Bash(curl -s -o /dev/null -w \"GET /static/app.js -> %{http_code}\\\\n\" http://127.0.0.1:8401/static/app.js)",
-      "Bash(curl -s -o /dev/null -w \"GET /static/prompt.js -> %{http_code}\\\\n\" http://127.0.0.1:8401/static/prompt.js)"
+      "Bash(curl -s -o /dev/null -w \"GET /static/prompt.js -> %{http_code}\\\\n\" http://127.0.0.1:8401/static/prompt.js)",
+      "Bash(.venv/bin/python -m pytest tests/sessions/test_hand_end_routing.py -x --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/sessions/test_hand_end_routing.py -v)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
