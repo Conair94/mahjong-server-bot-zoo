@@ -59,9 +59,16 @@ class OutboundSink(Protocol):
     """Structural Protocol satisfied by `mahjong.wire.server.Connection` and
     by test fakes. Three operations: send a wire-message dict, close, query
     closed-ness. The sink owns its own websockets framing; the mux only
-    speaks dicts."""
+    speaks dicts.
 
-    async def send(self, msg: Mapping[str, Any]) -> None: ...
+    `send` takes `dict[str, Any]` (not `Mapping`) so `Connection.send`
+    structurally satisfies this Protocol without needing to widen its own
+    signature. Every actual caller (`SeatSession`, `Spectator`, the
+    orchestrator) constructs a fresh dict per send, so the narrower input
+    type costs nothing.
+    """
+
+    async def send(self, msg: dict[str, Any]) -> None: ...
 
     async def close(self, code: int = 1000, reason: str = "") -> None: ...
 
