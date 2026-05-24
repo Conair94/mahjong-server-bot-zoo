@@ -820,10 +820,24 @@ class TableSessions:
         """Project + send to each seat session (own projection) and each
         spectator (public projection). Failure on one recipient does not
         block the others — same independence guarantee as
-        manager.py:_fanout_observe."""
+        manager.py:_fanout_observe.
+
+        Prefer `fanout_event_to_spectators` when the seat fanout already
+        happens through the manager's adapter path (the orchestrator case
+        for Layer 7.6+) — double-firing seat observes would double-emit
+        wire frames.
+        """
         # Seats first, in seat order, for deterministic test assertions.
         for s in self._seats:
             await s.observe(record_event)
+        await self.fanout_event_to_spectators(record_event)
+
+    async def fanout_event_to_spectators(self, record_event: dict[str, Any]) -> None:
+        """Spectator-only fanout. Use when seat fanout is driven elsewhere
+        (e.g. via `HumanAdapter.observe` → `SeatSession.observe` inside
+        `manager.run_hand`'s adapter loop). Spectators see the public
+        projection (`project_event(event, seat=None)`); HAND_END is
+        dispatched to `Spectator.send_hand_end` per wire-protocol shape."""
         for spec in list(self._spectators.values()):
             try:
                 await spec.send_event(record_event, hand_index=self._hand_index_provider())

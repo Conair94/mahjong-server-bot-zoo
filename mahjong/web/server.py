@@ -28,6 +28,7 @@ from mahjong.engine import initial_state
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.sessions import TableSessions
+from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table import manager as mgr
 from mahjong.wire.server import Connection, WebSocketServer
 
@@ -72,6 +73,8 @@ class WebOrchestrator:
         static_dir: Path | None = None,
         table_id: int = DEFAULT_TABLE_ID,
         decide_timeout_seconds: float = 30.0,
+        hold_seconds: float = DEFAULT_HOLD_SECONDS,
+        strike_limit: int = 3,
     ) -> None:
         self._host = host
         self._port = port
@@ -84,6 +87,8 @@ class WebOrchestrator:
         self._static_dir = static_dir
         self._table_id = table_id
         self._decide_timeout_seconds = decide_timeout_seconds
+        self._hold_seconds = hold_seconds
+        self._strike_limit = strike_limit
 
         # Pre-build the initial state so ATTACHED carries a correct snapshot
         # before `run_hand` runs. Same seed → byte-identical state inside
@@ -107,6 +112,7 @@ class WebOrchestrator:
             table_id=self._table_id,
             snapshot_provider=self._snapshot_provider,
             hand_index_provider=lambda: 0,
+            hold_seconds=self._hold_seconds,
         )
         self._ws_server: WebSocketServer | None = None
         self._hand_task: asyncio.Task[GameState] | None = None
@@ -232,6 +238,8 @@ class WebOrchestrator:
                 record_path=self._record_path,
                 server_info=self._server_info,
                 decide_timeout_seconds=self._decide_timeout_seconds,
+                strike_limit=self._strike_limit,
+                event_callback=self._sessions.fanout_event_to_spectators,
             )
         finally:
             self._hand_done.set()

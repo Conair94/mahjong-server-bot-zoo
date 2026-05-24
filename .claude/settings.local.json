@@ -213,7 +213,13 @@
       "Bash(curl -s -o /dev/null -w \"GET /static/prompt.js -> %{http_code}\\\\n\" http://127.0.0.1:8401/static/prompt.js)",
       "Bash(.venv/bin/python -m pytest tests/sessions/test_hand_end_routing.py -x --tb=short)",
       "Bash(.venv/bin/python -m pytest tests/sessions/test_hand_end_routing.py -v)",
-      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py -x)"
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py -x)",
+      "Bash(.venv/bin/python -m pytest -q tests/table tests/web)",
+      "Bash(.venv/bin/python -m pytest -q tests/web/test_e2e_s2.py)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_spectator_sees_public_events_only -xvs)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_and_reconnect_within_hold_is_byte_identical -xvs)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_completes_via_deadline_defaults -xvs)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_strikes_then_autopasses -xvs)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

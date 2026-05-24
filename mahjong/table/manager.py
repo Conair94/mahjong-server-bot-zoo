@@ -12,6 +12,7 @@ Public surface is `run_hand(...)`. Helpers are private.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -27,6 +28,12 @@ from mahjong.records.writer import RecordWriter
 # Failure-mode marker returned alongside the chosen Action from a decide call.
 # Empty dict means the adapter's response was accepted as-is.
 FailureMeta = dict[str, Any]
+
+# Optional per-event hook the orchestrator can pass to fan record events to
+# additional consumers (e.g. spectators) without going through the adapter
+# list. Fires once per event, AFTER the adapter fanout completes. Errors and
+# timeouts are swallowed — same independence guarantee as adapter observe.
+EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _now_ts() -> str:
@@ -85,11 +92,16 @@ async def _fanout_observe(
     event: dict[str, Any],
     *,
     per_observe_seconds: float,
+    event_callback: EventCallback | None = None,
 ) -> None:
-    """Push `event` to every seat's observe with a short per-call deadline.
+    """Push `event` to every seat's observe with a short per-call deadline,
+    then optionally fire `event_callback(event)` for non-adapter consumers
+    (spectators, audit log, etc.).
 
     Independence: one slow adapter doesn't block the others — each await is
-    its own task with its own timeout (seat-port.md fixture 6).
+    its own task with its own timeout (seat-port.md fixture 6). The
+    `event_callback` runs after the adapter gather completes and is bounded
+    by the same per-call deadline; errors are swallowed.
     """
 
     async def one(seat: int) -> None:
@@ -104,6 +116,11 @@ async def _fanout_observe(
             return
 
     await asyncio.gather(*(one(s) for s in range(4)))
+    if event_callback is not None:
+        try:
+            await asyncio.wait_for(event_callback(event), timeout=per_observe_seconds)
+        except (TimeoutError, Exception):
+            return
 
 
 async def run_hand(
@@ -119,6 +136,7 @@ async def run_hand(
     seated_timeout_seconds: float = 1.0,
     strike_limit: int = 3,
     meta: dict[str, Any] | None = None,
+    event_callback: EventCallback | None = None,
 ) -> GameState:
     """Drive one hand from initial deal to TERMINAL.
 
@@ -182,6 +200,7 @@ async def run_hand(
                 observe_timeout_seconds,
                 strikes,
                 strike_limit,
+                event_callback,
             )
         elif state["phase"] == "CLAIM_WINDOW":
             state = await _step_claim_window(
@@ -192,6 +211,7 @@ async def run_hand(
                 observe_timeout_seconds,
                 strikes,
                 strike_limit,
+                event_callback,
             )
         else:
             raise AssertionError(f"unexpected phase in run_hand: {state['phase']!r}")
@@ -232,6 +252,7 @@ async def _step_discard(
     observe_timeout_seconds: float,
     strikes: list[int],
     strike_limit: int,
+    event_callback: EventCallback | None,
 ) -> GameState:
     actor = state["current_actor"]
     prompt = _build_prompt(state, actor, "DISCARD", deadline_seconds=decide_timeout_seconds)
@@ -248,7 +269,13 @@ async def _step_discard(
         events[0].update(failure)
     for event in events:
         writer.write_event(event)
-        await _fanout_observe(adapters, state, event, per_observe_seconds=observe_timeout_seconds)
+        await _fanout_observe(
+            adapters,
+            state,
+            event,
+            per_observe_seconds=observe_timeout_seconds,
+            event_callback=event_callback,
+        )
 
     _maybe_swap_to_autopass(adapters, actor, strikes, strike_limit)
     return state
@@ -262,6 +289,7 @@ async def _step_claim_window(
     observe_timeout_seconds: float,
     strikes: list[int],
     strike_limit: int,
+    event_callback: EventCallback | None,
 ) -> GameState:
     """Resolve one CLAIM_WINDOW with MCR priority (HU > PENG/GANG > CHI).
 
@@ -294,7 +322,13 @@ async def _step_claim_window(
         # All PASS path: apply sequentially. Engine clears each entry; events
         # come through diff_to_events normally.
         state = await _apply_all_pass(
-            state, claimers, seat_results, adapters, writer, observe_timeout_seconds
+            state,
+            claimers,
+            seat_results,
+            adapters,
+            writer,
+            observe_timeout_seconds,
+            event_callback,
         )
     else:
         winner_seat, winner_action = winner
@@ -305,7 +339,11 @@ async def _step_claim_window(
             event = _make_decision_event(state, seat, action, failure, adapters[seat])
             writer.write_event(event)
             await _fanout_observe(
-                adapters, state, event, per_observe_seconds=observe_timeout_seconds
+                adapters,
+                state,
+                event,
+                per_observe_seconds=observe_timeout_seconds,
+                event_callback=event_callback,
             )
 
         # Apply the winner. diff_to_events emits CLAIM_DECISION first; we've
@@ -320,7 +358,11 @@ async def _step_claim_window(
         for event in events[1:]:
             writer.write_event(event)
             await _fanout_observe(
-                adapters, state, event, per_observe_seconds=observe_timeout_seconds
+                adapters,
+                state,
+                event,
+                per_observe_seconds=observe_timeout_seconds,
+                event_callback=event_callback,
             )
 
     for seat in claimers:
@@ -384,6 +426,7 @@ async def _apply_all_pass(
     adapters: list[SeatAdapter],
     writer: RecordWriter,
     observe_timeout_seconds: float,
+    event_callback: EventCallback | None,
 ) -> GameState:
     """All claimers PASSed — apply each in seat order; engine handles the
     advance. Per-event diff emission picks up CLAIM_RESOLUTION(PASSED) and
@@ -402,7 +445,11 @@ async def _apply_all_pass(
         for event in events:
             writer.write_event(event)
             await _fanout_observe(
-                adapters, state, event, per_observe_seconds=observe_timeout_seconds
+                adapters,
+                state,
+                event,
+                per_observe_seconds=observe_timeout_seconds,
+                event_callback=event_callback,
             )
     return state
 
@@ -438,4 +485,4 @@ async def _decide_or_default(adapter: SeatAdapter, prompt: Prompt) -> tuple[Acti
     return action, {}
 
 
-__all__ = ["run_hand"]
+__all__ = ["EventCallback", "run_hand"]
