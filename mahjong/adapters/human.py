@@ -71,7 +71,12 @@ class HumanAdapter:
         # The seat-port spec lists four `LeaveReason`s; map each to the
         # appropriate session-level teardown.
         if reason == "HAND_ENDED":
-            await self._session.hand_ended(terminal={}, next_hand_seq=None)
+            # The HAND_END wire frame was already emitted by `observe()` when
+            # the engine's HAND_END record event flowed through (Step 7.6.i).
+            # Here we just tear the session down; sending HAND_END again with
+            # a synthetic empty `terminal` would double-emit and clobber the
+            # real payload.
+            await self._session.unbind_after_hand_end()
             return
         if reason == "TABLE_CLOSED":
             await self._session.shutdown(reason="table_closed")

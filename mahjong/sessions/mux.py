@@ -41,6 +41,16 @@ DEFAULT_BUFFER_CAPACITY: int = 256
 DEFAULT_HOLD_SECONDS: float = 60.0
 DEFAULT_MAX_SPECTATORS: int = 32
 
+# Record-event wrapper fields that must NOT appear in the wire HAND_END
+# `terminal` payload (record-format.md vs wire-protocol.md § HAND_END).
+_HAND_END_WRAPPER_FIELDS: frozenset[str] = frozenset({"event", "seq", "turn_index", "phase", "ts"})
+
+
+def _terminal_from_record(record_event: Mapping[str, Any]) -> dict[str, Any]:
+    """Strip record-format wrapper fields from a HAND_END record event,
+    yielding the `terminal` payload the wire HAND_END frame expects."""
+    return {k: v for k, v in record_event.items() if k not in _HAND_END_WRAPPER_FIELDS}
+
 
 # --- Outbound sink Protocol ---
 
@@ -172,6 +182,15 @@ class Spectator:
         self._outbound = _Outbound(sink=sink)
 
     async def send_event(self, record_event: dict[str, Any], hand_index: int) -> None:
+        # HAND_END is its own top-level wire frame, not EVENT-wrapped
+        # (wire-protocol.md § HAND_END). Re-shape and dispatch.
+        if record_event.get("event") == "HAND_END":
+            await self.send_hand_end(
+                hand_index=hand_index,
+                terminal=_terminal_from_record(record_event),
+                next_hand_seq=None,
+            )
+            return
         public_event = project_event(record_event, seat=None)
         msg: dict[str, Any] = {
             "kind": "EVENT",
@@ -279,7 +298,11 @@ class SeatSession:
         self._user_id: str | None = None
         self._outbound: _Outbound | None = None
 
-        self._buffer: deque[dict[str, Any]] = deque(maxlen=buffer_capacity)
+        # Buffer entries are `(wire_kind, payload)` tuples so HELD HAND_END
+        # replays as a HAND_END frame, not an EVENT frame:
+        #   ("EVENT",    projected_event_dict)
+        #   ("HAND_END", terminal_dict)
+        self._buffer: deque[tuple[str, dict[str, Any]]] = deque(maxlen=buffer_capacity)
         self._buffer_overflowed: bool = False
 
         self._pending: _Pending | None = None
@@ -379,8 +402,11 @@ class SeatSession:
             snapshot=self._snapshot_provider(self.seat),
             resume_buffer_size=len(replay),
         )
-        for projected_event in replay:
-            await self._emit_event(projected_event)
+        for kind, payload in replay:
+            if kind == "EVENT":
+                await self._emit_event(payload)
+            elif kind == "HAND_END":
+                await self._emit_hand_end(payload)
         await self._reprompt_if_pending()
         return AttachOutcome(ok=True)
 
@@ -431,17 +457,31 @@ class SeatSession:
     # --- outbound: observe ---
 
     async def observe(self, record_event: dict[str, Any]) -> None:
-        """Project for this seat, send (LIVE) or buffer (HELD)."""
+        """Project for this seat, send (LIVE) or buffer (HELD).
+
+        HAND_END is special: per wire-protocol.md it is a top-level frame,
+        not EVENT-wrapped. We re-shape the record event into a `terminal`
+        payload and dispatch to the HAND_END path.
+        """
         if self._state is SeatState.UNBOUND:
+            return
+        if record_event.get("event") == "HAND_END":
+            terminal = _terminal_from_record(record_event)
+            if self._state is SeatState.LIVE:
+                await self._emit_hand_end(terminal)
+            else:
+                self._append_buffer(("HAND_END", terminal))
             return
         projected = project_event(record_event, seat=self.seat)
         if self._state is SeatState.LIVE:
             await self._emit_event(projected)
             return
-        # HELD: buffer with overflow tracking.
+        self._append_buffer(("EVENT", projected))
+
+    def _append_buffer(self, entry: tuple[str, dict[str, Any]]) -> None:
         if len(self._buffer) >= self.buffer_capacity:
             self._buffer_overflowed = True
-        self._buffer.append(projected)
+        self._buffer.append(entry)
 
     async def _emit_event(self, projected_event: dict[str, Any]) -> None:
         assert self._outbound is not None
@@ -459,6 +499,14 @@ class SeatSession:
             # treat as transparent for now; the buffer path picks up on the
             # next observe once on_socket_dropped fires.
             return
+
+    async def _emit_hand_end(self, terminal: dict[str, Any]) -> None:
+        """Send the top-level HAND_END frame for a HAND_END record event
+        that arrived via observe(). `next_hand_seq` is None at this layer;
+        a multi-hand orchestrator (Step 7.6.ii+) may override later."""
+        if self._outbound is None:
+            return
+        await self._send_hand_end(terminal=terminal, next_hand_seq=None)
 
     # --- outbound: decide ---
 
@@ -612,9 +660,23 @@ class SeatSession:
     async def hand_ended(self, *, terminal: dict[str, Any], next_hand_seq: int | None) -> None:
         """Called when the hand finishes. Per spec: players' HumanAdapter is
         recreated per hand, so the seat goes UNBOUND between hands. Send
-        HAND_END to LIVE sink, resolve pending prompts, tear down."""
+        HAND_END to LIVE sink, resolve pending prompts, tear down.
+
+        Prefer routing HAND_END record events through `observe()` for the
+        single-sender invariant (see Step 7.6.i). This entry point remains
+        for callers that have a pre-built `terminal` payload and want to
+        attach `next_hand_seq` (e.g. a multi-hand orchestrator)."""
         if self._state is SeatState.LIVE:
             await self._send_hand_end(terminal=terminal, next_hand_seq=next_hand_seq)
+        self._resolve_pending_and_teardown()
+
+    async def unbind_after_hand_end(self) -> None:
+        """Tear down without sending HAND_END. Use after `observe()` has
+        already routed a HAND_END record event into the wire frame, so the
+        teardown doesn't double-emit."""
+        self._resolve_pending_and_teardown()
+
+    def _resolve_pending_and_teardown(self) -> None:
         if self._pending is not None and not self._pending.future.done():
             self._pending.deadline_timer.cancel()
             self._pending.future.set_exception(SeatHoldExpired("hand_ended"))
