@@ -65,7 +65,17 @@ const FACE_DOWN_ASCII = "▒▒";
 const FACE_DOWN_UNICODE = "🀫";
 
 function windNameFromSeat(seatIndex) {
-  return SEAT_WIND_NAME[seatIndex] ?? `Seat ${seatIndex}`;
+  return SEAT_WIND_NAME[seatIndex] ?? `Seat ${seatIndex + 1}`;
+}
+
+// Combined label: "East (Seat 1)" — wind comes from the seat's current
+// seat_wind (rotates between hands), seat number is the fixed 1-indexed
+// table position. We look up the wind from the view so the seat number
+// stays correct across hands where the dealer has rotated.
+function fullSeatName(view, seatIndex) {
+  const seat = view?.seats?.find((s) => s.seat === seatIndex);
+  const wind = seat ? (WIND_NAME[seat.seat_wind] ?? "?") : "?";
+  return `${wind} (Seat ${seatIndex + 1})`;
 }
 
 function parseTile(token) {
@@ -177,8 +187,8 @@ function renderDiscards(discards, options) {
 
 function seatHeader(seat, positionLabel) {
   const wind = WIND_NAME[seat.seat_wind] ?? "?";
-  return html`<span class="seat-label">${wind}</span>
-    <span class="seat-position">(${positionLabel})</span> Score: ${seat.score}`;
+  const seatNum = seat.seat + 1;
+  return html`<span class="seat-label">${wind} (Seat ${seatNum})</span> <span class="seat-position">(${positionLabel})</span> Score: ${seat.score}`;
 }
 
 // Flowers are public-knowledge tiles (state-schema.md: flowers are not
@@ -213,24 +223,17 @@ function renderHeader(view) {
   const turn = view.turn_index ?? 0;
   const wall = view.wall?.remaining_count ?? "?";
   const phase = PHASE_LABEL[view.phase] ?? view.phase ?? "?";
-  const actor = view.current_actor ?? "?";
-  const dealer = view.dealer_seat ?? "?";
-  return html`<span class="hdr-label">Round:</span> ${round}
-    <span class="hdr-label">Hand:</span> ${hand}
-    <span class="hdr-label">Turn:</span> ${turn}
-    <span class="hdr-label">Wall:</span> ${wall} left
-<span class="hdr-label">Phase:</span> ${phase}
-    <span class="hdr-label">Dealer:</span> ${windNameFromSeat(dealer)}
-    <span class="hdr-label">Active:</span> ${windNameFromSeat(actor)}`;
+  const actor = view.current_actor ?? 0;
+  const dealer = view.dealer_seat ?? 0;
+  return html`<span class="hdr-label">Round:</span> ${round}   <span class="hdr-label">Hand:</span> ${hand}   <span class="hdr-label">Turn:</span> ${turn}   <span class="hdr-label">Wall:</span> ${wall} left
+<span class="hdr-label">Phase:</span> ${phase}   <span class="hdr-label">Dealer:</span> ${fullSeatName(view, dealer)}   <span class="hdr-label">Active:</span> ${fullSeatName(view, actor)}`;
 }
 
 function renderLastDiscard(view, options) {
   const ld = view.last_discard;
   if (!ld)
     return html`<span class="hdr-label">Last discard:</span> (none)`;
-  return html`<span class="hdr-label">Last discard:</span>
-    ${windNameFromSeat(ld.seat)} discarded ${tile(ld.tile, options)} (turn
-    ${ld.turn_index})`;
+  return html`<span class="hdr-label">Last discard:</span> ${fullSeatName(view, ld.seat)} discarded ${tile(ld.tile, options)} (turn ${ld.turn_index})`;
 }
 
 // own seat at bottom; right opponent at top; across in the middle; left
@@ -265,9 +268,12 @@ export function renderTable(seatView, ownSeat, options = {}) {
   // Render in three sections joined by CSS hairlines (not ASCII rules), so
   // the dividers stretch to whatever width the game pane actually has —
   // important when side panes are open and the game pane narrows.
+  //
+  // Section order (top to bottom): the three opponents + last discard,
+  // then your own hand, then the Round/Phase metadata strip. Metadata at
+  // the bottom keeps the player's attention on the table; the strip stays
+  // visible just above the wire-log toggle.
   return html`
-    <pre class="section">${renderHeader(seatView)}</pre>
-    <hr class="ascii-rule" />
     <pre class="section">
 ${seatBlock(positions.top, "your right", ownSeat, options)}
 
@@ -281,5 +287,7 @@ ${renderLastDiscard(seatView, options)}</pre
     <pre class="section">
 ${seatBlock(positions.bottom, "you", ownSeat, options)}</pre
     >
+    <hr class="ascii-rule" />
+    <pre class="section">${renderHeader(seatView)}</pre>
   `;
 }

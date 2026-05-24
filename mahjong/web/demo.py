@@ -21,8 +21,11 @@ import contextlib
 import logging
 from typing import Any, cast
 
-from mahjong.engine.state import initial_state, project
-from mahjong.engine.types import RuleSetRef
+from mahjong.engine.legality import legal_actions
+from mahjong.engine.state import initial_state, project, project_event
+from mahjong.engine.transition import apply_action
+from mahjong.engine.types import GameState, RuleSetRef
+from mahjong.records.diff import diff_to_events
 from mahjong.web import static_root
 from mahjong.wire.errors import WireError
 from mahjong.wire.server import Connection, WebSocketServer
@@ -31,6 +34,9 @@ _logger = logging.getLogger(__name__)
 
 DEMO_SEED = 42
 DEMO_RULESET: RuleSetRef = cast(RuleSetRef, {"id": "mcr-2006", "version": 1})
+DEMO_TS = "2026-05-23T00:00:00Z"
+DEMO_TURNS = 12  # how many engine ticks to drive before idling
+DEMO_INTER_EVENT_DELAY_S = 0.5
 
 
 def _build_demo_snapshot(own_seat: int = 0) -> dict[str, Any]:
@@ -39,11 +45,35 @@ def _build_demo_snapshot(own_seat: int = 0) -> dict[str, Any]:
     return cast(dict[str, Any], project(state, own_seat))
 
 
-async def _scripted_handler(conn: Connection) -> None:
-    """Send HELLO, then a real ATTACHED with a fixture snapshot.
+def _drive_one_tick(state: GameState) -> tuple[GameState, list[dict[str, Any]]]:
+    """Apply the first legal action for the engine's current_actor, falling
+    back to other seats only if current_actor has none.
 
-    After ATTACHED the handler echoes inbound frames as `not_implemented`
-    errors. The PROMPT / ACTION round-trip lands in step 7.5c.iii.
+    In CLAIM_WINDOW, current_actor is the seat the engine is waiting on; we
+    must respect that or we'll loop forever applying seat-0's PASS without
+    ever giving seat 2 / 3 a turn.
+
+    Returns `(state_after, events_emitted)`. Empty events on terminal.
+    """
+    order = [state["current_actor"]] + [
+        s for s in range(4) if s != state["current_actor"]
+    ]
+    for seat in order:
+        actions = legal_actions(state, seat)
+        if not actions:
+            continue
+        action = actions[0]
+        state_after = apply_action(state, seat, action)
+        events = diff_to_events(state, seat, action, state_after, ts=DEMO_TS)
+        return state_after, events
+    return state, []
+
+
+async def _scripted_handler(conn: Connection) -> None:
+    """Send HELLO, ATTACHED, then drive `DEMO_TURNS` engine ticks and stream
+    the resulting events with a small delay between each so the renderer
+    animates through them. Inbound frames after that are echoed as
+    `not_implemented` errors; PROMPT/ACTION round-trip lands in 7.5c.iii.
     """
     await conn.send(
         {
@@ -55,7 +85,7 @@ async def _scripted_handler(conn: Connection) -> None:
     )
 
     own_seat = 0
-    snapshot = _build_demo_snapshot(own_seat)
+    state = initial_state(DEMO_RULESET, seed=DEMO_SEED)
     await conn.send(
         {
             "kind": "ATTACHED",
@@ -63,22 +93,44 @@ async def _scripted_handler(conn: Connection) -> None:
             "table_id": 1,
             "seat": own_seat,
             "hand_index": 0,
-            "snapshot": snapshot,
+            "snapshot": cast(dict[str, Any], project(state, own_seat)),
             "resume_buffer_size": 0,
         }
     )
 
+    seq = 3
     try:
+        for _ in range(DEMO_TURNS):
+            state, events = _drive_one_tick(state)
+            if not events:
+                break
+            for event in events:
+                await asyncio.sleep(DEMO_INTER_EVENT_DELAY_S)
+                projected = project_event(event, own_seat)
+                await conn.send(
+                    {
+                        "kind": "EVENT",
+                        "seq": seq,
+                        "table_id": 1,
+                        "hand_index": 0,
+                        "event": projected,
+                    }
+                )
+                seq += 1
+            if state["phase"] == "TERMINAL":
+                break
+
         async for msg in conn:
             _logger.info("inbound: %s", msg)
             await conn.send(
                 {
                     "kind": "ERROR",
-                    "seq": 3,
+                    "seq": seq,
                     "code": "not_implemented",
                     "message": f"demo server received {msg.get('kind', '?')}",
                 }
             )
+            seq += 1
     except WireError:
         return
 

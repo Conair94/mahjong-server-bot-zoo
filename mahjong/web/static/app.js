@@ -10,6 +10,7 @@
 
 import { LitElement, html, css } from "lit";
 import { renderTable } from "/static/render.js";
+import { applyEvent } from "/static/apply_event.js";
 
 // --- ConnectionManager --------------------------------------------------
 
@@ -636,6 +637,11 @@ class MahjongApp extends LitElement {
         pane.pushFrame(frame);
         if (frame.kind === "ATTACHED" && frame.snapshot) {
           pane.setSnapshot(frame.snapshot, frame.seat ?? 0);
+        } else if (frame.kind === "EVENT" && frame.event && pane.seatView) {
+          // The pane's seatView is mutated by the reducer per event so the
+          // ASCII layout stays current without a fresh snapshot per turn.
+          const next = applyEvent(pane.seatView, frame.event, pane.ownSeat);
+          pane.setSnapshot(next, pane.ownSeat);
         }
       });
       this._conn.connect();
