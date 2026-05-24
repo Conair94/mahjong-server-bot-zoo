@@ -219,7 +219,9 @@
       "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_spectator_sees_public_events_only -xvs)",
       "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_and_reconnect_within_hold_is_byte_identical -xvs)",
       "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_completes_via_deadline_defaults -xvs)",
-      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_strikes_then_autopasses -xvs)"
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_strikes_then_autopasses -xvs)",
+      "Bash(awk '{print $NF}')",
+      "Bash(xargs -I{} basename {})"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
