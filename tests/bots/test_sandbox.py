@@ -114,8 +114,16 @@ def test_build_rlimits_translates_cpu_seconds() -> None:
 
 
 @pytest.mark.skipif(sys.platform.startswith("linux"), reason="macOS-specific warning path")
-def test_apply_sandbox_warns_on_macos() -> None:
+def test_apply_sandbox_warns_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
     m = _ok_manifest()
+    # `apply_sandbox` calls `setrlimit` on the calling process — fine in its
+    # intended `preexec_fn` use (the doomed child applies them and execs),
+    # but in-process here it would lower the test runner's RLIMIT_NPROC to
+    # the manifest cap and block any later fork (e.g. Playwright spawning
+    # chromium). Hard limits can only go down, so save/restore won't help.
+    # Stub `setrlimit` for this test — it only checks the warning machinery,
+    # not the rlimit side effect.
+    monkeypatch.setattr(resource, "setrlimit", lambda *_args, **_kwargs: None)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         apply_sandbox(m)  # type: ignore[arg-type]

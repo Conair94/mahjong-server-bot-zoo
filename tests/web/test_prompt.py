@@ -1,0 +1,205 @@
+"""Web-client tests for Step 7.5c.iii — PROMPT bar, ACTION round-trip,
+illegal-action banner.
+
+Backs `docs/specs/tui-client.md` verification fixtures 7, 8, 9.
+
+These tests boot a real browser via the Playwright async API against a
+`FakeWireServer` (scripted WS) serving the bundled static assets. The
+browser exercises the real `<mahjong-app>` JS; assertions hit rendered
+DOM and the server's captured inbound frames.
+
+Async Playwright (rather than `pytest-playwright`'s sync fixtures) is used
+on purpose: the sync API installs a separate asyncio loop that conflicts
+with `pytest-asyncio` in the rest of the suite. Async API + pytest-asyncio
+share the same loop and play nicely.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Any, cast
+
+import pytest
+from playwright.async_api import Page, expect
+
+from mahjong.engine.state import initial_state, project
+from mahjong.engine.types import RuleSetRef
+
+from .conftest import FakeWireServer
+
+pytestmark = pytest.mark.asyncio
+
+# --- shared fixtures ---
+
+_TEST_SEED = 42
+_TEST_RULESET: RuleSetRef = cast(RuleSetRef, {"id": "mcr-2006", "version": 1})
+
+
+def _hello() -> dict[str, Any]:
+    return {
+        "kind": "HELLO",
+        "seq": 1,
+        "protocol_version": 1,
+        "server_id": "mahjong-test",
+    }
+
+
+def _attached(own_seat: int = 0) -> dict[str, Any]:
+    state = initial_state(_TEST_RULESET, seed=_TEST_SEED)
+    snapshot = cast(dict[str, Any], project(state, own_seat))
+    return {
+        "kind": "ATTACHED",
+        "seq": 2,
+        "table_id": 1,
+        "seat": own_seat,
+        "hand_index": 0,
+        "snapshot": snapshot,
+        "resume_buffer_size": 0,
+    }
+
+
+def _prompt_three_actions(prompt_id: str = "p_0_5_CLAIM_WINDOW") -> dict[str, Any]:
+    """A CLAIM_WINDOW prompt with three legal actions: PASS, PENG, CHI."""
+    return {
+        "kind": "PROMPT",
+        "seq": 3,
+        "table_id": 1,
+        "hand_index": 0,
+        "seat": 0,
+        "phase": "CLAIM_WINDOW",
+        "legal_actions": [
+            {"type": "PASS"},
+            {"type": "PENG", "tile": "W5"},
+            {"type": "CHI", "tiles": ["W3", "W4", "W5"]},
+        ],
+        "default_action": {"type": "PASS"},
+        "deadline_ms": int(time.time() * 1000) + 30_000,
+        "prompt_id": prompt_id,
+    }
+
+
+async def _wait_for_attached(page: Page) -> None:
+    await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible(timeout=5000)
+
+
+# --- fixture 7: PROMPT renders legal action bar ---
+
+
+async def test_prompt_renders_legal_action_bar(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+
+    bar = page.locator("game-pane").locator(".prompt-bar")
+    await expect(bar).to_be_visible(timeout=5000)
+
+    text = await bar.inner_text()
+    # The bar lists exactly the three legal actions and their bindings. Per
+    # the locked key map: Space→PASS, P→PENG, C→CHI.
+    assert "Pass" in text, text
+    assert "Space" in text, text
+    assert "Peng" in text, text
+    assert "[P]" in text, text
+    assert "Chi" in text, text
+    assert "[C]" in text, text
+    # Actions not in legal_actions must not appear in the bar.
+    assert "Gang" not in text, text
+    assert "Hu" not in text, text
+
+
+# --- fixture 8: keystroke → ACTION round-trip ---
+
+
+async def test_keypress_sends_action_with_prompt_id(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+
+    prompt_id = "p_0_5_CLAIM_WINDOW"
+    await fake_wire_server.send(_prompt_three_actions(prompt_id=prompt_id))
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
+
+    # Press P → PENG W5 (the unique PENG in legal_actions).
+    await page.keyboard.press("p")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["prompt_id"] == prompt_id, action_msg
+    assert action_msg["action"] == {"type": "PENG", "tile": "W5"}, action_msg
+
+
+async def test_space_key_sends_pass_action(page: Page, fake_wire_server: FakeWireServer) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    prompt_id = "p_0_5_CLAIM_WINDOW"
+    await fake_wire_server.send(_prompt_three_actions(prompt_id=prompt_id))
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
+
+    await page.keyboard.press("Space")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["prompt_id"] == prompt_id
+    assert action_msg["action"] == {"type": "PASS"}
+
+
+async def test_alt_chord_does_not_fire_action(page: Page, fake_wire_server: FakeWireServer) -> None:
+    """Alt+C is the chat-pane toggle; bare C is Chi. Alt+C must NOT send Chi."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
+
+    await page.keyboard.press("Alt+c")
+
+    # No ACTION should arrive on the wire.
+    await asyncio.sleep(0.3)
+    actions = [m for m in fake_wire_server.inbound if m.get("kind") == "ACTION"]
+    assert actions == [], actions
+    # The prompt stays open (pane toggle did fire, but the bar is in game-pane).
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible()
+
+
+# --- fixture 9: illegal-action banner ---
+
+
+async def test_illegal_action_shows_banner_without_closing_prompt(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+    bar = page.locator("game-pane").locator(".prompt-bar")
+    await expect(bar).to_be_visible(timeout=5000)
+
+    await page.keyboard.press("p")
+    await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+
+    # Server rejects with illegal_action.
+    await fake_wire_server.send(
+        {
+            "kind": "ERROR",
+            "seq": 99,
+            "code": "illegal_action",
+            "message": "That peng is not legal right now.",
+        }
+    )
+
+    banner = page.locator("game-pane").locator(".illegal-banner")
+    await expect(banner).to_be_visible(timeout=5000)
+    await expect(banner).to_contain_text("not legal")
+
+    # The prompt bar is still rendered (player can re-submit).
+    await expect(bar).to_be_visible()

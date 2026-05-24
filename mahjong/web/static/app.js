@@ -1,16 +1,16 @@
-// Web client entry — Step 7.5c.i snapshot rendering.
+// Web client entry — Step 7.5c.iii PROMPT/ACTION round-trip.
 //
-// <game-pane> now renders a real SeatView (state-schema.md § Per-seat
-// projection) into the ASCII table layout when an ATTACHED frame arrives.
-// The wire log is kept as a collapsible debug pane below the table — useful
-// while we're still smoke-testing the wire shape.
+// <game-pane> renders a SeatView (state-schema.md § Per-seat projection)
+// as an ASCII table, mutates it per inbound EVENT, and — when a PROMPT is
+// outstanding — renders a prompt bar listing the legal actions with their
+// key bindings. Keystrokes get translated to ACTION frames and sent back.
 //
-// applyEvent (7.5c.ii), PROMPT bar (7.5c.iii), and bilingual rendering
-// (7.5c.iv) follow in subsequent commits.
+// Bilingual rendering (7.5c.iv) and the end-to-end S2 fixture (7.6) follow.
 
 import { LitElement, html, css } from "lit";
 import { renderTable } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
+import { renderPromptBar, actionForKey, tileIndexForKeyCode } from "/static/prompt.js";
 
 // --- ConnectionManager --------------------------------------------------
 
@@ -112,6 +112,9 @@ class GamePane extends LitElement {
     tileStyle: { type: String },
     frames: { state: true },
     showLog: { state: true },
+    currentPrompt: { state: true },
+    selectedTile: { state: true },
+    illegalBanner: { state: true },
   };
 
   static styles = [
@@ -210,6 +213,36 @@ class GamePane extends LitElement {
       .log pre.kind-HELLO { color: var(--accent); }
       .log pre.kind-ATTACHED { color: var(--accent); }
       .log pre.kind-ERROR { color: var(--error); }
+
+      /* --- Prompt bar (7.5c.iii). Renders when currentPrompt is set. */
+      .prompt-bar {
+        margin: 0.5rem 0;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--accent);
+        border-left-width: 3px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1.25rem;
+        align-items: baseline;
+      }
+      .prompt-bar-label { color: var(--accent); }
+      .prompt-action { color: var(--fg); white-space: nowrap; }
+      .prompt-action.prompt-play { color: var(--fg-dim); }
+      .prompt-bar kbd {
+        font-family: inherit;
+        color: var(--accent);
+        background: transparent;
+        border: none;
+        padding: 0;
+      }
+
+      /* --- Illegal-action banner (transient). The prompt stays open. */
+      .illegal-banner {
+        margin: 0.5rem 0;
+        padding: 0.4rem 0.75rem;
+        border: 1px solid var(--error);
+        color: var(--error);
+      }
     `,
   ];
 
@@ -221,6 +254,10 @@ class GamePane extends LitElement {
     this.tileStyle = "ascii";
     this.frames = [];
     this.showLog = false;
+    this.currentPrompt = null;
+    this.selectedTile = null;
+    this.illegalBanner = null;
+    this._illegalBannerTimer = null;
   }
 
   pushFrame(msg) {
@@ -236,8 +273,102 @@ class GamePane extends LitElement {
     this.ownSeat = ownSeat;
   }
 
+  setPrompt(prompt) {
+    // A new prompt clears any stale selection and dismisses an illegal-action
+    // banner from the previous attempt.
+    this.currentPrompt = prompt;
+    this.selectedTile = null;
+    this._clearIllegalBanner();
+  }
+
+  clearPrompt() {
+    this.currentPrompt = null;
+    this.selectedTile = null;
+  }
+
+  showIllegalBanner(message) {
+    this.illegalBanner = message;
+    // The prompt stays open (per spec fixture 9). The banner is transient
+    // so it doesn't pile up if the player retries multiple times.
+    if (this._illegalBannerTimer != null) clearTimeout(this._illegalBannerTimer);
+    this._illegalBannerTimer = setTimeout(() => this._clearIllegalBanner(), 4000);
+  }
+
+  _clearIllegalBanner() {
+    this.illegalBanner = null;
+    if (this._illegalBannerTimer != null) {
+      clearTimeout(this._illegalBannerTimer);
+      this._illegalBannerTimer = null;
+    }
+  }
+
   _toggleLog() {
     this.showLog = !this.showLog;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._onKeydown = (e) => this._handleKeydown(e);
+    window.addEventListener("keydown", this._onKeydown);
+  }
+
+  disconnectedCallback() {
+    if (this._onKeydown) window.removeEventListener("keydown", this._onKeydown);
+    super.disconnectedCallback();
+  }
+
+  _ownConcealedTiles() {
+    if (!this.seatView || this.ownSeat == null) return [];
+    const seat = this.seatView.seats?.[this.ownSeat];
+    return Array.isArray(seat?.concealed) ? seat.concealed : [];
+  }
+
+  _handleKeydown(e) {
+    // Alt-chords belong to <table-page> (pane toggles) and <mahjong-app>
+    // (theme/tile-style). Ctrl/Meta likewise reserved for browser shortcuts.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (!this.currentPrompt) return;
+
+    // Tile-selection keys set the cursor; arrow keys nudge it; Enter
+    // confirms PLAY. All other keys dispatch to actionForKey.
+    const tileIdx = tileIndexForKeyCode(e.code);
+    const concealed = this._ownConcealedTiles();
+    if (tileIdx !== null) {
+      if (tileIdx >= 0 && tileIdx < concealed.length) {
+        e.preventDefault();
+        this.selectedTile = tileIdx;
+      }
+      return;
+    }
+    if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
+      if (concealed.length === 0) return;
+      const cur = this.selectedTile ?? concealed.length - 1;
+      const next = e.code === "ArrowLeft" ? Math.max(0, cur - 1) : Math.min(concealed.length - 1, cur + 1);
+      e.preventDefault();
+      this.selectedTile = next;
+      return;
+    }
+
+    const action = actionForKey(e.code, this.currentPrompt, this.selectedTile, concealed);
+    if (!action) return; // illegal key for this prompt — no-op per spec.
+    e.preventDefault();
+    this._submitAction(action);
+  }
+
+  _submitAction(action) {
+    const prompt = this.currentPrompt;
+    if (!prompt) return;
+    this.dispatchEvent(
+      new CustomEvent("action-submitted", {
+        bubbles: true,
+        composed: true,
+        detail: { prompt_id: prompt.prompt_id, action },
+      }),
+    );
+    // Don't optimistically clear: spec fixture 9 requires the prompt to
+    // remain rendered when the server replies with `ERROR illegal_action`.
+    // A fresh inbound PROMPT (or phase transition via EVENT — wired later)
+    // replaces or clears this one. Keep the visual feedback minimal here.
   }
 
   render() {
@@ -252,6 +383,11 @@ class GamePane extends LitElement {
         ${tableContent !== null
           ? html`<div class="table-ascii">${tableContent}</div>`
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
+
+        ${this.illegalBanner
+          ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
+          : ""}
+        ${this.currentPrompt ? renderPromptBar(this.currentPrompt) : ""}
 
         <button class="log-toggle" @click=${this._toggleLog}>
           ${this.showLog ? "▼" : "▶"} wire log (${this.frames.length} frame${this.frames.length === 1 ? "" : "s"})
@@ -642,6 +778,17 @@ class MahjongApp extends LitElement {
           // ASCII layout stays current without a fresh snapshot per turn.
           const next = applyEvent(pane.seatView, frame.event, pane.ownSeat);
           pane.setSnapshot(next, pane.ownSeat);
+        } else if (frame.kind === "PROMPT") {
+          pane.setPrompt(frame);
+        } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {
+          pane.showIllegalBanner(frame.message ?? "Server rejected that action — try again.");
+        }
+      });
+      pane.addEventListener("action-submitted", (e) => {
+        try {
+          this._conn.send({ kind: "ACTION", ...e.detail });
+        } catch (err) {
+          console.warn("ACTION send failed:", err);
         }
       });
       this._conn.connect();
