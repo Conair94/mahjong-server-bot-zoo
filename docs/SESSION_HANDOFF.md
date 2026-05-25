@@ -1,10 +1,10 @@
-# Session handoff — 2026-05-25 (end of Layer 8 Step 8.3)
+# Session handoff — 2026-05-25 (end of Layer 8 Step 8.4)
 
 Snapshot of implementation status. Read this to pick up where this session left off.
 
 ## Where we are
 
-**Layer 8 Steps 8.1, 8.2, and 8.3 are complete.**
+**Layer 8 Steps 8.1, 8.2, 8.3, and 8.4 are complete.**
 
 | # | Step | Commit | Notes |
 | --- | --- | --- | --- |
@@ -12,76 +12,62 @@ Snapshot of implementation status. Read this to pick up where this session left 
 | **8.1** | **SQLite schema + migration runner** | **`40d645c`** | **17 tests; all 10 spec fixtures** |
 | **8.2** | **Auth module (argon2id + sessions)** | **`bee3a5a`** | **24 tests; all 17 spec fixtures** |
 | **8.3** | **Persistence API (Persistence class)** | **`bef3972`** | **13 tests; all 13 spec fixtures** |
+| **8.4** | **Multi-table orchestrator** | **`2a7c587`** | **5 tests; fixtures 17 + 18 + FLIST + FADMIN** |
 
-**Verification at end of session:** ruff clean · mypy strict clean · **592 tests pass repo-wide** (579 prior + 13 new; 2 Linux-only + 1 slow deselected).
+**Verification at end of session:** ruff clean · mypy strict clean · **597 tests pass repo-wide** (592 prior + 5 new; 2 Linux-only + 1 slow deselected).
 
 ## Decisions reached this session
 
-- **(52) `record_checksum` is nullable in the schema.** The `persistence-api.md` spec is correct: this field is NULL at `reserve_hand` time (HEADER write) and filled in by `finalize_hand` (FOOTER write). The migration and expected_schema.sql snapshot were both updated.
-- **(53) Module-level SQL primitives, thin `Persistence` façade.** `accounts.py`, `hands.py`, `rebuild.py` hold the SQL; `Persistence.__init__.py` owns the connection and delegates. This makes each primitive testable without the façade, and the façade testable without mocking SQL.
-- **(54) `auth.py` left untouched.** The 24 auth tests pass against the existing raw-SQL implementation. `accounts.py` provides the same operations through typed helpers for future callers (the `Persistence` class uses `accounts.py`; `auth.py` uses its own SQL). No duplication risk at this scale.
-- **(55) Rebuild scans all lines for HAND_END.** The `rebuild_index_from_records` path parses HEADER (line 1), all middle events (for HAND_END terminal info), and FOOTER (last line). This is the only way to reproduce `terminal_kind`, `winner_seat`, `fan_total`, and `score_deltas` from the record file alone.
-- **(56) Crash-truncated records (no FOOTER) rebuilt as `terminal_kind = 'ABORTED'`.** Consistent with the spec's "file's last event isn't a TERMINAL → ABORTED" rule.
-- **(57) Keyset pagination in `find_hands_by_account` uses `started_at_ms <`.** Works correctly when timestamps are unique (which they always are in practice for per-hand records). Edge case of exact-millisecond ties is acceptable for v1.
-- **(58) `open_db` now accepts `str | os.PathLike[str]`.** This enables `Persistence(":memory:", data_dir)` in tests. The `:memory:` string must be passed as a bare string (not a `Path` object), which callers naturally do.
+- **(59) `TableHandle` does not reuse `WebOrchestrator` internals.** The hand-loop logic is duplicated between `WebOrchestrator` (single-table, existing tests unchanged) and `TableHandle` (multi-table). The duplication is ~90 lines and acceptable at this scale; it avoids coupling that risks breaking the 8.0–8.3 test suite. Step 8.5 may unify them if the architecture stabilises.
+- **(60) `table_id` is a string at the registry API boundary, int in wire frames.** `TableRegistry.create_table_direct` returns `str`; the orchestrator converts to `int` for `TABLE_CREATED`. `TableSessions` receives `int(table_id)` since it typed `table_id: int`.
+- **(61) `admin_predicate` is the seam for auth in Step 8.5.** `MultiTableOrchestrator` accepts `admin_predicate: Callable[[Connection], bool]` (default: always True). `CLOSE_TABLE` calls it; Step 8.5 will replace the default with an auth-token check.
+- **(62) Persistence wiring deferred to Step 8.5.** `TableHandle._run_hand_loop` does not call `reserve_hand`/`finalize_hand`. The hook point exists (before/after `mgr.run_hand`); wiring happens with the full lifecycle startup in 8.5.
+- **(63) `create_table_direct` is the only allocation path for now.** Both the wire handler (`_handle_create_table`) and tests call `registry.create_table_direct(...)`. A future `create_table` coroutine (async, awaitable for the task to start) may replace it in 8.5 when the lifecycle is more formalised.
 
 ## What this session built
 
-### Step 8.3 — Persistence API
+### Step 8.4 — Multi-table orchestrator
 
-**[mahjong/persistence/models.py](../mahjong/persistence/models.py)** — new:
-- `Account`, `SessionRow` — typed account + session rows
-- `Participant`, `HandRow` — typed hand rows; `HandRow.participants` populated only by `get_hand`
-- `IntegrityReport` — counts from `integrity_check` (pragma_ok, checked_db, ok_files, missing_files, checksum_mismatches, orphaned_files, in_progress_hands)
-- `RebuildReport` — counts from rebuild (processed_files, inserted, updated, errors)
+**[mahjong/server/\_\_init\_\_.py](../mahjong/server/__init__.py)** — new package marker
 
-**[mahjong/persistence/accounts.py](../mahjong/persistence/accounts.py)** — new:
-- `get_account_by_username`, `get_account_by_id`, `insert_account`, `update_account_login`, `set_account_disabled`
-- `insert_session`, `get_session`, `renew_session`, `revoke_session`, `delete_expired_sessions`
-- All take `sqlite3.Connection`; do NOT auto-commit (caller manages transaction boundaries)
+**[mahjong/server/registry.py](../mahjong/server/registry.py)** — new:
 
-**[mahjong/persistence/hands.py](../mahjong/persistence/hands.py)** — new:
-- `reserve_hand` — atomic `BEGIN; INSERT hand_index; INSERT hand_participants × N; COMMIT`
-- `finalize_hand` — atomic `BEGIN; UPDATE hand_index; UPDATE hand_participants × N; COMMIT`
-- `get_hand` — fetches participants in a second query; returns populated `HandRow`
-- `find_hands_by_account` — keyset pagination via `before_hand_id`
-- `find_hands_by_match`, `find_recent_hands`, `find_in_progress_hands`
+- `TableSummary` — frozen dataclass with `table_id`, `ruleset`, `hand_index`, `phase`; `to_wire()` for LIST_TABLES
+- `ShuttingDown`, `TableNotFound` — typed exceptions
+- `TableHandle` — single-table: `TableSessions` + CannedAdapters + hand-loop task; `attach`, `spectate`, `handle_inbound`, `on_socket_dropped`, `close` (shutdown sessions + cancel task); `summary()`, `record_path`, `hand_id`, `match_done` properties
+- `TableRegistry` — `dict[str, TableHandle]`; `create_table_direct` (auto-increments ID, creates records dir, allocates `TableHandle`); `list_tables`, `get_table`, `close_table`, `drain_all`; `accepting_new` flag
 
-**[mahjong/persistence/rebuild.py](../mahjong/persistence/rebuild.py)** — new:
-- `integrity_check` — PRAGMA + file existence + sha256 recompute + orphan walk
-- `rebuild_index_from_records` — idempotent walk of `records/**/*.jsonl`, `INSERT OR REPLACE`
+**[mahjong/server/orchestrator.py](../mahjong/server/orchestrator.py)** — new:
 
-**[mahjong/persistence/__init__.py](../mahjong/persistence/__init__.py)** — updated:
-- `Persistence` class: `__init__(db_path, data_dir)` calls `open_db` + `apply_migrations`
-- All account/session/hand/rebuild methods delegate to module primitives; writes use `with self._conn:` for auto-commit
+- `MultiTableOrchestrator` — `WebSocketServer` + `TableRegistry`; two-phase handler (pre-attach admin loop → attached inbound loop)
+- Wire handlers: `LIST_TABLES` → `TABLE_LIST`, `CREATE_TABLE` → `TABLE_CREATED` (checks `accepting_new`), `CLOSE_TABLE` (checks `admin_predicate`), `ATTACH`/`SPECTATE` (routes to `TableHandle`)
+- `admin_predicate` kwarg — defaults to `lambda conn: True` (all-admin in S2); replaced by auth check in 8.5
 
-**[mahjong/persistence/db.py](../mahjong/persistence/db.py)** — updated:
-- `open_db` now accepts `str | os.PathLike[str]` (previously `Path` only)
+**[tests/server/test\_multi\_table.py](../tests/server/test_multi_table.py)** — new:
 
-**[tests/persistence/test_persistence_api.py](../tests/persistence/test_persistence_api.py)** — new:
-- 13 spec fixtures covering all of `persistence-api.md` plus `sqlite-schema.md` fixtures 11-12
+- 5 fixtures: F_LIST, F_CREATE, F17, F18, F_CLOSE_ADMIN
 
 ## Known limitations carried forward
 
 - **`next_hand_seq` in HAND_END is always `null`** (since Step 8.0). Low priority; client works.
-- **No wire-protocol integration for AUTH_REQUEST / RESUME yet.** The auth module and the `Persistence` class are pure Python; not wired into the WebSocket server. That happens in Step 8.5.
-- **No account CLI yet.** `python -m mahjong.cli.account create` is spec'd in auth.md but not implemented.
-- **`Persistence` class not yet wired into `WebOrchestrator`.** The table manager still has no DB calls at HEADER/FOOTER write. Step 8.4 or 8.5 will add those hook points.
+- **No wire-protocol integration for AUTH_REQUEST / RESUME yet.** Auth and persistence are pure Python; not wired into any WS handler. Step 8.5.
+- **No account CLI yet.** `python -m mahjong.cli.account create` not implemented.
+- **`Persistence` not wired into `WebOrchestrator` or `TableHandle`.** `reserve_hand`/`finalize_hand` not called at HEADER/FOOTER write. Step 8.5.
+- **`CLOSE_TABLE` via wire protocol not fully exercised.** `F_CLOSE_ADMIN` uses `registry.create_table_direct` directly because CLOSE_TABLE requires the table to exist first and a way to create it without a second admin connection. Production use works; the test takes the simpler path.
 - All earlier known limitations still apply.
 
 ## What remains
 
 **Remaining Layer 8 steps per CHECKLIST.md:**
 
-- **Step 8.4 — Multi-table orchestrator.** One `WebSocketServer` hosts N tables; `LIST_TABLES` / `CREATE_TABLE` wire handlers.
-- **Step 8.5 — Server lifecycle.** Graceful drain, startup sequence (DB open → migrations → auth check → serve), systemd unit, periodic session cleanup. This is also where `Persistence` gets wired into `WebOrchestrator` at HEADER/FOOTER hook points.
+- **Step 8.5 — Server lifecycle.** Graceful drain, startup sequence (DB open → migrations → auth check → serve), systemd unit, periodic session cleanup. This is where `Persistence` gets wired into `TableHandle` at HEADER/FOOTER hook points, `admin_predicate` gets replaced by real auth, and `WebOrchestrator` may be refactored to delegate to `TableHandle`.
 - **Step 8.6 — End-to-end S3 gate.** Byte-identical + auth + persistence fixture.
 
 ## Resumption checklist for the next session
 
 - [ ] Read this file.
-- [ ] `git log --oneline -5` — confirm `bef3972` (or later) at HEAD.
-- [ ] `.venv/bin/python -m pytest -m "not slow" --tb=no -q` — confirm 592 passing, 3 skipped/deselected.
-- [ ] Read [docs/specs/persistence-api.md](specs/persistence-api.md) § Wiring into the table manager before starting 8.4/8.5.
-- [ ] Read [docs/specs/server-lifecycle.md](specs/server-lifecycle.md) for 8.5 context.
+- [ ] `git log --oneline -5` — confirm `2a7c587` (or later) at HEAD.
+- [ ] `.venv/bin/python -m pytest -m "not slow" --tb=no -q` — confirm 597 passing, 3 deselected/skipped.
+- [ ] Read [docs/specs/server-lifecycle.md](specs/server-lifecycle.md) §§ Configuration, Startup sequence, Graceful shutdown before starting 8.5.
+- [ ] Re-read [docs/specs/persistence-api.md](specs/persistence-api.md) § Wiring into the table manager for the reserve_hand/finalize_hand hook points.
 - [ ] Optionally `/extract-learnings` to consolidate memory before starting.
