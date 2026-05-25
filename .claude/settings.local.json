@@ -221,7 +221,18 @@
       "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_completes_via_deadline_defaults -xvs)",
       "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py::test_s2_e2e_drop_without_reconnect_strikes_then_autopasses -xvs)",
       "Bash(awk '{print $NF}')",
-      "Bash(xargs -I{} basename {})"
+      "Bash(xargs -I{} basename {})",
+      "Bash(.venv/bin/python -m pytest --tb=no -q)",
+      "Bash(.venv/bin/python -m pytest tests/engine/test_state.py::test_initial_state_dealer_seat_parameter tests/engine/test_state.py::test_initial_state_hand_index_parameter tests/web/test_e2e_layer8.py -x --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/engine/test_state.py -x --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/sessions/ --tb=short -q)",
+      "Bash(.venv/bin/mypy --strict mahjong/engine/state.py mahjong/sessions/mux.py mahjong/web/server.py)",
+      "Bash(.venv/bin/python -m pytest tests/engine/test_state.py tests/sessions/ tests/web/test_e2e_s2.py -x --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_layer8.py -v --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py tests/adapters/ -x --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_s2.py tests/adapters/ --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest --tb=short -q)",
+      "Bash(.venv/bin/mypy --strict mahjong/adapters/human.py mahjong/sessions/mux.py mahjong/web/server.py mahjong/engine/state.py)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

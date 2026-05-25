@@ -160,7 +160,13 @@ async def test_spectator_receives_hand_end_as_top_level_frame() -> None:
 
 async def test_human_adapter_left_hand_ended_does_not_double_emit() -> None:
     """After observe() has already sent the HAND_END frame, left("HAND_ENDED")
-    must tear down the session WITHOUT sending a second HAND_END."""
+    must NOT send a second HAND_END.
+
+    Layer-8 contract: left("HAND_ENDED") is a no-op — the session stays LIVE
+    so the multi-hand orchestrator can call begin_next_hand() to issue
+    DETACH(hand_ended) + ATTACHED for the new hand.  For single-hand the
+    session stays LIVE until orch.close() drops the WS server.
+    """
     seat = make_seat_session(seat=0)
     sink = FakeSink()
     await seat.attach(sink, user_id="alice")
@@ -172,19 +178,22 @@ async def test_human_adapter_left_hand_ended_does_not_double_emit() -> None:
     await adapter.observe(_hand_end_record(), cast(SeatView, {}))
     assert len(sink.by_kind("HAND_END")) == 1
 
-    # Manager calls left("HAND_ENDED") next — should NOT add another HAND_END.
+    # Manager calls left("HAND_ENDED") next — must NOT add another HAND_END,
+    # and session stays LIVE (no teardown — begin_next_hand() handles that).
     await adapter.left(cast(LeaveReason, "HAND_ENDED"))
     assert len(sink.by_kind("HAND_END")) == 1
-    # ...but the session must still be torn down.
-    assert seat.state is SeatState.UNBOUND
+    assert seat.state is SeatState.LIVE
 
 
-async def test_human_adapter_left_hand_ended_without_prior_observe_still_unbinds() -> None:
-    """Safety: if for some reason observe(HAND_END) was never called (e.g.
-    the seat dropped before hand-end), left("HAND_ENDED") must still tear
-    the session down. We don't emit a HAND_END here either — the record was
-    incomplete from this seat's POV — but unbinding is mandatory so the
-    SeatSession is reusable for the next hand."""
+async def test_human_adapter_left_hand_ended_is_noop_session_stays_live() -> None:
+    """left("HAND_ENDED") is a pure no-op: no HAND_END sent, session stays LIVE.
+
+    The multi-hand orchestrator calls TableSessions.begin_next_hand() after
+    run_hand() returns; that method sends DETACH(hand_ended) + ATTACHED for
+    the new hand.  Leaving the session LIVE here is what makes that possible.
+    (Replaces the old test that asserted UNBOUND, which was the single-hand
+    Layer-7 behaviour before the Layer-8 multi-hand refactor.)
+    """
     seat = make_seat_session(seat=0)
     sink = FakeSink()
     await seat.attach(sink, user_id="alice")
@@ -193,4 +202,6 @@ async def test_human_adapter_left_hand_ended_without_prior_observe_still_unbinds
     await adapter.seated(_make_seat_context())
 
     await adapter.left(cast(LeaveReason, "HAND_ENDED"))
-    assert seat.state is SeatState.UNBOUND
+    # No HAND_END sent (no prior observe), no teardown.
+    assert len(sink.by_kind("HAND_END")) == 0
+    assert seat.state is SeatState.LIVE

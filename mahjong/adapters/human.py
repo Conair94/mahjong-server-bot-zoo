@@ -71,12 +71,18 @@ class HumanAdapter:
         # The seat-port spec lists four `LeaveReason`s; map each to the
         # appropriate session-level teardown.
         if reason == "HAND_ENDED":
-            # The HAND_END wire frame was already emitted by `observe()` when
-            # the engine's HAND_END record event flowed through (Step 7.6.i).
-            # Here we just tear the session down; sending HAND_END again with
-            # a synthetic empty `terminal` would double-emit and clobber the
-            # real payload.
-            await self._session.unbind_after_hand_end()
+            # HAND_END was already emitted by `observe()` (Step 7.6.i); do NOT
+            # call unbind_after_hand_end() here.
+            #
+            # In multi-hand mode the orchestrator calls
+            # `TableSessions.begin_next_hand()` after `run_hand` returns, which
+            # sends DETACH(hand_ended) + ATTACHED(new hand) to still-connected
+            # clients.  That path requires the SeatSession to still be LIVE (or
+            # HELD for a dropped client); calling unbind_after_hand_end() would
+            # tear the session to UNBOUND and make begin_next_hand() a no-op.
+            #
+            # In single-hand mode the session stays LIVE until orch.close()
+            # drops the WebSocket server, which is correct.
             return
         if reason == "TABLE_CLOSED":
             await self._session.shutdown(reason="table_closed")

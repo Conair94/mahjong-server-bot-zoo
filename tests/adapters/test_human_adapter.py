@@ -127,9 +127,12 @@ async def test_seated_observe_decide_left_round_trip() -> None:
     await session.handle_action(prompt_id=prompt_id, action=cast(dict[str, Any], chosen))
     assert await decide_task == chosen
 
-    # left("HAND_ENDED"): session torn down to UNBOUND.
+    # left("HAND_ENDED"): session stays LIVE.  The multi-hand orchestrator
+    # calls begin_next_hand() to issue DETACH(hand_ended) + ATTACHED(new hand);
+    # for single-hand, orch.close() drops the connection.  Tearing down to
+    # UNBOUND here would make begin_next_hand() a no-op (Layer 8 fix).
     await adapter.left(cast(LeaveReason, "HAND_ENDED"))
-    assert session.state is SeatState.UNBOUND
+    assert session.state is SeatState.LIVE
 
 
 async def test_observe_while_held_lands_in_buffer_and_replays_on_resume() -> None:

@@ -683,6 +683,51 @@ class SeatSession:
         teardown doesn't double-emit."""
         self._resolve_pending_and_teardown()
 
+    async def begin_next_hand(self, *, snapshot: dict[str, Any]) -> None:
+        """Inter-hand boundary transition.  Resets per-hand state and advances
+        the seat into the next hand.
+
+        LIVE seats: send ``DETACH { reason: 'hand_ended' }`` (per
+        session-mux.md § Why spectators stay subscribed) then ``ATTACHED``
+        for the new hand.  The WebSocket stays open; the seat remains LIVE.
+
+        HELD seats: cancel the hold timer and reset per-hand buffers.  The
+        seat stays HELD with ``_user_id`` preserved — when the player
+        reconnects, ``_resume`` will deliver ``ATTACHED`` for the new hand
+        (using the updated ``_snapshot_provider``).
+
+        UNBOUND seats: no-op.  The client will ATTACH fresh; they receive
+        ``ATTACHED`` for the new hand through the normal attach path.
+
+        Assumes HAND_END was already sent via the ``observe()`` path (the
+        single-sender invariant).  Does NOT re-send HAND_END.
+        """
+        # Resolve any lingering prompt (defensive — should already be done).
+        if self._pending is not None and not self._pending.future.done():
+            self._pending.deadline_timer.cancel()
+            self._pending.future.set_exception(SeatHoldExpired("hand_ended"))
+        self._pending = None
+
+        # Reset per-hand ring buffer.
+        self._buffer.clear()
+        self._buffer_overflowed = False
+
+        if self._state is SeatState.LIVE:
+            assert self._outbound is not None
+            # Signal old-hand boundary per wire-protocol spec.
+            await self._send_detach_server(reason="hand_ended")
+            # Send ATTACHED for the new hand on the same connection.
+            await self._send_attached(snapshot=snapshot, resume_buffer_size=0)
+            # State remains LIVE; _user_id and _outbound are unchanged.
+
+        elif self._state is SeatState.HELD:
+            # Cancel any outstanding hold timer — the new hand's hold window
+            # begins fresh when they reconnect.
+            self._hold_timer.cancel()
+            # HELD: _user_id is preserved; they will _resume() → ATTACHED.
+            # (snapshot_provider already updated by the orchestrator before
+            # begin_next_hand is called, so _resume picks up the new state.)
+
     def _resolve_pending_and_teardown(self) -> None:
         if self._pending is not None and not self._pending.future.done():
             self._pending.deadline_timer.cancel()
@@ -843,6 +888,20 @@ class TableSessions:
                 await spec.send_event(record_event, hand_index=self._hand_index_provider())
             except Exception:
                 continue
+
+    async def begin_next_hand(self) -> None:
+        """Inter-hand boundary: reset all seat sessions and issue ``ATTACHED``
+        for the new hand to still-connected clients.
+
+        The orchestrator must update its ``_initial_state`` (and therefore the
+        ``snapshot_provider`` it passed at construction) BEFORE calling this
+        method so that each seat's ``ATTACHED`` carries the new-hand snapshot.
+
+        Spectators are unaffected: they stay subscribed transparently across
+        hand boundaries per session-mux.md § Why spectators stay subscribed.
+        """
+        for seat in self._seats:
+            await seat.begin_next_hand(snapshot=self._snapshot_provider(seat.seat))
 
     async def fanout_hand_end(self, *, terminal: dict[str, Any], next_hand_seq: int | None) -> None:
         for s in self._seats:

@@ -36,14 +36,31 @@ from mahjong.engine.types import (
 _SEED_MAX = 1 << 128
 
 
-def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
+def initial_state(
+    ruleset: RuleSetRef,
+    seed: int,
+    *,
+    dealer_seat: int = 0,
+    hand_index: int = 0,
+) -> GameState:
     """Deal a fresh hand. See module docstring for the dealing convention.
 
-    Raises `ValueError` if `seed` is out of range, `RulesetError` if the
-    ruleset reference can't be resolved.
+    Layer-8 amendment: ``dealer_seat`` (0-3) designates the current dealer.
+    The dealer receives the 14th tile and starts the discard phase.  Seat
+    winds rotate with the dealer: `dealer_seat` gets East (F1), the seat to
+    its left gets South (F2), etc.  Defaults to 0 for backwards compatibility
+    with all existing callers.
+
+    ``hand_index`` is stored in the state as metadata (used by the multi-hand
+    orchestrator).  Defaults to 0.
+
+    Raises `ValueError` if `seed` or `dealer_seat` is out of range, or if
+    `RulesetError` can't resolve the ruleset reference.
     """
     if seed < 0 or seed >= _SEED_MAX:
         raise ValueError(f"seed must be a 128-bit unsigned integer, got {seed!r}")
+    if dealer_seat < 0 or dealer_seat >= 4:
+        raise ValueError(f"dealer_seat must be 0-3, got {dealer_seat!r}")
 
     config = load_ruleset(dict(ruleset))
     config_hash = canonical_hash(config)
@@ -69,15 +86,17 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
     for _ in range(13):
         for s in range(4):
             draw_one(s)
-    dealer_last_drawn = draw_one(0)  # dealer's first draw
+    dealer_last_drawn = draw_one(dealer_seat)  # dealer's first draw
 
     for s in range(4):
         concealed[s].sort(key=tile_sort_key)
 
+    # Seat winds rotate with the dealer: dealer gets East (F1), next seat gets
+    # South (F2), etc.  Wind index = (seat - dealer_seat) % 4, 1-based.
     seats: list[Seat] = [
         {
             "seat": s,
-            "seat_wind": f"F{s + 1}",
+            "seat_wind": f"F{(s - dealer_seat) % 4 + 1}",
             "concealed": concealed[s],
             "melds": [],
             "discards": [],
@@ -94,8 +113,8 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
             "config_hash": config_hash,
         },
         "round_wind": "F1",
-        "dealer_seat": 0,
-        "hand_index": 0,
+        "dealer_seat": dealer_seat,
+        "hand_index": hand_index,
         "turn_index": 0,
         "wall": {
             "remaining": wall[wall_pos:],
@@ -104,10 +123,10 @@ def initial_state(ruleset: RuleSetRef, seed: int) -> GameState:
         },
         "seats": seats,
         "last_discard": None,
-        "last_drawn": {"seat": 0, "tile": dealer_last_drawn},
+        "last_drawn": {"seat": dealer_seat, "tile": dealer_last_drawn},
         "pending_claims": [],
         "phase": "DISCARD",
-        "current_actor": 0,
+        "current_actor": dealer_seat,
         "terminal": None,
         "rng": {"seed": str(seed), "cursor": cursor},
     }

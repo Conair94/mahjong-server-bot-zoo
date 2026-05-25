@@ -114,6 +114,44 @@ def test_initial_state_unknown_ruleset_raises() -> None:
         state.initial_state(bogus, seed=12345)
 
 
+def test_initial_state_dealer_seat_parameter() -> None:
+    """Layer 8 amendment: dealer_seat kwarg rotates the dealer and seat winds.
+
+    Spec: Step 8 — multi-hand orchestration engine amendment.
+    The default (dealer_seat=0) must produce byte-identical output to the
+    old single-arg call so the F1 golden fixture doesn't break.
+    """
+    # Default is unchanged
+    s_default = state.initial_state(MCR_REF, seed=12345)
+    s_explicit = state.initial_state(MCR_REF, seed=12345, dealer_seat=0)
+    assert s_default == s_explicit
+
+    # Each dealer_seat value produces the correct dealer_seat field
+    for dealer in range(4):
+        s = state.initial_state(MCR_REF, seed=12345, dealer_seat=dealer)
+        assert s["dealer_seat"] == dealer, f"dealer_seat={dealer}: state has {s['dealer_seat']}"
+        # current_actor and last_drawn seat must equal the dealer
+        assert s["current_actor"] == dealer
+        assert s["last_drawn"]["seat"] == dealer
+        # Dealer has 14 concealed tiles; others have 13
+        for i in range(4):
+            expected = 14 if i == dealer else 13
+            assert len(s["seats"][i]["concealed"]) == expected, (
+                f"dealer={dealer}, seat {i}: expected {expected}, got {len(s['seats'][i]['concealed'])}"
+            )
+        # East wind (F1) belongs to the dealer seat
+        dealer_wind = s["seats"][dealer]["seat_wind"]
+        assert dealer_wind == "F1", f"dealer={dealer}: seat wind is {dealer_wind}, want F1"
+
+
+def test_initial_state_hand_index_parameter() -> None:
+    """hand_index kwarg is stored in the state (metadata for multi-hand)."""
+    s = state.initial_state(MCR_REF, seed=12345, hand_index=3)
+    assert s["hand_index"] == 3
+    # Default is 0 (unchanged)
+    assert state.initial_state(MCR_REF, seed=12345)["hand_index"] == 0
+
+
 def test_initial_state_negative_seed_raises() -> None:
     with pytest.raises(ValueError):
         state.initial_state(MCR_REF, seed=-1)
