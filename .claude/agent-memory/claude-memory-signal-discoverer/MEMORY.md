@@ -27,3 +27,19 @@
 - Discarded as NOISE:
   - Specific ASCII tile shorthand display conventions (derivable from reading the source code).
   - Specific fixture byte-identity diffs between F1/F2 records (per-incident, no reusable principle).
+
+---
+
+### 2026-05-25 — Session c7ffec89
+
+- Scanned 1 session (2026-05-25), mahjong-server-bot-zoo, Layer 8 steps 8.1–8.4.
+- Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 5, NOISE: 2
+- Accepted candidates (all written to project memory):
+  - FILL_GAP: `project-layer8-status` — new status file (8.0–8.4 complete 2026-05-25, 597 tests; 8.5 server lifecycle and 8.6 S3 gate remain).
+  - FILL_GAP: `project-multi-table-architecture` — 4 load-bearing Step 8.4 decisions: TableHandle duplication intentional, table_id type boundary, admin_predicate auth seam, Persistence hooks empty until 8.5.
+  - FILL_GAP: `feedback-slow-pytest-mark` — @pytest.mark.slow for argon2 timing / multi-hand e2e; must register in pyproject.toml markers to avoid PytestUnknownMarkWarning.
+  - FILL_GAP: `feedback-sync-db-run-in-executor` — persistence + auth functions are sync (sqlite3 not async-safe); async WS handlers call them via run_in_executor.
+  - FILL_GAP: `feedback-static-invalid-hash` — STATIC_INVALID_HASH timing-attack defense in auth.py: every handle_auth_request failure path must run dummy argon2 verify; never short-circuit before it.
+- Discarded as NOISE:
+  - ruff RUF043 / re.compile raw-string rule (generic Python linter knowledge, not project-specific).
+  - keyset pagination via started_at_ms subquery (derivable from reading hands.py; standard SQL technique).

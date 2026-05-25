@@ -265,7 +265,16 @@
       "Bash(.venv/bin/python -m pytest tests/server/test_multi_table.py::test_mt_f17_two_table_isolation -v -s)",
       "Bash(.venv/bin/python -m pytest tests/web/test_e2e_layer8.py -v --tb=short -q)",
       "Bash(.venv/bin/python -m pytest tests/server/test_multi_table.py -v -s)",
-      "Bash(.venv/bin/mypy mahjong/server/ --strict)"
+      "Bash(.venv/bin/mypy mahjong/server/ --strict)",
+      "Bash(git commit *)",
+      "Bash(python -m pytest --co -q)",
+      "Bash(uv run *)",
+      "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/pytest --co -q)",
+      "Bash(python -m pytest -m \"not slow\" --tb=no -q)",
+      "Bash(.venv/bin/python -m pytest --co -q)",
+      "Bash(.venv/bin/python -m pytest --version)",
+      "Bash(.venv/bin/python -m pytest -p no:asyncio --co -q)",
+      "Bash(.venv/bin/python -m pytest --co)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
