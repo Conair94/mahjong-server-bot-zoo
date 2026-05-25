@@ -258,7 +258,14 @@
       "Bash(.venv/bin/mypy mahjong/persistence/rebuild.py --strict)",
       "Bash(.venv/bin/mypy mahjong/persistence/ tests/persistence/test_persistence_api.py --strict)",
       "Bash(python3 /Users/connorlockhart/.claude/plugins/cache/Claudest/claude-coding/0.2.29/skills/commit/scripts/validate.py . --output json)",
-      "Bash(git commit -m 'feat\\(layer8\\): step 8.3 — persistence API \\(Persistence class, hands, rebuild\\) *)"
+      "Bash(git commit -m 'feat\\(layer8\\): step 8.3 — persistence API \\(Persistence class, hands, rebuild\\) *)",
+      "Bash(git commit -m 'docs: refresh SESSION_HANDOFF for end of Layer 8 Step 8.3 *)",
+      "Bash(.venv/bin/python -m pytest tests/server/test_multi_table.py -x --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/server/test_multi_table.py -v --tb=short)",
+      "Bash(.venv/bin/python -m pytest tests/server/test_multi_table.py::test_mt_f17_two_table_isolation -v -s)",
+      "Bash(.venv/bin/python -m pytest tests/web/test_e2e_layer8.py -v --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest tests/server/test_multi_table.py -v -s)",
+      "Bash(.venv/bin/mypy mahjong/server/ --strict)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
