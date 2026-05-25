@@ -1,87 +1,87 @@
-# Session handoff — 2026-05-25 (end of Layer 8 Steps 8.1 + 8.2)
+# Session handoff — 2026-05-25 (end of Layer 8 Step 8.3)
 
 Snapshot of implementation status. Read this to pick up where this session left off.
 
 ## Where we are
 
-**Layer 8 Steps 8.1 and 8.2 are complete.** This session also closed the two
-`dealer_seat` known-limitations from Step 8.0.
+**Layer 8 Steps 8.1, 8.2, and 8.3 are complete.**
 
 | # | Step | Commit | Notes |
 | --- | --- | --- | --- |
 | KL-fix | dealer_seat through mgr.run_hand | `9f6ad07` | + hand_index_in_match; 2 new tests |
 | **8.1** | **SQLite schema + migration runner** | **`40d645c`** | **17 tests; all 10 spec fixtures** |
 | **8.2** | **Auth module (argon2id + sessions)** | **`bee3a5a`** | **24 tests; all 17 spec fixtures** |
+| **8.3** | **Persistence API (Persistence class)** | **`bef3972`** | **13 tests; all 13 spec fixtures** |
 
-**Verification at end of session:** ruff clean · mypy strict clean · **579 tests pass repo-wide** (555 prior + 24 new; 2 Linux-only + 1 slow deselected).
+**Verification at end of session:** ruff clean · mypy strict clean · **592 tests pass repo-wide** (579 prior + 13 new; 2 Linux-only + 1 slow deselected).
 
 ## Decisions reached this session
 
-- **(46) `dealer_seat` and `hand_index_in_match` thread through `mgr.run_hand`.** The game engine now actually uses the rotated dealer; HEADER winds rotate correctly. Backwards-compatible defaults (`dealer_seat=0, hand_index_in_match=0`).
-- **(47) Migration runner owns `schema_version` tracking.** `up()` creates tables only; the runner does the `DELETE-then-INSERT` on `schema_version` inside a single transaction. This makes every migration atomic and `up()` idempotent.
-- **(48) In-memory SQLite for all persistence unit tests.** Fast (<0.04s for 17 schema tests, <1.5s for 24 auth tests including real argon2 hashes). File-backed DB only for WAL tests (fixture 9).
-- **(49) `STATIC_INVALID_HASH` computed at module import time.** One argon2id hash (~100ms) paid once per process. The timing-attack defence always uses this sentinel to equalise the failure path with the success path.
-- **(50) `slow` pytest mark registered.** The timing test (fixture 9 of auth) is `@pytest.mark.slow`; core suite runs `pytest -m "not slow"`. Opt-in with `-m slow` on a stable CI runner.
-- **(51) `next_hand_seq` in HAND_END is still `null`.** Deferred again — client transitions correctly on ATTACHED; fixing requires threading info from the orchestrator into the per-session send path. Low priority.
+- **(52) `record_checksum` is nullable in the schema.** The `persistence-api.md` spec is correct: this field is NULL at `reserve_hand` time (HEADER write) and filled in by `finalize_hand` (FOOTER write). The migration and expected_schema.sql snapshot were both updated.
+- **(53) Module-level SQL primitives, thin `Persistence` façade.** `accounts.py`, `hands.py`, `rebuild.py` hold the SQL; `Persistence.__init__.py` owns the connection and delegates. This makes each primitive testable without the façade, and the façade testable without mocking SQL.
+- **(54) `auth.py` left untouched.** The 24 auth tests pass against the existing raw-SQL implementation. `accounts.py` provides the same operations through typed helpers for future callers (the `Persistence` class uses `accounts.py`; `auth.py` uses its own SQL). No duplication risk at this scale.
+- **(55) Rebuild scans all lines for HAND_END.** The `rebuild_index_from_records` path parses HEADER (line 1), all middle events (for HAND_END terminal info), and FOOTER (last line). This is the only way to reproduce `terminal_kind`, `winner_seat`, `fan_total`, and `score_deltas` from the record file alone.
+- **(56) Crash-truncated records (no FOOTER) rebuilt as `terminal_kind = 'ABORTED'`.** Consistent with the spec's "file's last event isn't a TERMINAL → ABORTED" rule.
+- **(57) Keyset pagination in `find_hands_by_account` uses `started_at_ms <`.** Works correctly when timestamps are unique (which they always are in practice for per-hand records). Edge case of exact-millisecond ties is acceptable for v1.
+- **(58) `open_db` now accepts `str | os.PathLike[str]`.** This enables `Persistence(":memory:", data_dir)` in tests. The `:memory:` string must be passed as a bare string (not a `Path` object), which callers naturally do.
 
 ## What this session built
 
-### Known-limitation fix — `dealer_seat` through `run_hand`
+### Step 8.3 — Persistence API
 
-**[mahjong/table/manager.py](../mahjong/table/manager.py):**
+**[mahjong/persistence/models.py](../mahjong/persistence/models.py)** — new:
+- `Account`, `SessionRow` — typed account + session rows
+- `Participant`, `HandRow` — typed hand rows; `HandRow.participants` populated only by `get_hand`
+- `IntegrityReport` — counts from `integrity_check` (pragma_ok, checked_db, ok_files, missing_files, checksum_mismatches, orphaned_files, in_progress_hands)
+- `RebuildReport` — counts from rebuild (processed_files, inserted, updated, errors)
 
-- Added `dealer_seat: int = 0` and `hand_index_in_match: int = 0` kwargs.
-- Passes `dealer_seat` to `initial_state()` so the engine actually uses the rotated dealer.
-- HEADER `seats[i].wind` now uses `F{(i - dealer_seat) % 4 + 1}` (was always `F{i+1}`).
-- HEADER `hand_index_in_match` now uses the parameter (was always `0`).
+**[mahjong/persistence/accounts.py](../mahjong/persistence/accounts.py)** — new:
+- `get_account_by_username`, `get_account_by_id`, `insert_account`, `update_account_login`, `set_account_disabled`
+- `insert_session`, `get_session`, `renew_session`, `revoke_session`, `delete_expired_sessions`
+- All take `sqlite3.Connection`; do NOT auto-commit (caller manages transaction boundaries)
 
-**[mahjong/web/server.py](../mahjong/web/server.py):**
+**[mahjong/persistence/hands.py](../mahjong/persistence/hands.py)** — new:
+- `reserve_hand` — atomic `BEGIN; INSERT hand_index; INSERT hand_participants × N; COMMIT`
+- `finalize_hand` — atomic `BEGIN; UPDATE hand_index; UPDATE hand_participants × N; COMMIT`
+- `get_hand` — fetches participants in a second query; returns populated `HandRow`
+- `find_hands_by_account` — keyset pagination via `before_hand_id`
+- `find_hands_by_match`, `find_recent_hands`, `find_in_progress_hands`
 
-- `_run_hand_loop` now passes `dealer_seat=self._dealer_seat, hand_index_in_match=self._hand_index`.
+**[mahjong/persistence/rebuild.py](../mahjong/persistence/rebuild.py)** — new:
+- `integrity_check` — PRAGMA + file existence + sha256 recompute + orphan walk
+- `rebuild_index_from_records` — idempotent walk of `records/**/*.jsonl`, `INSERT OR REPLACE`
 
-### Step 8.1 — SQLite schema + migration runner
+**[mahjong/persistence/__init__.py](../mahjong/persistence/__init__.py)** — updated:
+- `Persistence` class: `__init__(db_path, data_dir)` calls `open_db` + `apply_migrations`
+- All account/session/hand/rebuild methods delegate to module primitives; writes use `with self._conn:` for auto-commit
 
-**[mahjong/persistence/](../mahjong/persistence/)** — new package:
+**[mahjong/persistence/db.py](../mahjong/persistence/db.py)** — updated:
+- `open_db` now accepts `str | os.PathLike[str]` (previously `Path` only)
 
-- `db.py`: `open_db(path)` — WAL, FK enforcement (`PRAGMA foreign_keys = ON`), 5000ms busy timeout, `sqlite3.Row` factory.
-- `migrations/_0001_initial.py`: `up()` / `down()` for the full v1 schema: `schema_version`, `accounts`, `sessions`, `hand_index`, `hand_participants` + all 7 indexes.
-- `migrations/__init__.py`: `apply_migrations(conn, target=None)` — reads `schema_version`, applies missing migrations atomically; idempotent on current DB. `rollback_migrations()` for testing.
-- `__init__.py`: re-exports `open_db`, `apply_migrations`.
-
-**[tests/persistence/expected_schema.sql](../tests/persistence/expected_schema.sql)** — snapshot file for fixture 10.
-
-### Step 8.2 — Auth module
-
-**[mahjong/persistence/auth.py](../mahjong/persistence/auth.py):**
-
-- `PasswordHasher` static class: `hash()`, `verify()`, `needs_rehash()` wrapping argon2-cffi with spec params `(t=3, m=65536, p=4, hash_len=32, salt_len=16, type=ID)`.
-- `STATIC_INVALID_HASH`: module-level sentinel for timing-attack defence.
-- `AuthResult` frozen dataclass.
-- `create_account(db, *, username, display_name, kind, role, password) -> int` — validates, case-insensitive duplicate check, hashes, INSERTs.
-- `issue_session(db, account_id, user_agent=None) -> str` — `s_<32hex>` token from `secrets.token_hex(16)`.
-- `handle_auth_request(db, username, password, user_agent=None) -> AuthResult` — full AUTH_REQUEST flow with timing defence on all failure paths and lazy rehash.
-- `handle_resume(db, session_token) -> AuthResult` — validates token, sliding renewal, same token returned (no rotation in v1).
+**[tests/persistence/test_persistence_api.py](../tests/persistence/test_persistence_api.py)** — new:
+- 13 spec fixtures covering all of `persistence-api.md` plus `sqlite-schema.md` fixtures 11-12
 
 ## Known limitations carried forward
 
 - **`next_hand_seq` in HAND_END is always `null`** (since Step 8.0). Low priority; client works.
-- **No wire-protocol integration for AUTH_REQUEST / RESUME yet.** The auth module is a pure Python layer; it's not wired into the WebSocket server. That happens in Step 8.5 (server lifecycle) or earlier if a forcing function appears.
-- **No account CLI yet.** `python -m mahjong.cli.account create` is spec'd in auth.md but not implemented. The auth module's `create_account()` function is the core; CLI is a thin wrapper for later.
+- **No wire-protocol integration for AUTH_REQUEST / RESUME yet.** The auth module and the `Persistence` class are pure Python; not wired into the WebSocket server. That happens in Step 8.5.
+- **No account CLI yet.** `python -m mahjong.cli.account create` is spec'd in auth.md but not implemented.
+- **`Persistence` class not yet wired into `WebOrchestrator`.** The table manager still has no DB calls at HEADER/FOOTER write. Step 8.4 or 8.5 will add those hook points.
 - All earlier known limitations still apply.
 
 ## What remains
 
 **Remaining Layer 8 steps per CHECKLIST.md:**
 
-- **Step 8.3 — Persistence API.** `reserve_hand`, `finalize_hand`, `find_hands_by_*`, integrity check, rebuild from records. These are the query helpers over the 8.1 schema. Spec: [persistence-api.md](specs/persistence-api.md). Fixtures 11-12 from sqlite-schema.md belong here.
 - **Step 8.4 — Multi-table orchestrator.** One `WebSocketServer` hosts N tables; `LIST_TABLES` / `CREATE_TABLE` wire handlers.
-- **Step 8.5 — Server lifecycle.** Graceful drain, startup sequence (DB open → migrations → auth check → serve), systemd unit, periodic session cleanup.
+- **Step 8.5 — Server lifecycle.** Graceful drain, startup sequence (DB open → migrations → auth check → serve), systemd unit, periodic session cleanup. This is also where `Persistence` gets wired into `WebOrchestrator` at HEADER/FOOTER hook points.
 - **Step 8.6 — End-to-end S3 gate.** Byte-identical + auth + persistence fixture.
 
 ## Resumption checklist for the next session
 
 - [ ] Read this file.
-- [ ] `git log --oneline -5` — confirm `bee3a5a` (or later) at HEAD.
-- [ ] `.venv/bin/python -m pytest -m "not slow" --tb=no -q` — confirm 579 passing, 3 skipped/deselected.
-- [ ] Read [docs/specs/persistence-api.md](specs/persistence-api.md) before starting 8.3.
-- [ ] Optionally `/extract-learnings` to consolidate memory.
+- [ ] `git log --oneline -5` — confirm `bef3972` (or later) at HEAD.
+- [ ] `.venv/bin/python -m pytest -m "not slow" --tb=no -q` — confirm 592 passing, 3 skipped/deselected.
+- [ ] Read [docs/specs/persistence-api.md](specs/persistence-api.md) § Wiring into the table manager before starting 8.4/8.5.
+- [ ] Read [docs/specs/server-lifecycle.md](specs/server-lifecycle.md) for 8.5 context.
+- [ ] Optionally `/extract-learnings` to consolidate memory before starting.
