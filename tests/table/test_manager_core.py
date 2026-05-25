@@ -6,6 +6,9 @@ These cover the S0 walking-skeleton exit shape: four CannedAdapters complete
 a hand, the record writes, replay reproduces the canonical final state.
 Timeout/illegal/crash tests live in `test_manager_errors.py`; claim-window
 priority tests live in `test_manager_claims.py`.
+
+Layer-8 amendments: ``dealer_seat`` and ``hand_index_in_match`` params propagate
+correctly through ``run_hand`` to the engine and the HEADER record.
 """
 
 from __future__ import annotations
@@ -125,3 +128,64 @@ async def test_run_hand_default_for_discard_is_tsumogiri(tmp_path: Path) -> None
     first_discard = next(e for e in events if e["event"] == "DISCARD")
     assert first_discard["tile"] == expected_first_tile
     assert first_discard["from_hand"] is False  # tsumogiri
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_run_hand_dealer_seat_propagates_to_header_winds(tmp_path: Path) -> None:
+    """Layer-8: dealer_seat=1 → seat 1 is East (F1) in the HEADER, and the
+    engine's first actor is seat 1 (verified via the first DISCARD event).
+
+    This is the contract test for the known-limitation fix: run_hand was
+    previously hardcoded to dealer_seat=0, so the HEADER winds were always
+    seat-0=East regardless of the orchestrator's rotation.
+    """
+    dealer_seat = 1
+    record_path = tmp_path / "hand.jsonl"
+    await run_hand(
+        adapters=_four_passers(),
+        ruleset=MCR_REF,
+        seed=12345,
+        hand_id="test-dealer-seat",
+        record_path=record_path,
+        server_info={"version": "test", "git_sha": "test", "host": "test"},
+        dealer_seat=dealer_seat,
+    )
+
+    events = read_record(record_path)
+    header = events[0]
+    assert header["event"] == "HEADER"
+
+    # Seat winds in HEADER must rotate with the dealer.
+    # dealer_seat=1 → seat 1 = East (F1), seat 2 = South (F2),
+    #                   seat 3 = West (F3),  seat 0 = North (F4)
+    seats_by_seat = {s["seat"]: s for s in header["seats"]}
+    assert seats_by_seat[1]["wind"] == "F1", f"Dealer seat 1 should be East; got {seats_by_seat}"
+    assert seats_by_seat[2]["wind"] == "F2"
+    assert seats_by_seat[3]["wind"] == "F3"
+    assert seats_by_seat[0]["wind"] == "F4"
+
+    # The engine must also start at dealer_seat: first DISCARD comes from seat 1.
+    first_discard = next(e for e in events if e["event"] == "DISCARD")
+    assert first_discard["seat"] == dealer_seat, (
+        f"First DISCARD should be by dealer (seat {dealer_seat}), "
+        f"got seat {first_discard['seat']}"
+    )
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_run_hand_hand_index_in_match_propagates_to_header(tmp_path: Path) -> None:
+    """Layer-8: hand_index_in_match param is reflected in the HEADER record."""
+    record_path = tmp_path / "hand.jsonl"
+    await run_hand(
+        adapters=_four_passers(),
+        ruleset=MCR_REF,
+        seed=12345,
+        hand_id="test-hand-index",
+        record_path=record_path,
+        server_info={"version": "test", "git_sha": "test", "host": "test"},
+        hand_index_in_match=3,
+    )
+
+    events = read_record(record_path)
+    header = events[0]
+    assert header["hand_index_in_match"] == 3

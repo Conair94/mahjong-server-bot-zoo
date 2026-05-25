@@ -305,6 +305,8 @@ class WebOrchestrator:
                     decide_timeout_seconds=self._decide_timeout_seconds,
                     strike_limit=self._strike_limit,
                     event_callback=self._sessions.fanout_event_to_spectators,
+                    dealer_seat=self._dealer_seat,
+                    hand_index_in_match=self._hand_index,
                 )
 
                 # Check match-end condition before sleeping/rotating.

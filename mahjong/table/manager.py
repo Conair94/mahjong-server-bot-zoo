@@ -137,20 +137,32 @@ async def run_hand(
     strike_limit: int = 3,
     meta: dict[str, Any] | None = None,
     event_callback: EventCallback | None = None,
+    dealer_seat: int = 0,
+    hand_index_in_match: int = 0,
 ) -> GameState:
     """Drive one hand from initial deal to TERMINAL.
 
     Side effects: writes a complete record to `record_path`. Returns the
     final canonical GameState (for tests; live callers can re-read the
     record if they need it).
+
+    Layer-8 params:
+    - ``dealer_seat``: which seat is the current dealer (0-3). Seat winds
+      rotate so ``dealer_seat`` is East (F1). Also sets the engine's starting
+      actor to ``dealer_seat``.  Default 0 preserves backwards compatibility.
+    - ``hand_index_in_match``: zero-based index of this hand within its match.
+      Written to the HEADER record. Default 0 for standalone hands.
     """
     if len(adapters) != 4:
         raise ValueError(f"expected 4 adapters, got {len(adapters)}")
 
-    state = initial_state(ruleset, seed=seed)
+    state = initial_state(ruleset, seed=seed, dealer_seat=dealer_seat)
     writer = RecordWriter(record_path)
 
     # --- HEADER ---
+    # Seat winds rotate with the dealer: dealer_seat = East (F1),
+    # the next seat clockwise = South (F2), etc.
+    # Wind index for seat s: (s - dealer_seat) % 4, 1-based → F1..F4.
     header: dict[str, Any] = {
         "event": "HEADER",
         "turn_index": 0,
@@ -159,11 +171,15 @@ async def run_hand(
         "format_version": 1,
         "hand_id": hand_id,
         "match_id": None,
-        "hand_index_in_match": 0,
+        "hand_index_in_match": hand_index_in_match,
         "ruleset": dict(ruleset),
         "seed": str(seed),
         "seats": [
-            {"seat": i, "wind": f"F{i + 1}", "identity": dict(adapters[i].identity)}
+            {
+                "seat": i,
+                "wind": f"F{(i - dealer_seat) % 4 + 1}",
+                "identity": dict(adapters[i].identity),
+            }
             for i in range(4)
         ],
         "server": dict(server_info),
