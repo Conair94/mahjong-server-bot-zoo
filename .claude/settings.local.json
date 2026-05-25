@@ -249,7 +249,16 @@
       "Bash(.venv/bin/python -m pytest --tb=no -q -m \"not slow\")",
       "Bash(git reset *)",
       "Bash(git commit -m 'feat\\(layer8\\): step 8.2 — auth module \\(argon2id + session tokens\\) *)",
-      "Bash(git commit -m 'docs: refresh SESSION_HANDOFF for end of Layer 8 Steps 8.1 + 8.2 *)"
+      "Bash(git commit -m 'docs: refresh SESSION_HANDOFF for end of Layer 8 Steps 8.1 + 8.2 *)",
+      "Bash(.venv/bin/python -m pytest -m \"not slow\" --tb=no -q)",
+      "Bash(.venv/bin/python -m pytest tests/persistence/test_migrations.py --tb=short -q)",
+      "Bash(.venv/bin/python -m pytest -m \"not slow\" --tb=short -q)",
+      "Bash(.venv/bin/mypy mahjong/persistence/ tests/persistence/ --strict)",
+      "Bash(.venv/bin/mypy tests/persistence/test_auth.py --strict)",
+      "Bash(.venv/bin/mypy mahjong/persistence/rebuild.py --strict)",
+      "Bash(.venv/bin/mypy mahjong/persistence/ tests/persistence/test_persistence_api.py --strict)",
+      "Bash(python3 /Users/connorlockhart/.claude/plugins/cache/Claudest/claude-coding/0.2.29/skills/commit/scripts/validate.py . --output json)",
+      "Bash(git commit -m 'feat\\(layer8\\): step 8.3 — persistence API \\(Persistence class, hands, rebuild\\) *)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",

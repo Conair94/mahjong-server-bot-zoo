@@ -74,7 +74,7 @@ def up(conn: sqlite3.Connection) -> None:
             fan_total               INTEGER,
             master_seed             TEXT NOT NULL,
             record_path             TEXT NOT NULL UNIQUE,
-            record_checksum         TEXT NOT NULL,
+            record_checksum         TEXT,
             server_version          TEXT NOT NULL,
             source                  TEXT NOT NULL DEFAULT 'live'
                                         CHECK (source IN ('live', 'selfplay', 'replay-import'))

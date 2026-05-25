@@ -13,11 +13,11 @@ Call ``apply_migrations()`` after ``open_db()`` to ensure the schema is current.
 
 from __future__ import annotations
 
+import os
 import sqlite3
-from pathlib import Path
 
 
-def open_db(path: Path) -> sqlite3.Connection:
+def open_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
     """Open (or create) the SQLite DB at *path* with all required PRAGMAs set.
 
     The caller is responsible for calling ``apply_migrations(conn)`` and for
