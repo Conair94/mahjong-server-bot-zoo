@@ -17,6 +17,9 @@ dependencies = [
     # WebSocket transport for the S2 server (Layer 7.2). The wire codec itself
     # has no dep on websockets; only the listener does.
     "websockets>=12.0",
+    # Password hashing for auth (Layer 8.2). argon2id is the OWASP-current
+    # standard; argon2-cffi wraps the reference C implementation.
+    "argon2-cffi>=23.1",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +56,7 @@ markers = [
     "integration: multi-component integration tests (slower; not part of the <10s core suite).",
     "linux_only: requires Linux-specific features (netns, RLIMIT_AS kill semantics).",
     "needs_pymjgb: requires PyMahjongGB to be importable.",
+    "slow: expensive tests (argon2 timing, multi-hand e2e); skipped in the fast <10s suite.",
 ]
 
 [tool.pytest_asyncio]
