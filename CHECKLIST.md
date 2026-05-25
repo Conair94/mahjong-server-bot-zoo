@@ -511,7 +511,18 @@ Spec: [docs/s2-s3-plan.md §"S2 exit"](docs/s2-s3-plan.md).
 
 ## Layer 8 — accounts, sessions, persistence (S3)
 
-Specs drafted 2026-05-22; implementation pending. Build order: schema → auth → persistence-api → multi-table orchestrator → lifecycle → end-to-end S3 gate.
+Specs drafted 2026-05-22. Build order: multi-hand orchestration → schema → auth → persistence-api → multi-table orchestrator → lifecycle → end-to-end S3 gate.
+
+### Step 8.0 — Multi-hand orchestration
+
+- [x] `initial_state()` gains `dealer_seat` (default 0) and `hand_index` (default 0) kwargs; rotates seat winds and deals 14th tile to the correct dealer. Backwards-compatible: all Layer 7 fixtures unchanged at defaults.
+- [x] `SeatSession.begin_next_hand()`: inter-hand boundary — sends `DETACH { reason: 'hand_ended' }` + `ATTACHED { hand_index: N+1, snapshot }` to LIVE seats; cancels hold timer for HELD seats (client re-attaches into new hand via normal `_resume` path).
+- [x] `TableSessions.begin_next_hand()`: fans out to all seat sessions.
+- [x] `WebOrchestrator`: `max_hands` (default 1, `None` = infinite) + `between_hand_pause_seconds` params; `_run_hand` replaced by `_run_hand_loop`; between hands: sleep → rotate dealer → recompute `initial_state` → `begin_next_hand()`.
+- [x] `HumanAdapter.left("HAND_ENDED")` is now a pure no-op: session stays LIVE so `begin_next_hand()` finds it. Previously called `unbind_after_hand_end()` (Layer 8 bug fix).
+- [x] Tests: engine `dealer_seat`/`hand_index` params; e2e F1 (two-hand loop, frame ordering), F2 (spectator stays subscribed across hand boundary, session-mux fixture 20), F3 (three-hand loop, ATTACHED carries hand_index 0/1/2, snapshots differ).
+- [x] **Gate:** 536 tests passing, 2 skipped; ruff clean; mypy strict clean (4 source files).
+- Known limitations: `next_hand_seq` in HAND_END is always `null` (should be non-null for next-hand case); `mgr.run_hand` calls `initial_state` internally without `dealer_seat` (mechanics always use seat 0 as dealer; orchestrator rotation applies to snapshots only); dealer-repeats-on-win MCR rule deferred.
 
 ### Step 8.1 — SQLite schema + migrations
 
