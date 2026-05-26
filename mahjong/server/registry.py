@@ -1,19 +1,16 @@
 """Table registry — in-memory map of live TableManager instances.
 
 Spec: docs/specs/server-lifecycle.md § Table registry.
+      docs/specs/multi-human-seats.md (Step 8.7).
 
 ``TableHandle``
-    Bundles one table's ``TableSessions`` + hand-orchestration task.  The
-    hand loop starts when the first client ATTACHes to seat 0.
+    Bundles one table's ``TableSessions`` + hand-orchestration task.  Seat
+    composition (which seats are ``human`` vs. ``bot``) is supplied at
+    construction; the hand loop builds one adapter per seat from that.
 
 ``TableRegistry``
     The dict of live ``TableHandle``s.  Supports ``create_table``,
     ``list_tables``, ``get_table``, ``close_table``, ``drain_all``.
-
-Decisions:
-  - table_id is an auto-incrementing integer (converted to str at API boundary).
-  - One seat (seat 0) is human; seats 1-3 are CannedAdapters.
-  - Persistence wiring (reserve_hand / finalize_hand) lands in Step 8.5.
 """
 
 from __future__ import annotations
@@ -28,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from mahjong.adapters.autopass import AutoPassAdapter
 from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
@@ -41,8 +39,6 @@ from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table import manager as mgr
 
 _logger = logging.getLogger(__name__)
-
-HUMAN_SEAT: int = 0
 
 
 def _ruleset_config_hash(ruleset: RuleSetRef) -> str:
@@ -135,12 +131,16 @@ class TableHandle:
     """Single-table state: TableSessions + hand-orchestration task.
 
     The hand loop mirrors ``WebOrchestrator._run_hand_loop``; the two share
-    no code to avoid coupling until the architecture stabilises in Step 8.5
-    (YAGNI — keep WebOrchestrator's tests independent).
+    no code to avoid coupling until the architecture stabilises (intentional
+    duplication, see project-multi-table-architecture memory).
 
-    The *first* client that ATTACHes to seat 0 kicks off the hand loop.
-    Subsequent clients on the same seat reconnect via ``TableSessions.attach``
-    (seat-hold + resume buffer mechanics from session-mux.md).
+    Seat composition is declared at construction time via ``seats`` (a
+    ``SeatsTuple`` from ``mahjong.server.seats``); each ``kind: "human"``
+    seat may be claimed by any authenticated user via ``attach``, each
+    ``kind: "bot"`` seat is backed by a ``CannedAdapter``-PASS placeholder.
+
+    The first ATTACH to any human seat kicks off the hand loop in this
+    Step 8.7.b cut; the explicit ``START_HAND`` trigger lands in 8.7.d.
     """
 
     def __init__(
@@ -176,9 +176,8 @@ class TableHandle:
         self._persistence = persistence
         self._data_dir = data_dir
         self._match_id = f"match_t{table_id}"
-        # Step 8.7.a: store the parsed composition.  The hand-loop still
-        # hardcodes HUMAN_SEAT=0 in 8.7.a; per-seat adapter construction
-        # from this composition lands in 8.7.b.
+        # Step 8.7: composition drives per-seat adapter construction and the
+        # ATTACH-permission check.  ``None`` falls back to single-human legacy.
         self._seats: SeatsTuple = seats if seats is not None else DEFAULT_COMPOSITION
 
         # Between-hand mutable state
@@ -188,7 +187,7 @@ class TableHandle:
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
 
-        # Seats 1-3 are CannedAdapters
+        # One CannedAdapter-PASS per ``kind: "bot"`` seat.
         actions_by_seat = canned_seat_actions or {}
         self._canned_adapters: dict[int, CannedAdapter] = {
             seat: CannedAdapter(
@@ -196,8 +195,13 @@ class TableHandle:
                 actions=list(actions_by_seat.get(seat, [])),
             )
             for seat in range(4)
-            if seat != HUMAN_SEAT
+            if self._seats[seat].kind == "bot"
         }
+
+        # Identity bound to each human seat by the most-recent successful
+        # ATTACH.  Used by ``_run_hand_loop`` to construct HumanAdapters and
+        # by ``_reserve_hand_row`` to fill ``participants[seat].account_id``.
+        self._human_identities: dict[int, HumanIdentity] = {}
 
         self._sessions: TableSessions = TableSessions(
             table_id=int(table_id),
@@ -237,6 +241,12 @@ class TableHandle:
     def seats(self) -> SeatsTuple:
         """The declared seat composition (see Step 8.7 spec)."""
         return self._seats
+
+    def is_human_seat(self, seat: int) -> bool:
+        """True if *seat* is a ``kind: "human"`` seat in this table's composition."""
+        if seat < 0 or seat >= 4:
+            return False
+        return self._seats[seat].kind == "human"
 
     # --- summary ---
 
@@ -278,15 +288,27 @@ class TableHandle:
         identity: HumanIdentity,
         seat: int,
     ) -> bool:
-        """Attach *conn* to *seat*.  Kick off the hand loop on first attach to
-        seat 0.  Returns True if the attach succeeded."""
+        """Attach *conn* to *seat*.  Rejects bot seats and out-of-range seats
+        with ``seat_not_yours``.  Returns True if the attach succeeded.
+
+        Side effects on success: records the identity on
+        ``self._human_identities[seat]`` and (for the *first* attach to any
+        human seat) kicks off the hand loop.  In 8.7.d the hand-start trigger
+        moves out of ``attach`` into an explicit ``start_hand`` method.
+        """
+        if not self.is_human_seat(seat):
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "seat_not_yours"})
+            return False
         outcome = await self._sessions.attach(conn, user_id=identity["user_id"], seat=seat)
         if not outcome.ok:
             return False
-        if seat == HUMAN_SEAT:
-            async with self._start_hand_lock:
-                if self._hand_task is None:
-                    self._hand_task = asyncio.create_task(self._run_hand_loop(identity))
+        # Most-recent successful attach wins for identity-tracking; this
+        # is consistent with same-user-takeover (session-mux fixture 8).
+        self._human_identities[seat] = identity
+        async with self._start_hand_lock:
+            if self._hand_task is None:
+                self._hand_task = asyncio.create_task(self._run_hand_loop())
         return True
 
     async def spectate(self, conn: Any, *, user_id: str) -> bool:
@@ -301,26 +323,45 @@ class TableHandle:
 
     # --- hand loop ---
 
-    async def _run_hand_loop(self, human_identity: HumanIdentity) -> None:
+    def _build_adapters_for_hand(self) -> list[SeatAdapter]:
+        """Build the per-seat adapter list from this table's composition.
+
+        - ``kind: "bot"`` seat → its pre-allocated ``CannedAdapter``.
+        - ``kind: "human"`` seat with a bound identity → ``HumanAdapter``.
+        - ``kind: "human"`` seat with no bound identity → ``AutoPassAdapter``
+          (interim safety net; 8.7.d gates the hand on all-humans-LIVE so
+          this branch becomes unreachable on the production path).
+        """
+        adapters: list[SeatAdapter] = []
+        for seat in range(4):
+            if self.is_human_seat(seat):
+                identity = self._human_identities.get(seat)
+                if identity is None:
+                    adapters.append(cast(SeatAdapter, AutoPassAdapter()))
+                else:
+                    session = self._sessions.seat(seat)
+                    adapters.append(
+                        cast(
+                            SeatAdapter,
+                            HumanAdapter(session=session, identity=identity),
+                        )
+                    )
+            else:
+                adapters.append(cast(SeatAdapter, self._canned_adapters[seat]))
+        return adapters
+
+    async def _run_hand_loop(self) -> None:
         """Background task: run hands sequentially until max_hands reached."""
         try:
             while True:
                 hand_seed = self._seed + self._hand_index
-                human_session = self._sessions.seat(HUMAN_SEAT)
-                human = HumanAdapter(session=human_session, identity=human_identity)
-                adapters: list[SeatAdapter] = [
-                    cast(SeatAdapter, human),
-                    cast(SeatAdapter, self._canned_adapters[1]),
-                    cast(SeatAdapter, self._canned_adapters[2]),
-                    cast(SeatAdapter, self._canned_adapters[3]),
-                ]
+                adapters = self._build_adapters_for_hand()
 
                 current_hand_id = self._hand_id_for_hand(self._hand_index)
                 current_record_path = self._record_path_for_hand(self._hand_index)
                 self._reserve_hand_row(
                     hand_id=current_hand_id,
                     record_path=current_record_path,
-                    human_identity=human_identity,
                     hand_seed=hand_seed,
                 )
 
@@ -384,22 +425,33 @@ class TableHandle:
         *,
         hand_id: str,
         record_path: Path,
-        human_identity: HumanIdentity,
         hand_seed: int,
     ) -> None:
         if self._persistence is None:
             return
-        human_account_id = _account_id_from_user_id(human_identity["user_id"])
-        participants = [
-            Participant(
-                seat=seat,
-                account_id=(human_account_id if seat == HUMAN_SEAT else None),
-                seat_kind=("human" if seat == HUMAN_SEAT else "canned"),
-                wind=f"F{(seat - self._dealer_seat) % 4 + 1}",
-                final_score_delta=None,
+        participants: list[Participant] = []
+        for seat in range(4):
+            if self.is_human_seat(seat):
+                identity = self._human_identities.get(seat)
+                if identity is not None:
+                    account_id = _account_id_from_user_id(identity["user_id"])
+                    seat_kind: str = "human"
+                else:
+                    # Unattached human seat → AutoPassAdapter is in play.
+                    account_id = None
+                    seat_kind = "canned"
+            else:
+                account_id = None
+                seat_kind = "canned"
+            participants.append(
+                Participant(
+                    seat=seat,
+                    account_id=account_id,
+                    seat_kind=seat_kind,  # type: ignore[arg-type]
+                    wind=f"F{(seat - self._dealer_seat) % 4 + 1}",
+                    final_score_delta=None,
+                )
             )
-            for seat in range(4)
-        ]
         try:
             self._persistence.reserve_hand(
                 hand_id=hand_id,
