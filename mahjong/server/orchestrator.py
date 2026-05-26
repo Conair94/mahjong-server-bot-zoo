@@ -349,14 +349,18 @@ class MultiTableOrchestrator:
     # --- admin handlers ---
 
     async def _send_hello(self, conn: Connection) -> None:
-        await conn.send(
-            {
-                "kind": "HELLO",
-                "seq": self._hello_seq,
-                "protocol_version": 1,
-                "server_id": SERVER_ID,
-            }
-        )
+        hello: dict[str, Any] = {
+            "kind": "HELLO",
+            "seq": self._hello_seq,
+            "protocol_version": 1,
+            "server_id": SERVER_ID,
+        }
+        if self._auth_required:
+            # Signal to the client that AUTH_REQUEST is expected before any
+            # table operations.  Additive field — unknown features are tolerated
+            # by clients that haven't been updated (wire-protocol.md § HELLO).
+            hello["features"] = ["auth"]
+        await conn.send(hello)
         self._hello_seq += 1
 
     def _make_seq(self) -> int:

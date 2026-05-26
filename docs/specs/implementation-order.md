@@ -641,6 +641,20 @@ Specs drafted 2026-05-22 per [s2-s3-plan.md §4 Layer 8](../s2-s3-plan.md). Buil
 
 **Gate:** **S3 exit artifact** checked in. All four bullets in [server-plan.md § S3 exit criteria](../server-plan.md) are green and checked in.
 
+### Step 8.7 — Multi-human-seat tables *(next session)*
+
+**Context:** As of Step 8.5, every table has exactly one human seat (seat 0) and three `CannedAdapter` bots (seats 1–3). A second authenticated user can connect and browse tables but cannot sit down — `ATTACH` on seats 1–3 returns `seat_not_yours`. Real multi-player (friends playing each other) requires configurable seat composition.
+
+**What needs to change:**
+
+- `TableHandle` / `TableRegistry.create_table_direct` — accept a `seats` parameter specifying which seats are human vs. bot, instead of hardcoding `HUMAN_SEAT = 0`. The `CREATE_TABLE` wire message already carries a `seats` array (wire-protocol.md § CREATE_TABLE); the server currently ignores it.
+- `MultiTableOrchestrator._handle_create_table` — parse `seats` from the `CREATE_TABLE` message and pass it to `create_table_direct`.
+- `TableHandle.attach` — allow any seat whose `kind == "human"` to be claimed by an authenticated connection, not only seat 0.
+- Web client — after `TABLE_LIST`, show seat availability and let the user pick an open human seat rather than always requesting seat 0.
+- `MAHJONG_LISTEN_ADDR` default — change to `0.0.0.0:8400` (or document clearly) so peers on Tailscale can reach the server without an env-var override. Currently `127.0.0.1` makes the server invisible outside the host machine.
+
+**Verification fixture (write first):** Two authenticated clients connect; client A creates a table with two human seats (0 and 1) and one bot each for seats 2 and 3; client B attaches to seat 1; both clients receive matching `ATTACHED` snapshots; the hand proceeds with both humans receiving `PROMPT`s on their respective turns.
+
 ## What's deferred
 
 These are explicitly *not* in this implementation order — they live in later S-phases ([server-plan.md](../server-plan.md)):

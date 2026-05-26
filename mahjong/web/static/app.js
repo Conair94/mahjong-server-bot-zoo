@@ -1,11 +1,13 @@
-// Web client entry — Step 7.5c.iii PROMPT/ACTION round-trip.
+// Web client entry — Step 8.5 AUTH wire + table discovery.
 //
 // <game-pane> renders a SeatView (state-schema.md § Per-seat projection)
 // as an ASCII table, mutates it per inbound EVENT, and — when a PROMPT is
 // outstanding — renders a prompt bar listing the legal actions with their
 // key bindings. Keystrokes get translated to ACTION frames and sent back.
 //
-// Bilingual rendering (7.5c.iv) and the end-to-end S2 fixture (7.6) follow.
+// Step 8.5 adds: auth form (shown when HELLO.features includes "auth"),
+// AUTH_REQUEST / AUTH_RESPONSE handling, and post-auth table discovery
+// (LIST_TABLES → CREATE_TABLE if needed → ATTACH seat 0).
 
 import { LitElement, html, css } from "lit";
 import { renderTable } from "/static/render.js";
@@ -661,6 +663,10 @@ class MahjongApp extends LitElement {
     panes: { state: true },
     theme: { state: true },
     tileStyle: { state: true },
+    // Auth state — driven by HELLO.features and AUTH_RESPONSE.
+    _authRequired: { state: true }, // bool: server sent features: ["auth"]
+    _authState: { state: true },    // "idle"|"waiting"|"submitting"|"authed"|"error"
+    _authError: { state: true },    // null | error string shown under the form
   };
 
   static styles = css`
@@ -694,6 +700,67 @@ class MahjongApp extends LitElement {
     }
     .theme-btn:hover { color: var(--accent); border-color: var(--accent); }
     .theme-btn .hint { color: var(--fg-dim); margin-left: 0.5rem; }
+
+    /* --- Auth form (Step 8.5) ------------------------------------------- */
+    .auth-overlay {
+      margin: 0 0 1rem;
+      padding: 1rem 1.5rem 1.25rem;
+      border: 1px solid var(--border);
+      max-width: 380px;
+    }
+    .auth-title {
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+    .auth-error {
+      color: var(--error);
+      margin-bottom: 0.75rem;
+      padding: 0.4rem 0.75rem;
+      border: 1px solid var(--error);
+    }
+    .auth-form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      margin-bottom: 0.6rem;
+    }
+    .auth-label { color: var(--fg-dim); font-size: 0.9em; }
+    .auth-input {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0.3rem 0.5rem;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .auth-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .auth-input:disabled { opacity: 0.5; }
+    .auth-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: baseline;
+      margin-top: 0.25rem;
+    }
+    .auth-submit {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0.25rem 1rem;
+      cursor: pointer;
+    }
+    .auth-submit:hover:not(:disabled) {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .auth-submit:disabled { opacity: 0.5; cursor: default; }
+    .auth-hint { color: var(--fg-dim); font-size: 0.85em; }
   `;
 
   constructor() {
@@ -705,6 +772,11 @@ class MahjongApp extends LitElement {
     this.tileStyle = loadInitialTileStyle();
     this._conn = null;
     this._onKeydown = this._handleKeydown.bind(this);
+    // Auth state — see Step 8.5.
+    this._authRequired = false;
+    this._authState = "idle";
+    this._authError = null;
+    this._sessionToken = null; // stored in memory; RESUME is a v2 concern
   }
 
   connectedCallback() {
@@ -771,6 +843,54 @@ class MahjongApp extends LitElement {
       this._conn.addEventListener("message", (e) => {
         const frame = e.detail;
         pane.pushFrame(frame);
+
+        // --- Auth phase (Step 8.5) -----------------------------------------
+        if (frame.kind === "HELLO") {
+          // Server signals auth via HELLO.features = ["auth"].
+          // Older/test servers that omit features skip straight to discovery.
+          const feats = Array.isArray(frame.features) ? frame.features : [];
+          if (feats.includes("auth")) {
+            this._authRequired = true;
+            this._authState = "waiting"; // triggers auth form render
+          } else {
+            // No auth required — go straight to table discovery.
+            this._doTableDiscovery();
+          }
+          return;
+        }
+
+        if (frame.kind === "AUTH_RESPONSE") {
+          if (frame.ok) {
+            this._sessionToken = frame.session_token ?? null;
+            this._authState = "authed";
+            this._authError = null;
+            this._doTableDiscovery(); // LIST_TABLES → ATTACH
+          } else {
+            // Server allows up to 3 attempts on the same connection; keep the
+            // form open so the user can correct their credentials.
+            this._authState = "error";
+            this._authError = "Invalid credentials — please try again.";
+          }
+          return;
+        }
+
+        // --- Table discovery (Step 8.5) ------------------------------------
+        if (frame.kind === "TABLE_LIST") {
+          const tables = Array.isArray(frame.tables) ? frame.tables : [];
+          if (tables.length > 0) {
+            this._doAttach(tables[0].table_id);
+          } else {
+            this._doCreateTable();
+          }
+          return;
+        }
+
+        if (frame.kind === "TABLE_CREATED") {
+          this._doAttach(frame.table_id);
+          return;
+        }
+
+        // --- Gameplay (unchanged from Step 7.5) ----------------------------
         if (frame.kind === "ATTACHED" && frame.snapshot) {
           pane.setSnapshot(frame.snapshot, frame.seat ?? 0);
         } else if (frame.kind === "EVENT" && frame.event && pane.seatView) {
@@ -799,14 +919,112 @@ class MahjongApp extends LitElement {
     });
   }
 
+  // --- Auth helpers (Step 8.5) --------------------------------------------
+
+  _onAuthSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const username = form.elements.username.value.trim();
+    const password = form.elements.password.value;
+    if (!username || !password) return;
+    // "submitting" disables the form while we wait for AUTH_RESPONSE.
+    this._authState = "submitting";
+    this._authError = null;
+    try {
+      // Field is "password" (plaintext) — transport security via TLS/Tailscale.
+      // wire-protocol.md § AUTH_REQUEST.
+      this._conn.send({ kind: "AUTH_REQUEST", username, password });
+    } catch (err) {
+      console.warn("AUTH_REQUEST send failed:", err);
+      this._authState = "waiting";
+      this._authError = "Failed to send — is the server running?";
+    }
+  }
+
+  // --- Table-discovery helpers (Step 8.5) ---------------------------------
+
+  _doTableDiscovery() {
+    try {
+      this._conn.send({ kind: "LIST_TABLES" });
+    } catch (err) {
+      console.warn("LIST_TABLES send failed:", err);
+    }
+  }
+
+  _doCreateTable() {
+    try {
+      // No ruleset override needed — server uses its configured default.
+      this._conn.send({ kind: "CREATE_TABLE" });
+    } catch (err) {
+      console.warn("CREATE_TABLE send failed:", err);
+    }
+  }
+
+  _doAttach(tableId) {
+    try {
+      this._conn.send({ kind: "ATTACH", table_id: tableId, seat: 0 });
+    } catch (err) {
+      console.warn("ATTACH send failed:", err);
+    }
+  }
+
+  // --- Auth form renderer (Step 8.5) -------------------------------------
+
+  _renderAuthForm() {
+    const submitting = this._authState === "submitting";
+    return html`
+      <div class="auth-overlay">
+        <div class="auth-title">── Sign in ──</div>
+        ${this._authError
+          ? html`<div class="auth-error">${this._authError}</div>`
+          : ""}
+        <form @submit=${this._onAuthSubmit.bind(this)}>
+          <div class="auth-form-row">
+            <label class="auth-label">Username</label>
+            <input
+              class="auth-input"
+              type="text"
+              name="username"
+              ?disabled=${submitting}
+              autocomplete="username"
+              autofocus
+            />
+          </div>
+          <div class="auth-form-row">
+            <label class="auth-label">Password</label>
+            <input
+              class="auth-input"
+              type="password"
+              name="password"
+              ?disabled=${submitting}
+              autocomplete="current-password"
+            />
+          </div>
+          <div class="auth-actions">
+            <button class="auth-submit" type="submit" ?disabled=${submitting}>
+              ${submitting ? "[ signing in… ]" : "[ Sign in ]"}
+            </button>
+            ${submitting
+              ? ""
+              : html`<span class="auth-hint">
+                  (create accounts with <code>python -m mahjong account create</code>)
+                </span>`}
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
   render() {
     const nextTheme = this.theme === "dark" ? "light" : "dark";
     const nextTile = this.tileStyle === "ascii" ? "unicode" : "ascii";
+    // Show the auth form when the server requires auth and we haven't authed yet.
+    const showAuth = this._authRequired && this._authState !== "authed";
     return html`
       <header>
         <pre>
  ╔══════════════════════════════════════════════════════════╗
- ║   Mahjong / 麻将        — web client, step 7.5c.i        ║
+ ║   Mahjong / 麻将        — web client, step 8.5           ║
  ╚══════════════════════════════════════════════════════════╝</pre>
         <div class="controls">
           <button
@@ -825,6 +1043,7 @@ class MahjongApp extends LitElement {
           </button>
         </div>
       </header>
+      ${showAuth ? this._renderAuthForm() : ""}
       <table-page .panes=${this.panes} .tileStyle=${this.tileStyle}></table-page>
     `;
   }
