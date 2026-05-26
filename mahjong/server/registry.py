@@ -35,6 +35,7 @@ from mahjong.engine import initial_state
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.persistence import Participant, Persistence
+from mahjong.server.seats import DEFAULT_COMPOSITION, SeatsTuple
 from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table import manager as mgr
@@ -159,6 +160,7 @@ class TableHandle:
         between_hand_pause_seconds: float = 2.0,
         persistence: Persistence | None = None,
         data_dir: Path | None = None,
+        seats: SeatsTuple | None = None,
     ) -> None:
         self._table_id = table_id
         self._ruleset = ruleset
@@ -174,6 +176,10 @@ class TableHandle:
         self._persistence = persistence
         self._data_dir = data_dir
         self._match_id = f"match_t{table_id}"
+        # Step 8.7.a: store the parsed composition.  The hand-loop still
+        # hardcodes HUMAN_SEAT=0 in 8.7.a; per-seat adapter construction
+        # from this composition lands in 8.7.b.
+        self._seats: SeatsTuple = seats if seats is not None else DEFAULT_COMPOSITION
 
         # Between-hand mutable state
         self._hand_index: int = 0
@@ -227,12 +233,15 @@ class TableHandle:
         """hand_id for hand 0 (used for isolation assertions in tests)."""
         return self._hand_id
 
+    @property
+    def seats(self) -> SeatsTuple:
+        """The declared seat composition (see Step 8.7 spec)."""
+        return self._seats
+
     # --- summary ---
 
     def summary(self) -> TableSummary:
-        in_progress = (
-            self._hand_task is not None and not self._hand_task.done()
-        )
+        in_progress = self._hand_task is not None and not self._hand_task.done()
         phase = "IN_PROGRESS" if in_progress else "WAITING_FOR_PLAYERS"
         return TableSummary(
             table_id=self._table_id,
@@ -271,17 +280,13 @@ class TableHandle:
     ) -> bool:
         """Attach *conn* to *seat*.  Kick off the hand loop on first attach to
         seat 0.  Returns True if the attach succeeded."""
-        outcome = await self._sessions.attach(
-            conn, user_id=identity["user_id"], seat=seat
-        )
+        outcome = await self._sessions.attach(conn, user_id=identity["user_id"], seat=seat)
         if not outcome.ok:
             return False
         if seat == HUMAN_SEAT:
             async with self._start_hand_lock:
                 if self._hand_task is None:
-                    self._hand_task = asyncio.create_task(
-                        self._run_hand_loop(identity)
-                    )
+                    self._hand_task = asyncio.create_task(self._run_hand_loop(identity))
         return True
 
     async def spectate(self, conn: Any, *, user_id: str) -> bool:
@@ -435,9 +440,7 @@ class TableHandle:
             terminal_kind = "EXHAUSTIVE_DRAW" if engine_kind == "DRAW" else engine_kind
             winner_seat = terminal["winner"]
             fan_total = terminal["fan_total"] if terminal["fan_total"] is not None else None
-            scores = {
-                seat: int(terminal["score_delta"][seat]) for seat in range(4)
-            }
+            scores = {seat: int(terminal["score_delta"][seat]) for seat in range(4)}
         checksum = _read_footer_checksum(record_path) or ""
         try:
             self._persistence.finalize_hand(
@@ -506,8 +509,13 @@ class TableRegistry:
         strike_limit: int = 3,
         max_hands: int | None = 1,
         between_hand_pause_seconds: float = 2.0,
+        seats: SeatsTuple | None = None,
     ) -> str:
         """Allocate and register a new ``TableHandle``.  Returns the table_id.
+
+        ``seats`` is the parsed composition from ``CREATE_TABLE.seats[]``
+        (see ``mahjong.server.seats``).  ``None`` falls back to
+        ``DEFAULT_COMPOSITION`` (legacy single-human shape).
 
         Raises ``ShuttingDown`` if the registry is draining.
         """
@@ -538,6 +546,7 @@ class TableRegistry:
             between_hand_pause_seconds=between_hand_pause_seconds,
             persistence=self._persistence,
             data_dir=data_dir,
+            seats=seats,
         )
         self._tables[table_id] = handle
         _logger.info("table.created", extra={"table_id": table_id, "ruleset": ruleset_id})

@@ -269,10 +269,10 @@ Server → client.
       "table_id": 17,
       "ruleset": "mcr-2006",
       "seats": [
-        { "seat": 0, "kind": "human", "user_id": "u_alice",  "occupied": true,  "attached": true  },
-        { "seat": 1, "kind": "human", "user_id": "u_bob",    "occupied": true,  "attached": false },
-        { "seat": 2, "kind": "bot",   "bot_id":  "b_rule_v1","occupied": true,  "attached": true  },
-        { "seat": 3, "kind": "open",  "occupied": false,     "attached": false }
+        { "seat": 0, "kind": "human", "occupied": true,  "user_id": "u_1" },
+        { "seat": 1, "kind": "human", "occupied": false },
+        { "seat": 2, "kind": "bot",   "occupied": true,  "bot_id":  "canned-pass" },
+        { "seat": 3, "kind": "bot",   "occupied": true,  "bot_id":  "canned-pass" }
       ],
       "hand_index": 0,
       "phase": "WAITING_FOR_PLAYERS"
@@ -280,6 +280,12 @@ Server → client.
   ]
 }
 ```
+
+- `seats[i].kind` — `"human"` or `"bot"`; matches the composition declared at `CREATE_TABLE`. (Pre-8.7 the per-seat block was left empty by the server; [multi-human-seats.md](multi-human-seats.md) pins the populated shape.)
+- `seats[i].occupied` — `true` if a seat-mux session exists in `LIVE` or `HELD` state. Bot seats are always `occupied: true`.
+- `seats[i].user_id` — present iff `kind == "human"` and `occupied == true`. The `u_{account_id}` form.
+- `seats[i].bot_id` — present iff `kind == "bot"`. Always `"canned-pass"` in v1; future bot-runner integration (Layer 9) widens this enum.
+- `phase` — `"WAITING_FOR_PLAYERS"` until `START_HAND` is accepted; `"IN_PROGRESS"` while a hand runs; back to `"WAITING_FOR_PLAYERS"` between hands.
 
 The list contains every table the requesting user can see. Visibility rules:
 
@@ -519,20 +525,24 @@ These are scoped to S2+S3 and limited in v1.
 
 #### `CREATE_TABLE`
 
-Client → server. Requires admin role (`accounts.role = 'admin'`) in S3; unrestricted in S2.
+Client → server. Any authenticated user may create a table in v1.
 
 ```json
 {
   "kind": "CREATE_TABLE",
   "ruleset": "mcr-2006",
   "seats": [
-    { "kind": "human", "user_id": "u_alice" },
-    { "kind": "human", "user_id": "u_bob" },
-    { "kind": "human", "user_id": "u_carol" },
-    { "kind": "bot",   "bot_id":  "b_rule_v1" }
+    { "kind": "human" },
+    { "kind": "human" },
+    { "kind": "bot" },
+    { "kind": "bot" }
   ]
 }
 ```
+
+- `seats` (array of 4 objects, optional). If omitted, defaults to `[human, bot, bot, bot]` — preserves the pre-8.7 single-human shape so legacy clients keep working.
+- `seats[i].kind` (string, required when `seats` is present): `"human"` or `"bot"`. Position in the array is the seat index 0–3. At least one human required; unknown kinds rejected with `framing`.
+- v1 forbids any other field on `seats[i]` (no `user_id`, no `bot_id`) — open-lobby model. Pre-assigning a specific user to a seat is a future addition. See [multi-human-seats.md § Alternatives considered](multi-human-seats.md).
 
 #### `TABLE_CREATED`
 
@@ -541,6 +551,22 @@ Server → client.
 ```json
 { "kind": "TABLE_CREATED", "seq": 9, "table_id": 17 }
 ```
+
+#### `START_HAND`
+
+Client → server. Sent by any `LIVE` human attached at the table to begin the hand loop. The server does not auto-start hands on attach; explicit `START_HAND` keeps the lobby→play transition observable. See [multi-human-seats.md § `START_HAND`](multi-human-seats.md).
+
+```json
+{ "kind": "START_HAND", "table_id": 17 }
+```
+
+Server validation (in order):
+
+1. Sender must be attached as a human at `table_id`, otherwise `ERROR { code: "not_authorized" }`.
+2. The table must be in `WAITING_FOR_PLAYERS` phase, otherwise `ERROR { code: "hand_already_started" }`.
+3. Every `kind: "human"` seat must be in `LIVE` state, otherwise `ERROR { code: "humans_not_ready", message: "<n> human seat(s) still unoccupied" }`.
+
+On success there is no dedicated acknowledgement frame; the next outbound `EVENT HEADER` is the visible signal. Concurrent `START_HAND`s from multiple humans are idempotent — first one starts the hand, rest receive `hand_already_started`.
 
 #### `CLOSE_TABLE`
 
@@ -576,6 +602,8 @@ Stable enum-like strings on `ERROR.code`. Adding a new code is additive; renamin
 | `no_outstanding_prompt` | server | Client sent `ACTION` without a prompt. | Client bug. |
 | `stale_action` | server | `prompt_id` doesn't match. | Client drops the stale UI state. |
 | `illegal_action` | server | Action not in `legal_actions`. | Client UI bug; strike counted. |
+| `humans_not_ready` | server | `START_HAND` rejected because one or more `kind: "human"` seats are not in `LIVE` state. Message field carries the count. | Client waits / re-polls `LIST_TABLES` until all humans show `occupied: true`, then retries. |
+| `hand_already_started` | server | `START_HAND` received while the table is already running a hand. Benign race when multiple humans send concurrently. | Client treats as no-op. |
 | `internal_error` | server | Unexpected server condition. | Server-side concern; client should reconnect. |
 | `shutting_down` | server | Server is draining for shutdown; new attaches/spectates refused. | Client retries after a delay. Sent inside an `ERROR` frame in response to `ATTACH`/`SPECTATE`/`CREATE_TABLE` during the drain window. See [server-lifecycle.md § Graceful shutdown](server-lifecycle.md). |
 | `rate_limit` | server | Client exceeded the per-second frame budget. | Client backs off; WS closes 1008. |

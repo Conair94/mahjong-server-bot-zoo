@@ -281,6 +281,15 @@ A scheduled timer that fires after its referent has been resolved (e.g. seat-hol
 
 This means a single user attaching to table A, then table B, gets two independent `HumanAdapter`s in two independent session-mux instances. The wire connection is the same; the multiplexing logic that routes inbound `ACTION`s to the right adapter lives at the wire-protocol codec layer (the codec sees `(table_id, seat)` on every relevant inbound message and routes accordingly).
 
+## Interaction with multi-human-seat tables (Step 8.7)
+
+The seat state machine in this spec is unchanged by [multi-human-seats.md](multi-human-seats.md); what changes is the *trigger* for the hand loop and the *number of seats* that the per-seat machine simultaneously drives.
+
+- **Hand-start trigger.** Pre-8.7, `TableHandle.attach` to seat 0 kicked off `_run_hand_loop` on first arrival. Post-8.7, the hand loop only starts when any `LIVE` human at the table sends `START_HAND` and every `kind: "human"` seat is in `LIVE` state. The lock that guarantees single-shot ignition (`_start_hand_lock`) moves with the trigger. Spectators and bot-seat sessions do not gate `START_HAND`; only `kind: "human"` seats do.
+- **Per-seat machine fanout.** Every `kind: "human"` seat instantiates one `HumanAdapter` against one `SessionMux` seat-slot; every `kind: "bot"` seat instantiates one `CannedAdapter`-PASS. The seat-hold, ring-buffer, pending-prompt, and `AutoPassAdapter`-substitution semantics from this spec apply *per seat* with no cross-seat coupling.
+- **Pre-`START_HAND` window.** Between `CREATE_TABLE` and `START_HAND`, attached human seats sit in `LIVE` state with no outstanding prompts (the hand hasn't begun). If a client drops here, the seat-hold timer arms exactly as it would mid-hand; if the hold expires, the seat becomes `occupied: false` in `TABLE_LIST.seats[]` and another user may claim it. Once the hand starts, the existing fixtures (mid-hand drop, RESUME, etc.) carry over unchanged.
+- **No new state names.** We considered adding a `WAITING_FOR_HAND_START` phase distinct from `WAITING_FOR_PLAYERS`; rejected per [multi-human-seats.md § Alternatives considered](multi-human-seats.md). Lobby phase remains a single value from a state-machine standpoint.
+
 ## Alternatives considered
 
 - **Per-connection seat state instead of per-`(user, table, seat)` state.** Simpler in code: every reconnect is a fresh seat-bind. Rejected: it makes reconnect mid-hand effectively impossible (no continuity of identity from the table manager's perspective; the manager would see seat A leave and a new seat A join, and the strike counter would reset). The per-tuple model preserves identity across socket changes.

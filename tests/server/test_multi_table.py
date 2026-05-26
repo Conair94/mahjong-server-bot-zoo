@@ -76,17 +76,18 @@ async def _ws_connect(url: str) -> Any:
 
 
 async def _create_table(ws: Any, *, ruleset: str = "mcr-2006") -> str:
-    """Send CREATE_TABLE and return the allocated table_id as string."""
+    """Send CREATE_TABLE (default 1H + 3B composition) and return the allocated
+    table_id as string.  Step 8.7 open-lobby seat shape: ``{kind}`` only."""
     await ws.send(
         json.dumps(
             {
                 "kind": "CREATE_TABLE",
                 "ruleset": ruleset,
                 "seats": [
-                    {"kind": "human", "user_id": "u_test"},
-                    {"kind": "canned"},
-                    {"kind": "canned"},
-                    {"kind": "canned"},
+                    {"kind": "human"},
+                    {"kind": "bot"},
+                    {"kind": "bot"},
+                    {"kind": "bot"},
                 ],
             }
         )

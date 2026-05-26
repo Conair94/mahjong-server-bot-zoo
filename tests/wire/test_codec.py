@@ -231,10 +231,10 @@ _CREATE_TABLE: dict[str, Any] = {
     "kind": "CREATE_TABLE",
     "ruleset": "mcr-2006",
     "seats": [
-        {"kind": "human", "user_id": "u_alice"},
-        {"kind": "human", "user_id": "u_bob"},
-        {"kind": "human", "user_id": "u_carol"},
-        {"kind": "bot", "bot_id": "b_rule_v1"},
+        {"kind": "human"},
+        {"kind": "human"},
+        {"kind": "bot"},
+        {"kind": "bot"},
     ],
 }
 

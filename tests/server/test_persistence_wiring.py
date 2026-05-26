@@ -134,7 +134,12 @@ async def test_persistence_wiring_records_hand_for_account(
                     {
                         "kind": "CREATE_TABLE",
                         "ruleset": "mcr-2006",
-                        "seats": [],
+                        "seats": [
+                            {"kind": "human"},
+                            {"kind": "bot"},
+                            {"kind": "bot"},
+                            {"kind": "bot"},
+                        ],
                     }
                 )
             )

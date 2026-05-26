@@ -38,6 +38,7 @@ from mahjong.server.registry import (
     TableNotFound,
     TableRegistry,
 )
+from mahjong.server.seats import SeatsParseError, parse_seats_from_wire
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.wire.server import Connection, WebSocketServer
 
@@ -140,9 +141,7 @@ class MultiTableOrchestrator:
         # auth_required defaults to: only when a persistence is supplied (so
         # existing tests without persistence keep their no-auth path).
         # Callers may force it on/off explicitly via require_auth.
-        self._auth_required = (
-            require_auth if require_auth is not None else persistence is not None
-        )
+        self._auth_required = require_auth if require_auth is not None else persistence is not None
         self._auth_state = _AuthState()
 
         self._registry: TableRegistry = TableRegistry(persistence=persistence)
@@ -268,9 +267,7 @@ class MultiTableOrchestrator:
         max_attempts = 3
         while attempts < max_attempts:
             try:
-                msg = await asyncio.wait_for(
-                    conn.recv(), timeout=FIRST_FRAME_TIMEOUT_S
-                )
+                msg = await asyncio.wait_for(conn.recv(), timeout=FIRST_FRAME_TIMEOUT_S)
             except (TimeoutError, Exception):
                 return False
 
@@ -291,9 +288,7 @@ class MultiTableOrchestrator:
                 )
             else:
                 with contextlib.suppress(Exception):
-                    await conn.send(
-                        {"kind": "ERROR", "code": "auth_required"}
-                    )
+                    await conn.send({"kind": "ERROR", "code": "auth_required"})
                 attempts += 1
                 continue
 
@@ -377,13 +372,18 @@ class MultiTableOrchestrator:
             }
         )
 
-    async def _handle_create_table(
-        self, conn: Connection, msg: dict[str, Any]
-    ) -> bool:
+    async def _handle_create_table(self, conn: Connection, msg: dict[str, Any]) -> bool:
         """Handle CREATE_TABLE.  Returns True if a table was created, False on error."""
         if not self._registry.accepting_new:
             with contextlib.suppress(Exception):
                 await conn.send({"kind": "ERROR", "code": "shutting_down"})
+            return False
+
+        try:
+            seats = parse_seats_from_wire(msg.get("seats"))
+        except SeatsParseError as exc:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "framing", "message": str(exc)})
             return False
 
         try:
@@ -397,6 +397,7 @@ class MultiTableOrchestrator:
                 strike_limit=self._strike_limit,
                 max_hands=self._max_hands,
                 between_hand_pause_seconds=self._between_hand_pause_seconds,
+                seats=seats,
             )
         except ShuttingDown:
             with contextlib.suppress(Exception):
@@ -417,9 +418,7 @@ class MultiTableOrchestrator:
         )
         return True
 
-    async def _handle_close_table(
-        self, conn: Connection, msg: dict[str, Any]
-    ) -> None:
+    async def _handle_close_table(self, conn: Connection, msg: dict[str, Any]) -> None:
         """Handle CLOSE_TABLE.  Admin-only."""
         if not self._is_admin(conn):
             with contextlib.suppress(Exception):
@@ -441,9 +440,7 @@ class MultiTableOrchestrator:
 
     # --- attach / spectate ---
 
-    async def _handle_attach(
-        self, conn: Connection, msg: dict[str, Any]
-    ) -> TableHandle | None:
+    async def _handle_attach(self, conn: Connection, msg: dict[str, Any]) -> TableHandle | None:
         """Route ATTACH to the correct table.  Returns the handle if ok, else None."""
         raw_id = msg.get("table_id")
         table_id = str(raw_id) if raw_id is not None else ""
@@ -484,9 +481,7 @@ class MultiTableOrchestrator:
             return bool(auth["role"] == "admin")
         return self._admin_predicate(conn)
 
-    async def _handle_spectate(
-        self, conn: Connection, msg: dict[str, Any]
-    ) -> TableHandle | None:
+    async def _handle_spectate(self, conn: Connection, msg: dict[str, Any]) -> TableHandle | None:
         """Route SPECTATE to the correct table."""
         raw_id = msg.get("table_id")
         table_id = str(raw_id) if raw_id is not None else ""

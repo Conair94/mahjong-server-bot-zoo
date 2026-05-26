@@ -641,19 +641,49 @@ Specs drafted 2026-05-22 per [s2-s3-plan.md §4 Layer 8](../s2-s3-plan.md). Buil
 
 **Gate:** **S3 exit artifact** checked in. All four bullets in [server-plan.md § S3 exit criteria](../server-plan.md) are green and checked in.
 
-### Step 8.7 — Multi-human-seat tables *(next session)*
+### Step 8.7 — Multi-human-seat tables
 
-**Context:** As of Step 8.5, every table has exactly one human seat (seat 0) and three `CannedAdapter` bots (seats 1–3). A second authenticated user can connect and browse tables but cannot sit down — `ATTACH` on seats 1–3 returns `seat_not_yours`. Real multi-player (friends playing each other) requires configurable seat composition.
+**Spec:** [multi-human-seats.md](multi-human-seats.md). Pinned 2026-05-26.
 
-**What needs to change:**
+**Context:** As of Step 8.6, every table has exactly one human seat (seat 0) and three `CannedAdapter`-PASS bots (seats 1–3). A second authenticated user can connect and browse tables but cannot sit down — `ATTACH` on seats 1–3 returns `seat_not_yours`. Real multi-player (friends playing each other) requires configurable seat composition plus an explicit hand-start trigger so the server does not begin a hand the instant one seat fills.
 
-- `TableHandle` / `TableRegistry.create_table_direct` — accept a `seats` parameter specifying which seats are human vs. bot, instead of hardcoding `HUMAN_SEAT = 0`. The `CREATE_TABLE` wire message already carries a `seats` array (wire-protocol.md § CREATE_TABLE); the server currently ignores it.
-- `MultiTableOrchestrator._handle_create_table` — parse `seats` from the `CREATE_TABLE` message and pass it to `create_table_direct`.
-- `TableHandle.attach` — allow any seat whose `kind == "human"` to be claimed by an authenticated connection, not only seat 0.
-- Web client — after `TABLE_LIST`, show seat availability and let the user pick an open human seat rather than always requesting seat 0.
-- `MAHJONG_LISTEN_ADDR` default — change to `0.0.0.0:8400` (or document clearly) so peers on Tailscale can reach the server without an env-var override. Currently `127.0.0.1` makes the server invisible outside the host machine.
+**Design decisions resolved up-front** (see [multi-human-seats.md § Alternatives considered](multi-human-seats.md)):
 
-**Verification fixture (write first):** Two authenticated clients connect; client A creates a table with two human seats (0 and 1) and one bot each for seats 2 and 3; client B attaches to seat 1; both clients receive matching `ATTACHED` snapshots; the hand proceeds with both humans receiving `PROMPT`s on their respective turns.
+- Open-lobby seat model: `CREATE_TABLE.seats[]` declares only `{kind}`, never `user_id`.
+- Explicit `START_HAND` wire message (new) — no auto-start on full attach; no privileged "creator" role.
+- `kind: "bot"` slots remain `CannedAdapter`-PASS placeholders in v1 (Layer 9 wires real bot identities).
+- `MAHJONG_LISTEN_ADDR` default stays `127.0.0.1:8400`; LAN/Tailscale exposure becomes a documented opt-in, not a default.
+- `TableHandle` and `WebOrchestrator` hand-loops stay duplicated per the multi-table architecture memory's Decision 59.
+
+**Sub-step order** (each sub-step ships with the named fixture(s) from multi-human-seats.md):
+
+- **8.7.a — Schema parsing.** Add `SeatComposition` dataclass; thread `seats: tuple[SeatComposition, ...] | None` through `TableRegistry.create_table_direct` and `TableHandle.__init__`; parse `msg["seats"]` in `_handle_create_table`. Fixtures 1–7.
+- **8.7.b — Attach widening.** Remove module-level `HUMAN_SEAT = 0`; route attach permission through `TableHandle.is_human_seat(seat)`; build per-seat adapter list from the composition. Fixtures 8–11.
+- **8.7.c — `TABLE_LIST.seats[]` population.** Implement `TableHandle.summary_with_seats()`; update `TableSummary.to_wire()` (today returns `seats: []`). Fixtures 12–14.
+- **8.7.d — `START_HAND` handler.** New wire kind in [wire-protocol.md](wire-protocol.md); `TableHandle.start_hand()` returning `StartHandOutcome`; `_run_hand_loop` ignition moves from `TableHandle.attach` to `TableHandle.start_hand`. Two new error codes (`humans_not_ready`, `hand_already_started`). Fixtures 15–18.
+- **8.7.e — Web client (`mahjong/web/static/app.js`).** Lobby/seat-picker UI; `START_HAND` send after local `ATTACHED` once `TABLE_LIST.seats[]` shows all humans occupied; poll on 2-second timer; treat `humans_not_ready` and `hand_already_started` as silent no-ops in the lobby loop. No fixture (manual verify in browser); the existing single-human regression (fixture 20) is the automated guard.
+- **8.7.f — End-to-end + regression.** Two-human full hand fixture (19, load-bearing exit gate); single-human regression (20); one-human-drop multi-human composite (21); persistence rows (22).
+
+**Gate:** all 22 fixtures from [multi-human-seats.md § Verification fixtures](multi-human-seats.md) green. The Step 8.6 single-human end-to-end fixture continues to pass unchanged. Manual browser verify: two browser windows (or one window + one terminal websockets client) play one complete hand against each other + 2 canned bots.
+
+### Step 8.8 — Deferred Layer 8 lifecycle hardening
+
+**Context:** Step 8.5 landed as a "pragmatic cut" — the parts needed to make the server actually playable (`serve` CLI, AUTH wire, persistence wiring, basic graceful drain) shipped; the rest of [server-lifecycle.md](server-lifecycle.md)'s fixture list was deferred. The deferred items have no current user-visible failure pressure but are required for the proper S3 exit gate.
+
+This step ships the deferred items grouped by subsystem. No new spec is needed — each fixture name below references a numbered fixture already in [server-lifecycle.md § Verification fixtures](server-lifecycle.md).
+
+**Sub-steps:**
+
+- **8.8.a — `/health` endpoint.** HTTP `GET /health` riding on the WebSocket listener (or separate via `MAHJONG_HEALTH_LISTEN_ADDR`). Returns 200 normal, 503 during drain, 500 on DB stall. server-lifecycle.md fixtures 9, 10, 11.
+- **8.8.b — Drain-timeout escalation.** After `MAHJONG_DRAIN_TIMEOUT_SECONDS` (default 30s) the lifecycle layer cancels remaining hand tasks and force-closes connections. server-lifecycle.md fixture 14.
+- **8.8.c — WAL checkpoint hooks.** Checkpoint on drain end (fixture 15); periodic background checkpoint every `MAHJONG_WAL_CHECKPOINT_SECONDS` (default 300s, fixture 20).
+- **8.8.d — Periodic session cleanup.** Background task expiring `sessions` rows whose `expires_at_ms < now()`; runs every `MAHJONG_SESSION_CLEANUP_SECONDS` (default 60s). server-lifecycle.md fixture 19.
+- **8.8.e — Structured JSON logging.** `MAHJONG_LOG_FORMAT=json` formatter emitting one JSON object per log record; no secret material in fields (the existing log calls already use structured `extra=` kwargs — this only adds the formatter). server-lifecycle.md fixture 21.
+- **8.8.f — SIGKILL-recovery standalone fixture.** Already exercised indirectly by the S3 exit fixture; this sub-step extracts the in-progress→ABORTED reconciliation into its own focused test. server-lifecycle.md fixture 16.
+
+**Gate:** every server-lifecycle.md fixture (1–22) is green, with the multi-table fixture 17 still owned by Step 8.4 and 22 still owned by Step 8.6. Step 8.7's introduction of `START_HAND` does not change any lifecycle behavior here.
+
+**Why this step exists separately from 8.7:** the multi-human work is user-visible and motivating; the lifecycle items are correctness hardening with no current symptom. Sequencing 8.7 first lets us validate the new feature against real users; 8.8 closes the original S3 gate cleanly afterward.
 
 ## What's deferred
 
