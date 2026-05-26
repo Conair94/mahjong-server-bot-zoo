@@ -1,73 +1,108 @@
-# Session handoff — 2026-05-25 (end of Layer 8 Step 8.4)
+# Session handoff — 2026-05-25 (end of Layer 8 — pragmatic-cut 8.5 + 8.6)
 
 Snapshot of implementation status. Read this to pick up where this session left off.
 
 ## Where we are
 
-**Layer 8 Steps 8.1, 8.2, 8.3, and 8.4 are complete.**
+**Layer 8 is functionally complete via the pragmatic cut.**
 
-| # | Step | Commit | Notes |
-| --- | --- | --- | --- |
-| KL-fix | dealer_seat through mgr.run_hand | `9f6ad07` | + hand_index_in_match; 2 new tests |
-| **8.1** | **SQLite schema + migration runner** | **`40d645c`** | **17 tests; all 10 spec fixtures** |
-| **8.2** | **Auth module (argon2id + sessions)** | **`bee3a5a`** | **24 tests; all 17 spec fixtures** |
-| **8.3** | **Persistence API (Persistence class)** | **`bef3972`** | **13 tests; all 13 spec fixtures** |
-| **8.4** | **Multi-table orchestrator** | **`2a7c587`** | **5 tests; fixtures 17 + 18 + FLIST + FADMIN** |
+| # | Step | Notes |
+| --- | --- | --- |
+| 8.0 | Multi-hand orchestration | landed prior session |
+| 8.1 | SQLite schema + migrations | landed prior session |
+| 8.2 | Auth module (argon2id + sessions) | landed prior session |
+| 8.3 | Persistence API | landed prior session |
+| 8.4 | Multi-table orchestrator | landed prior session |
+| **8.5** | **Server lifecycle (pragmatic cut)** | **this session — config, AUTH wire, persistence wiring, serve CLI, account CLI, signal-based drain** |
+| **8.6** | **End-to-end S3 fixture** | **this session — `tests/server/test_s3_gate.py` + live LAN verification** |
 
-**Verification at end of session:** ruff clean · mypy strict clean · **597 tests pass repo-wide** (592 prior + 5 new; 2 Linux-only + 1 slow deselected).
+**Verification at end of session:** ruff clean · mypy strict clean · **609 tests pass repo-wide** (607 fast + 2 slow including the S3 gate). Live wire round-trip against `192.168.1.157:8401` from a Python websockets client succeeded (HELLO → AUTH → CREATE_TABLE → ATTACH → 25 prompts → EXHAUSTIVE_DRAW HAND_END).
+
+## What the pragmatic cut covers vs the full 8.5 spec
+
+**Landed:**
+
+- `mahjong/server/config.py` — `ServerConfig` + `load_config_from_env` (env-var loader with unknown-var warnings).
+- AUTH_REQUEST / RESUME wire handlers in `MultiTableOrchestrator` (gated on `persistence is not None` by default; overridable via `require_auth`).
+- Persistence wired into `TableHandle._run_hand_loop` — `reserve_hand` before `mgr.run_hand`, `finalize_hand` (or ABORTED) in a `finally` block.
+- `mahjong/cli/account.py` — `python -m mahjong account {create,list}` CLI with stdin-or-getpass password input.
+- `mahjong/cli/serve.py` — `python -m mahjong serve` entry point with config load → DB open → integrity check → in-progress→ABORTED reconciliation → SIGTERM/SIGINT-based graceful drain.
+- `sqlite3.connect(check_same_thread=False)` so async handlers can call sync persistence/auth via `run_in_executor`.
+
+**Deferred (additive — drop in when first needed):**
+
+- `/health` endpoint (HTTP route exists in `WebSocketServer`; not wired in serve CLI).
+- Drain-timeout escalation with `task.cancel()` (current cut uses `asyncio.wait_for(orch.close(), timeout=shutdown_timeout_s)`).
+- Periodic WAL checkpoint task + periodic session cleanup task.
+- Structured JSON logging (currently stdlib `logging.basicConfig` plain-text).
+- Standalone fixtures for: SIGKILL recovery (16), drain-timeout escalation (14), WAL checkpoint TRUNCATE on drain (15), `/health` 200/503/500 (9-11). Logic mostly exists; tests not yet written.
 
 ## Decisions reached this session
 
-- **(59) `TableHandle` does not reuse `WebOrchestrator` internals.** The hand-loop logic is duplicated between `WebOrchestrator` (single-table, existing tests unchanged) and `TableHandle` (multi-table). The duplication is ~90 lines and acceptable at this scale; it avoids coupling that risks breaking the 8.0–8.3 test suite. Step 8.5 may unify them if the architecture stabilises.
-- **(60) `table_id` is a string at the registry API boundary, int in wire frames.** `TableRegistry.create_table_direct` returns `str`; the orchestrator converts to `int` for `TABLE_CREATED`. `TableSessions` receives `int(table_id)` since it typed `table_id: int`.
-- **(61) `admin_predicate` is the seam for auth in Step 8.5.** `MultiTableOrchestrator` accepts `admin_predicate: Callable[[Connection], bool]` (default: always True). `CLOSE_TABLE` calls it; Step 8.5 will replace the default with an auth-token check.
-- **(62) Persistence wiring deferred to Step 8.5.** `TableHandle._run_hand_loop` does not call `reserve_hand`/`finalize_hand`. The hook point exists (before/after `mgr.run_hand`); wiring happens with the full lifecycle startup in 8.5.
-- **(63) `create_table_direct` is the only allocation path for now.** Both the wire handler (`_handle_create_table`) and tests call `registry.create_table_direct(...)`. A future `create_table` coroutine (async, awaitable for the task to start) may replace it in 8.5 when the lifecycle is more formalised.
+- **(64) Pragmatic-cut serve CLI is single-file.** `mahjong/cli/serve.py` holds the startup sequence, signal handlers, and drain inline. The spec calls for `mahjong/server/lifecycle.py`; extract when a second consumer needs the same drain.
+- **(65) `check_same_thread=False` on the SQLite connection.** Required for `run_in_executor` to call auth/persistence from a worker thread. Safe at our scale (single process, WAL, Python GIL serialises stmt execution). Documented inline in `mahjong/persistence/db.py`.
+- **(66) auth_required defaults to `persistence is not None`.** Existing tests that pass no persistence keep their no-auth path; the serve CLI always passes persistence and so always requires auth. Override via `require_auth: bool | None`.
+- **(67) Account_id is derived from `user_id` via the `u_{int}` convention.** No separate carry-along account_id field in `HumanIdentity`. Auth handler builds `user_id = f"u_{account_id}"`; `TableHandle._reserve_hand_row` parses it back.
+- **(68) Per-table `match_id` is `match_t{table_id}`.** Stable across the table's lifetime; lets `find_hands_by_match` group all hands at one table. A future "match abstraction" (16-hand MCR matches) would change this.
+- **(69) ABORTED finalisation runs in a `finally` block.** `mgr.run_hand` exceptions (cancellation, errors) trigger `_finalize_hand_row(final_state=None)` which writes `terminal_kind="ABORTED"` and zero score-deltas. The live LAN smoke test exercised this exact path (server SIGTERM'd mid-second-hand, producing one EXHAUSTIVE_DRAW + one ABORTED row).
+- **(70) Live verification is a Linux-target check.** macOS dev works fine; the smoke test bound `0.0.0.0:8401` and accepted connections from `192.168.1.157` (LAN IP). For real deploy: change `MAHJONG_LISTEN_ADDR` to the Tailscale tailnet IP and rely on the host's systemd unit (S7).
 
 ## What this session built
 
-### Step 8.4 — Multi-table orchestrator
+### Code
 
-**[mahjong/server/\_\_init\_\_.py](../mahjong/server/__init__.py)** — new package marker
+- `mahjong/server/config.py` — env loader + `ServerConfig` dataclass.
+- `mahjong/server/registry.py` — added `Persistence | None` to `TableRegistry` + `TableHandle`; threaded through to `_reserve_hand_row` / `_finalize_hand_row` hooks around `mgr.run_hand`.
+- `mahjong/server/orchestrator.py` — added `_AuthState` per-connection identity store, `_run_auth_phase` (AUTH_REQUEST + RESUME via `run_in_executor`), `_identity_for(conn)`, `_is_admin(conn)`.
+- `mahjong/persistence/db.py` — `check_same_thread=False`.
+- `mahjong/cli/account.py` — new CLI.
+- `mahjong/cli/serve.py` — new CLI.
+- `mahjong/cli/__init__.py` — dispatch `account` + `serve`.
 
-**[mahjong/server/registry.py](../mahjong/server/registry.py)** — new:
+### Tests
 
-- `TableSummary` — frozen dataclass with `table_id`, `ruleset`, `hand_index`, `phase`; `to_wire()` for LIST_TABLES
-- `ShuttingDown`, `TableNotFound` — typed exceptions
-- `TableHandle` — single-table: `TableSessions` + CannedAdapters + hand-loop task; `attach`, `spectate`, `handle_inbound`, `on_socket_dropped`, `close` (shutdown sessions + cancel task); `summary()`, `record_path`, `hand_id`, `match_done` properties
-- `TableRegistry` — `dict[str, TableHandle]`; `create_table_direct` (auto-increments ID, creates records dir, allocates `TableHandle`); `list_tables`, `get_table`, `close_table`, `drain_all`; `accepting_new` flag
-
-**[mahjong/server/orchestrator.py](../mahjong/server/orchestrator.py)** — new:
-
-- `MultiTableOrchestrator` — `WebSocketServer` + `TableRegistry`; two-phase handler (pre-attach admin loop → attached inbound loop)
-- Wire handlers: `LIST_TABLES` → `TABLE_LIST`, `CREATE_TABLE` → `TABLE_CREATED` (checks `accepting_new`), `CLOSE_TABLE` (checks `admin_predicate`), `ATTACH`/`SPECTATE` (routes to `TableHandle`)
-- `admin_predicate` kwarg — defaults to `lambda conn: True` (all-admin in S2); replaced by auth check in 8.5
-
-**[tests/server/test\_multi\_table.py](../tests/server/test_multi_table.py)** — new:
-
-- 5 fixtures: F_LIST, F_CREATE, F17, F18, F_CLOSE_ADMIN
+- `tests/server/test_config.py` — 6 tests for env loader (server-lifecycle fixtures 1–3).
+- `tests/server/test_auth_wire.py` — 3 tests (auth success, failure does not leak reason, RESUME round-trip).
+- `tests/server/test_persistence_wiring.py` — 1 test (account → play hand → row finalised with right account_id and scores).
+- `tests/server/test_s3_gate.py` — 1 slow test (subprocess server → account CLI → wire client plays hand → SIGTERM → restart → query persistence).
 
 ## Known limitations carried forward
 
-- **`next_hand_seq` in HAND_END is always `null`** (since Step 8.0). Low priority; client works.
-- **No wire-protocol integration for AUTH_REQUEST / RESUME yet.** Auth and persistence are pure Python; not wired into any WS handler. Step 8.5.
-- **No account CLI yet.** `python -m mahjong.cli.account create` not implemented.
-- **`Persistence` not wired into `WebOrchestrator` or `TableHandle`.** `reserve_hand`/`finalize_hand` not called at HEADER/FOOTER write. Step 8.5.
-- **`CLOSE_TABLE` via wire protocol not fully exercised.** `F_CLOSE_ADMIN` uses `registry.create_table_direct` directly because CLOSE_TABLE requires the table to exist first and a way to create it without a second admin connection. Production use works; the test takes the simpler path.
-- All earlier known limitations still apply.
+- `next_hand_seq` in HAND_END still always `null` (since Step 8.0). Low priority.
+- No `/health` endpoint in the serve CLI yet (route exists in `WebSocketServer`, no handler wired).
+- No periodic WAL checkpoint or session cleanup tasks.
+- No structured JSON logging — plain stdlib `basicConfig` for now.
+- Drain timeout is a single `asyncio.wait_for(orch.close(), timeout=...)`; no two-phase escalation with `task.cancel()`.
+- `mahjong/cli/serve.py` uses `seed=int(time.time())` for live play (nondeterministic per server start). Self-play uses explicit seeds.
+- All Step 8.4 known limitations still apply (`next_hand_seq`, no account CLI was a limitation — now resolved).
 
-## What remains
+## How to run the server
 
-**Remaining Layer 8 steps per CHECKLIST.md:**
+```bash
+# 1. Create an admin account (interactive; or use --password-stdin).
+MAHJONG_DATA_DIR=./var/mahjong python -m mahjong account create \
+    --username alice --display "Alice" --admin
 
-- **Step 8.5 — Server lifecycle.** Graceful drain, startup sequence (DB open → migrations → auth check → serve), systemd unit, periodic session cleanup. This is where `Persistence` gets wired into `TableHandle` at HEADER/FOOTER hook points, `admin_predicate` gets replaced by real auth, and `WebOrchestrator` may be refactored to delegate to `TableHandle`.
-- **Step 8.6 — End-to-end S3 gate.** Byte-identical + auth + persistence fixture.
+# 2. Run the server on the loopback (default) or LAN.
+MAHJONG_DATA_DIR=./var/mahjong python -m mahjong serve
+# or LAN-accessible:
+MAHJONG_DATA_DIR=./var/mahjong MAHJONG_LISTEN_ADDR=0.0.0.0:8400 \
+    python -m mahjong serve
+
+# 3. Connect: open http://<addr>:<port>/ in a browser for the web client,
+#    or point a `mahjong-v1` subprotocol websockets client at
+#    ws://<addr>:<port> and follow HELLO → AUTH_REQUEST → CREATE_TABLE
+#    → ATTACH.
+```
 
 ## Resumption checklist for the next session
 
 - [ ] Read this file.
-- [ ] `git log --oneline -5` — confirm `2a7c587` (or later) at HEAD.
-- [ ] `.venv/bin/python -m pytest -m "not slow" --tb=no -q` — confirm 597 passing, 3 deselected/skipped.
-- [ ] Read [docs/specs/server-lifecycle.md](specs/server-lifecycle.md) §§ Configuration, Startup sequence, Graceful shutdown before starting 8.5.
-- [ ] Re-read [docs/specs/persistence-api.md](specs/persistence-api.md) § Wiring into the table manager for the reserve_hand/finalize_hand hook points.
+- [ ] `git log --oneline -5` — confirm Layer 8 pragmatic-cut commit at HEAD.
+- [ ] `.venv/bin/python -m pytest --tb=no -q` — confirm 609 passing.
+- [ ] Decide next focus:
+  - **Layer 8 polish:** wire `/health`, add periodic tasks, structured JSON logging, drain-timeout escalation. Each is additive; pick when first needed.
+  - **S7 ops hardening (Linux deploy):** RPi 5 / mini PC, Tailscale, systemd unit, journald-friendly logging. Cross-machine deploy.
+  - **Real client surface:** the web client at `/static/` is currently the 7.5c walking skeleton (per `project_client_vision_web_ascii` memory); polish for friends-and-family hosting.
+  - **Layer 9+ (RL training):** the AI plan now unblocks — persistent corpus + recorded hands give the eval/training harness real data.
 - [ ] Optionally `/extract-learnings` to consolidate memory before starting.

@@ -23,6 +23,14 @@ def main(argv: list[str] | None = None) -> int:
         from mahjong.cli.selfplay import main as selfplay_main
 
         return selfplay_main(args)
+    if sub == "account":
+        from mahjong.cli.account import main as account_main
+
+        return account_main(args)
+    if sub == "serve":
+        from mahjong.cli.serve import main as serve_main
+
+        return serve_main(args)
     print(f"unknown subcommand: {sub!r}", file=sys.stderr)
     _usage()
     return 1
@@ -33,3 +41,5 @@ def _usage() -> None:
     print("subcommands:", file=sys.stderr)
     print("  play-test    drive one hand with four canned seats", file=sys.stderr)
     print("  selfplay     headless N-hand self-play between bots", file=sys.stderr)
+    print("  account      account management (create | list)", file=sys.stderr)
+    print("  serve        run the WebSocket mahjong server", file=sys.stderr)

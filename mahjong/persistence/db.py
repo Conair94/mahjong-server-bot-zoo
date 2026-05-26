@@ -23,7 +23,12 @@ def open_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
     The caller is responsible for calling ``apply_migrations(conn)`` and for
     closing the connection when done (or using it as a context manager).
     """
-    conn = sqlite3.connect(path)
+    # check_same_thread=False: the async server calls argon2-heavy auth flows
+    # via run_in_executor, which crosses thread boundaries. With WAL + a single
+    # process and python's GIL serialising stmt execution, this is safe at our
+    # scale. Higher-throughput multi-table workloads would want a per-thread
+    # connection pool; documented as a deferral in server-lifecycle.md.
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row  # named-column access for free
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")

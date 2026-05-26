@@ -26,6 +26,12 @@ from typing import Any
 
 from mahjong.adapters.base import HumanIdentity
 from mahjong.engine.types import RuleSetRef
+from mahjong.persistence import Persistence
+from mahjong.persistence.auth import (
+    AuthResult,
+    handle_auth_request,
+    handle_resume,
+)
 from mahjong.server.registry import (
     ShuttingDown,
     TableHandle,
@@ -38,7 +44,7 @@ from mahjong.wire.server import Connection, WebSocketServer
 _logger = logging.getLogger(__name__)
 
 SERVER_ID: str = "mahjong-server-web"
-FIRST_FRAME_TIMEOUT_S: float = 5.0
+FIRST_FRAME_TIMEOUT_S: float = 30.0  # generous: a human picks credentials
 ADMIN_FRAME_TIMEOUT_S: float = 30.0  # timeout for each pre-attach admin message
 
 
@@ -54,6 +60,31 @@ def _default_identity_factory(conn: Connection) -> HumanIdentity:
 def _default_admin_predicate(conn: Connection) -> bool:
     """All connections are admin in S2 (before auth is wired in Step 8.5)."""
     return True
+
+
+# Per-connection identity store — populated by the AUTH phase, consulted by
+# admin_predicate and the seat-attach identity factory.  Keyed on connection_id
+# rather than the Connection object to avoid lifecycle pitfalls.
+class _AuthState:
+    """Auth state shared between the auth phase and downstream handlers."""
+
+    __slots__ = ("by_conn_id",)
+
+    def __init__(self) -> None:
+        self.by_conn_id: dict[int, dict[str, Any]] = {}
+
+    def set(self, conn: Connection, account_id: int, display_name: str, role: str) -> None:
+        self.by_conn_id[conn.connection_id] = {
+            "account_id": account_id,
+            "display_name": display_name,
+            "role": role,
+        }
+
+    def get(self, conn: Connection) -> dict[str, Any] | None:
+        return self.by_conn_id.get(conn.connection_id)
+
+    def clear(self, conn: Connection) -> None:
+        self.by_conn_id.pop(conn.connection_id, None)
 
 
 class MultiTableOrchestrator:
@@ -88,6 +119,8 @@ class MultiTableOrchestrator:
         strike_limit: int = 3,
         max_hands: int | None = 1,
         between_hand_pause_seconds: float = 2.0,
+        persistence: Persistence | None = None,
+        require_auth: bool | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -103,8 +136,16 @@ class MultiTableOrchestrator:
         self._strike_limit = strike_limit
         self._max_hands = max_hands
         self._between_hand_pause_seconds = between_hand_pause_seconds
+        self._persistence = persistence
+        # auth_required defaults to: only when a persistence is supplied (so
+        # existing tests without persistence keep their no-auth path).
+        # Callers may force it on/off explicitly via require_auth.
+        self._auth_required = (
+            require_auth if require_auth is not None else persistence is not None
+        )
+        self._auth_state = _AuthState()
 
-        self._registry: TableRegistry = TableRegistry()
+        self._registry: TableRegistry = TableRegistry(persistence=persistence)
         self._ws_server: WebSocketServer | None = None
         self._hello_seq: int = 1
 
@@ -147,10 +188,17 @@ class MultiTableOrchestrator:
     async def _handler(self, conn: Connection) -> None:
         """Per-connection handler.
 
+        Phase 0 (auth):       client sends AUTH_REQUEST or RESUME (if required).
         Phase 1 (pre-attach): loop reading admin / discovery messages.
         Phase 2 (attached):   forward inbound to the table's SessionMux.
         """
         await self._send_hello(conn)
+
+        # Phase 0 — authentication (only when persistence is configured).
+        if self._auth_required:
+            authed = await self._run_auth_phase(conn)
+            if not authed:
+                return
 
         # Phase 1 — admin / discovery loop
         table: TableHandle | None = None
@@ -205,6 +253,98 @@ class MultiTableOrchestrator:
                     await table.handle_inbound(conn, msg)
             finally:
                 await table.on_socket_dropped(conn)
+
+    # --- auth phase ---
+
+    async def _run_auth_phase(self, conn: Connection) -> bool:
+        """Block until the client sends a successful AUTH_REQUEST or RESUME.
+
+        Returns True on success (auth_state populated), False on failure or
+        timeout (connection should be closed by caller via return).  At most
+        three failed attempts are allowed before the server hangs up.
+        """
+        assert self._persistence is not None
+        attempts = 0
+        max_attempts = 3
+        while attempts < max_attempts:
+            try:
+                msg = await asyncio.wait_for(
+                    conn.recv(), timeout=FIRST_FRAME_TIMEOUT_S
+                )
+            except (TimeoutError, Exception):
+                return False
+
+            kind = msg.get("kind")
+            result: AuthResult | None = None
+            if kind == "AUTH_REQUEST":
+                result = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    self._run_auth_request,
+                    str(msg.get("username") or ""),
+                    str(msg.get("password") or ""),
+                )
+            elif kind == "RESUME":
+                result = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    self._run_resume,
+                    str(msg.get("session_token") or ""),
+                )
+            else:
+                with contextlib.suppress(Exception):
+                    await conn.send(
+                        {"kind": "ERROR", "code": "auth_required"}
+                    )
+                attempts += 1
+                continue
+
+            if result.ok:
+                assert result.user_id is not None
+                account_id = int(result.user_id.removeprefix("u_"))
+                role = self._lookup_role(account_id)
+                self._auth_state.set(
+                    conn,
+                    account_id=account_id,
+                    display_name=result.display_name or "",
+                    role=role,
+                )
+                with contextlib.suppress(Exception):
+                    await conn.send(
+                        {
+                            "kind": "AUTH_RESPONSE",
+                            "seq": self._make_seq(),
+                            "ok": True,
+                            "user_id": result.user_id,
+                            "display_name": result.display_name,
+                            "session_token": result.session_token,
+                            "expires_at_ms": result.expires_at_ms,
+                        }
+                    )
+                return True
+
+            with contextlib.suppress(Exception):
+                await conn.send(
+                    {
+                        "kind": "AUTH_RESPONSE",
+                        "seq": self._make_seq(),
+                        "ok": False,
+                    }
+                )
+            attempts += 1
+
+        return False
+
+    def _run_auth_request(self, username: str, password: str) -> AuthResult:
+        assert self._persistence is not None
+        return handle_auth_request(self._persistence._conn, username, password)
+
+    def _run_resume(self, token: str) -> AuthResult:
+        assert self._persistence is not None
+        return handle_resume(self._persistence._conn, token)
+
+    def _lookup_role(self, account_id: int) -> str:
+        assert self._persistence is not None
+        acct = self._persistence.get_account_by_id(account_id)
+        return acct.role if acct is not None else "user"
 
     # --- admin handlers ---
 
@@ -277,7 +417,7 @@ class MultiTableOrchestrator:
         self, conn: Connection, msg: dict[str, Any]
     ) -> None:
         """Handle CLOSE_TABLE.  Admin-only."""
-        if not self._admin_predicate(conn):
+        if not self._is_admin(conn):
             with contextlib.suppress(Exception):
                 await conn.send({"kind": "ERROR", "code": "not_authorized"})
             return
@@ -312,11 +452,33 @@ class MultiTableOrchestrator:
                 await conn.send({"kind": "ERROR", "code": "table_unknown"})
             return None
 
-        identity = self._identity_factory(conn)
+        identity = self._identity_for(conn)
         ok = await handle.attach(conn, identity=identity, seat=seat)  # type: ignore[arg-type]
         if not ok:
             return None
         return handle
+
+    def _identity_for(self, conn: Connection) -> HumanIdentity:
+        """Prefer the authenticated identity; fall back to the injected factory."""
+        auth = self._auth_state.get(conn)
+        if auth is not None:
+            return {
+                "kind": "human",
+                "user_id": f"u_{auth['account_id']}",
+                "display": auth["display_name"],
+            }
+        return self._identity_factory(conn)
+
+    def _is_admin(self, conn: Connection) -> bool:
+        """True if the connection is admin-privileged.
+
+        When auth is required, derives from the authenticated account's role.
+        Otherwise falls back to the injected admin_predicate.
+        """
+        auth = self._auth_state.get(conn)
+        if auth is not None:
+            return bool(auth["role"] == "admin")
+        return self._admin_predicate(conn)
 
     async def _handle_spectate(
         self, conn: Connection, msg: dict[str, Any]

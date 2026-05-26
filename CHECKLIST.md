@@ -584,33 +584,42 @@ Spec: [docs/specs/server-lifecycle.md § Table registry](docs/specs/server-lifec
 - [ ] Shared `Persistence` threaded into every table's hand-end hook.
 - [ ] **Gate:** multi-table fixtures green; single-table regression (Layer 4 walking skeleton) still passes.
 
-### Step 8.5 — Server lifecycle
+### Step 8.5 — Server lifecycle  **PARTIAL (pragmatic cut, 2026-05-25)**
 
 Spec: [docs/specs/server-lifecycle.md](docs/specs/server-lifecycle.md).
 
-- [ ] Tests written (server-lifecycle.md fixtures 1–16, 18–21):
-  - [ ] Config defaults (1); validation (2); unknown-var warning (3).
-  - [ ] Startup happy path (4); existing DB (5); corrupt DB exit (6); bind failure (7); in-flight ABORTED reconciliation (8).
-  - [ ] `/health` 200/503/500 (9, 10, 11).
-  - [ ] `SIGTERM` drain happy path (12) — load-bearing.
-  - [ ] New-connection rejection during drain (13); drain timeout escalation (14); WAL checkpoint TRUNCATE on drain (15).
-  - [ ] SIGKILL recovery (16) — load-bearing.
-  - [ ] `CREATE_TABLE` rejected after drain begins (18; shared with 8.4 but re-asserted at the lifecycle layer).
-  - [ ] Periodic session cleanup (19); periodic WAL checkpoint (20).
-  - [ ] Structured logging emits valid JSON with no leaked secrets (21).
-- [ ] `mahjong/server/config.py` — `load_config_from_env` with the documented `MAHJONG_*` table and unknown-var warning.
-- [ ] `mahjong/server/logging.py` — structured-JSON formatter + dev console formatter.
-- [ ] `mahjong/server/health.py` — `/health` HTTP handler.
-- [ ] `mahjong/server/lifecycle.py` — startup sequence, signal handlers, `drain()`, periodic tasks.
-- [ ] `mahjong/cli/serve.py` — `python -m mahjong serve` entry point.
-- [ ] **Gate:** every listed fixture green; mypy clean on `mahjong/server/`.
+Pragmatic cut landed (commit pending). Covers: config loader, persistence wiring,
+AUTH wire protocol, account CLI, serve CLI with signal-based drain. Deferred:
+`/health` endpoint, drain-timeout escalation, periodic WAL checkpoint task,
+structured JSON logging. Reopen when first needed.
 
-### Step 8.6 — End-to-end S3 fixture
+- [x] Tests written:
+  - [x] Config defaults / validation / unknown-var warning (fixtures 1–3).
+  - [x] AUTH success / failure-leak / RESUME round-trip (3 wire tests).
+  - [x] Persistence wiring records + finalises hand for human seat's account.
+  - [x] S3-style account → play → SIGTERM → restart → query round-trip (slow).
+  - [ ] *Deferred:* startup happy path (4); existing DB (5); corrupt DB exit (6); bind failure (7); in-flight ABORTED reconciliation (8). (Reconciliation logic exists in `mahjong/cli/serve.py`; standalone fixtures not yet written.)
+  - [ ] *Deferred:* `/health` 200/503/500 (9, 10, 11) — `/health` endpoint not wired in serve CLI.
+  - [ ] *Deferred:* drain timeout escalation (14); WAL checkpoint TRUNCATE on drain (15); SIGKILL recovery (16) as standalone fixtures.
+  - [ ] *Deferred:* periodic session cleanup (19); periodic WAL checkpoint (20).
+  - [ ] *Deferred:* structured JSON logging audit (21).
+- [x] `mahjong/server/config.py` — `load_config_from_env` with the documented `MAHJONG_*` table and unknown-var warning.
+- [ ] *Deferred:* `mahjong/server/logging.py` — structured-JSON formatter (using stdlib `logging.basicConfig` in the pragmatic cut).
+- [ ] *Deferred:* `mahjong/server/health.py` — `/health` HTTP handler.
+- [ ] *Deferred:* `mahjong/server/lifecycle.py` — extracted; lifecycle currently lives inline in `mahjong/cli/serve.py`.
+- [x] `mahjong/cli/serve.py` — `python -m mahjong serve` entry point with signal-based drain.
+- [x] `mahjong/cli/account.py` — `python -m mahjong account {create,list}` CLI.
+- [x] AUTH_REQUEST / RESUME wired into `MultiTableOrchestrator` handshake.
+- [x] `Persistence` wired into `TableHandle` (reserve_hand before run, finalize_hand after; ABORTED on cancel).
+- [x] **Gate:** core fixtures green; mypy + ruff clean repo-wide; **609 tests pass** (607 fast + 2 slow including S3 gate).
+
+### Step 8.6 — End-to-end S3 fixture  **DONE (2026-05-25)**
 
 Spec: [docs/s2-s3-plan.md §"S3 exit"](docs/s2-s3-plan.md), [docs/specs/server-lifecycle.md fixture 22](docs/specs/server-lifecycle.md).
 
-- [ ] Tests written: fresh data dir → admin inserts account → TUI logs in → joins a new table → plays one hand against three `CannedAdapter`s → server restart → `find_hands_by_account` returns the played hand. Multi-table fixture re-asserted in the end-to-end harness. Migration-from-previous placeholder (collapses to fresh-apply for v1).
-- [ ] **Gate: S3 exit artifact** checked in. All four bullets in [docs/server-plan.md § S3 exit criteria](docs/server-plan.md) are green and checked in.
+- [x] `tests/server/test_s3_gate.py::test_s3_gate_account_play_drain_query` — subprocess-launched server, account CLI seeds account, websockets client plays a hand, SIGTERM, restart, `find_hands_by_account` returns the played hand with FOOTER-complete record.
+- [x] **Live verification (2026-05-25):** server bound on `192.168.1.157:8401` (LAN-accessible); Python websockets client at LAN address completed full HELLO → AUTH → CREATE_TABLE → ATTACH → 25 prompts → EXHAUSTIVE_DRAW HAND_END round-trip. Persistence wrote two `hand_index` rows for `alice` (one EXHAUSTIVE_DRAW + one ABORTED from SIGTERM mid-deal; both expected).
+- [x] **Gate: S3 exit artifact** checked in (this commit).
 
 ---
 

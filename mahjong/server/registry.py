@@ -21,7 +21,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import hashlib
+import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,6 +34,7 @@ from mahjong.adapters.human import HumanAdapter
 from mahjong.engine import initial_state
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
+from mahjong.persistence import Participant, Persistence
 from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table import manager as mgr
@@ -38,6 +42,50 @@ from mahjong.table import manager as mgr
 _logger = logging.getLogger(__name__)
 
 HUMAN_SEAT: int = 0
+
+
+def _ruleset_config_hash(ruleset: RuleSetRef) -> str:
+    """Stable hash of a ruleset dict for the persistence ``hand_index`` row."""
+    canonical = json.dumps(dict(ruleset), sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _account_id_from_user_id(user_id: str) -> int | None:
+    """Parse account_id from a ``u_{int}`` user_id.  Returns None on any failure
+    (e.g. unauthenticated identity like ``u_42`` from the demo factory)."""
+    if not user_id.startswith("u_"):
+        return None
+    try:
+        return int(user_id[2:])
+    except ValueError:
+        return None
+
+
+def _read_footer_checksum(record_path: Path) -> str | None:
+    """Read the last line of *record_path* and return its ``checksum`` field.
+
+    Returns None if the file is missing or the last line isn't a parseable
+    FOOTER (e.g. crash mid-write).
+    """
+    try:
+        with record_path.open("rb") as fh:
+            # Records are line-oriented JSONL; tail-read by scanning from end.
+            fh.seek(0, 2)
+            size = fh.tell()
+            if size == 0:
+                return None
+            chunk_size = min(size, 4096)
+            fh.seek(size - chunk_size, 0)
+            tail = fh.read().splitlines()
+            if not tail:
+                return None
+            last = json.loads(tail[-1].decode("utf-8"))
+            if last.get("event") != "FOOTER":
+                return None
+            checksum = last.get("checksum")
+            return str(checksum) if checksum else None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +157,8 @@ class TableHandle:
         strike_limit: int = 3,
         max_hands: int | None = 1,
         between_hand_pause_seconds: float = 2.0,
+        persistence: Persistence | None = None,
+        data_dir: Path | None = None,
     ) -> None:
         self._table_id = table_id
         self._ruleset = ruleset
@@ -121,6 +171,9 @@ class TableHandle:
         self._strike_limit = strike_limit
         self._max_hands = max_hands
         self._between_hand_pause_seconds = between_hand_pause_seconds
+        self._persistence = persistence
+        self._data_dir = data_dir
+        self._match_id = f"match_t{table_id}"
 
         # Between-hand mutable state
         self._hand_index: int = 0
@@ -257,19 +310,36 @@ class TableHandle:
                     cast(SeatAdapter, self._canned_adapters[3]),
                 ]
 
-                await mgr.run_hand(
-                    adapters=adapters,
-                    ruleset=self._ruleset,
-                    seed=hand_seed,
-                    hand_id=self._hand_id_for_hand(self._hand_index),
-                    record_path=self._record_path_for_hand(self._hand_index),
-                    server_info=self._server_info,
-                    decide_timeout_seconds=self._decide_timeout_seconds,
-                    strike_limit=self._strike_limit,
-                    event_callback=self._sessions.fanout_event_to_spectators,
-                    dealer_seat=self._dealer_seat,
-                    hand_index_in_match=self._hand_index,
+                current_hand_id = self._hand_id_for_hand(self._hand_index)
+                current_record_path = self._record_path_for_hand(self._hand_index)
+                self._reserve_hand_row(
+                    hand_id=current_hand_id,
+                    record_path=current_record_path,
+                    human_identity=human_identity,
+                    hand_seed=hand_seed,
                 )
+
+                final_state: GameState | None = None
+                try:
+                    final_state = await mgr.run_hand(
+                        adapters=adapters,
+                        ruleset=self._ruleset,
+                        seed=hand_seed,
+                        hand_id=current_hand_id,
+                        record_path=current_record_path,
+                        server_info=self._server_info,
+                        decide_timeout_seconds=self._decide_timeout_seconds,
+                        strike_limit=self._strike_limit,
+                        event_callback=self._sessions.fanout_event_to_spectators,
+                        dealer_seat=self._dealer_seat,
+                        hand_index_in_match=self._hand_index,
+                    )
+                finally:
+                    self._finalize_hand_row(
+                        hand_id=current_hand_id,
+                        record_path=current_record_path,
+                        final_state=final_state,
+                    )
 
                 next_hand_index = self._hand_index + 1
                 if self._max_hands is not None and next_hand_index >= self._max_hands:
@@ -288,6 +358,102 @@ class TableHandle:
                 await self._sessions.begin_next_hand()
         finally:
             self._match_done.set()
+
+    # --- persistence hooks ---
+
+    def _record_path_relative(self, record_path: Path) -> str:
+        """The persistence row stores the path relative to ``data_dir``.
+
+        Falls back to the absolute path string if we can't compute a relative
+        one (tests sometimes pass an unrelated tmp path).
+        """
+        if self._data_dir is not None:
+            try:
+                return str(record_path.relative_to(self._data_dir))
+            except ValueError:
+                pass
+        return str(record_path)
+
+    def _reserve_hand_row(
+        self,
+        *,
+        hand_id: str,
+        record_path: Path,
+        human_identity: HumanIdentity,
+        hand_seed: int,
+    ) -> None:
+        if self._persistence is None:
+            return
+        human_account_id = _account_id_from_user_id(human_identity["user_id"])
+        participants = [
+            Participant(
+                seat=seat,
+                account_id=(human_account_id if seat == HUMAN_SEAT else None),
+                seat_kind=("human" if seat == HUMAN_SEAT else "canned"),
+                wind=f"F{(seat - self._dealer_seat) % 4 + 1}",
+                final_score_delta=None,
+            )
+            for seat in range(4)
+        ]
+        try:
+            self._persistence.reserve_hand(
+                hand_id=hand_id,
+                match_id=self._match_id,
+                hand_index_in_match=self._hand_index,
+                ruleset_id=self._ruleset.get("id", "mcr-2006"),
+                ruleset_config_hash=_ruleset_config_hash(self._ruleset),
+                started_at_ms=int(time.time() * 1000),
+                master_seed=str(hand_seed),
+                record_path=self._record_path_relative(record_path),
+                server_version=str(self._server_info.get("version", "0.1.0")),
+                source="live",
+                participants=participants,
+            )
+        except Exception:
+            _logger.exception(
+                "persistence.reserve_hand_failed",
+                extra={"hand_id": hand_id, "table_id": self._table_id},
+            )
+
+    def _finalize_hand_row(
+        self,
+        *,
+        hand_id: str,
+        record_path: Path,
+        final_state: GameState | None,
+    ) -> None:
+        if self._persistence is None:
+            return
+        terminal = final_state["terminal"] if final_state is not None else None
+        if terminal is None:
+            terminal_kind = "ABORTED"
+            winner_seat: int | None = None
+            fan_total: int | None = None
+            scores = {seat: 0 for seat in range(4)}
+        else:
+            engine_kind = terminal["kind"]
+            terminal_kind = "EXHAUSTIVE_DRAW" if engine_kind == "DRAW" else engine_kind
+            winner_seat = terminal["winner"]
+            fan_total = terminal["fan_total"] if terminal["fan_total"] is not None else None
+            scores = {
+                seat: int(terminal["score_delta"][seat]) for seat in range(4)
+            }
+        checksum = _read_footer_checksum(record_path) or ""
+        try:
+            self._persistence.finalize_hand(
+                hand_id,
+                ended_at_ms=int(time.time() * 1000),
+                terminal_kind=terminal_kind,
+                winner_seat=winner_seat,
+                fan_total=fan_total,
+                record_checksum=checksum,
+                participants_scores=scores,
+            )
+        except Exception:
+            _logger.exception(
+                "persistence.finalize_hand_failed",
+                extra={"hand_id": hand_id, "table_id": self._table_id},
+            )
 
     # --- close ---
 
@@ -315,10 +481,11 @@ class TableRegistry:
     Spec: docs/specs/server-lifecycle.md § Table registry.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, persistence: Persistence | None = None) -> None:
         self._tables: dict[str, TableHandle] = {}
         self._next_id: int = 1
         self._accepting_new: bool = True
+        self._persistence = persistence
 
     @property
     def accepting_new(self) -> bool:
@@ -369,6 +536,8 @@ class TableRegistry:
             strike_limit=strike_limit,
             max_hands=max_hands,
             between_hand_pause_seconds=between_hand_pause_seconds,
+            persistence=self._persistence,
+            data_dir=data_dir,
         )
         self._tables[table_id] = handle
         _logger.info("table.created", extra={"table_id": table_id, "ruleset": ruleset_id})
