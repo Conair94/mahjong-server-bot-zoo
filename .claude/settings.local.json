@@ -292,7 +292,11 @@
       "Bash(/Users/connorlockhart/Documents/GitHub/mahjong-server-bot-zoo/.venv/bin/python /tmp/mj_smoke/wire_client.py ws://192.168.1.157:8401 alice pwd_alice)",
       "Bash(.venv/bin/mypy mahjong/server/ mahjong/cli/serve.py mahjong/cli/account.py)",
       "Bash(.venv/bin/mypy mahjong/)",
-      "Bash(.venv/bin/python -m pytest --tb=line -q)"
+      "Bash(.venv/bin/python -m pytest --tb=line -q)",
+      "Bash(python -m mahjong --help)",
+      "Bash(pytest -m \"not slow\" -x)",
+      "Bash(pytest tests *)",
+      "Bash(python -m mahjong play-test)"
     ],
     "additionalDirectories": [
       "/Users/connorlockhart",
