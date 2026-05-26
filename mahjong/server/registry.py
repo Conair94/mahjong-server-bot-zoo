@@ -103,6 +103,39 @@ class TableNotFound(Exception):
 # ---------------------------------------------------------------------------
 
 
+# v1 has a single bot identity for every ``kind: "bot"`` seat.  Layer 9 will
+# widen this enum when real bot-runner integration lands.
+BOT_PLACEHOLDER_ID: str = "canned-pass"
+
+
+@dataclasses.dataclass(frozen=True)
+class SeatSummary:
+    """One seat's snapshot for ``TABLE_LIST.seats[i]``.
+
+    Wire shape per ``docs/specs/multi-human-seats.md § TABLE_LIST``:
+      - ``user_id`` present iff ``kind == "human" and occupied``.
+      - ``bot_id`` present iff ``kind == "bot"``.
+    """
+
+    seat: int
+    kind: str  # "human" | "bot"
+    occupied: bool
+    user_id: str | None = None
+    bot_id: str | None = None
+
+    def to_wire(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "seat": self.seat,
+            "kind": self.kind,
+            "occupied": self.occupied,
+        }
+        if self.kind == "human" and self.occupied and self.user_id is not None:
+            out["user_id"] = self.user_id
+        if self.kind == "bot" and self.bot_id is not None:
+            out["bot_id"] = self.bot_id
+        return out
+
+
 @dataclasses.dataclass(frozen=True)
 class TableSummary:
     """Snapshot of one table for LIST_TABLES wire response."""
@@ -111,6 +144,7 @@ class TableSummary:
     ruleset: str
     hand_index: int
     phase: str  # "WAITING_FOR_PLAYERS" | "IN_PROGRESS"
+    seats: tuple[SeatSummary, ...]
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -118,7 +152,7 @@ class TableSummary:
             "ruleset": self.ruleset,
             "hand_index": self.hand_index,
             "phase": self.phase,
-            "seats": [],  # full seat detail added in Step 8.5 when auth is wired
+            "seats": [s.to_wire() for s in self.seats],
         }
 
 
@@ -258,7 +292,40 @@ class TableHandle:
             ruleset=self._ruleset.get("id", "mcr-2006"),
             hand_index=self._hand_index,
             phase=phase,
+            seats=self._build_seat_summaries(),
         )
+
+    def _build_seat_summaries(self) -> tuple[SeatSummary, ...]:
+        """One ``SeatSummary`` per seat, reflecting current session-mux state.
+
+        - Bot seats: always ``occupied=True``, ``bot_id=BOT_PLACEHOLDER_ID``.
+        - Human seats: ``occupied`` reflects whether session-mux holds a
+          bound user (``LIVE`` or ``HELD``); when occupied, ``user_id`` is
+          the bound id.
+        """
+        out: list[SeatSummary] = []
+        for seat in range(4):
+            comp = self._seats[seat]
+            if comp.kind == "human":
+                user_id = self._sessions.seat(seat).user_id
+                out.append(
+                    SeatSummary(
+                        seat=seat,
+                        kind="human",
+                        occupied=user_id is not None,
+                        user_id=user_id,
+                    )
+                )
+            else:
+                out.append(
+                    SeatSummary(
+                        seat=seat,
+                        kind="bot",
+                        occupied=True,
+                        bot_id=BOT_PLACEHOLDER_ID,
+                    )
+                )
+        return tuple(out)
 
     # --- snapshot provider (for TableSessions) ---
 
