@@ -52,6 +52,10 @@ Detailed server design: [docs/server-plan.md](docs/server-plan.md).
 - **ASCII client** — connects to the server; renders state and analysis overlays.
 - **Analysis overlays** — composable modules that read public game state plus the requesting player's private hand and emit display data. Shanten, possible-outs, opponent-hand forecast, and the explainer are all overlays under the same interface.
 
+## Run it
+
+`python -m mahjong serve` starts the WebSocket server. It binds to `MAHJONG_LISTEN_ADDR` (default `127.0.0.1:8400` — localhost only). To host for friends on a LAN or Tailscale, set `MAHJONG_LISTEN_ADDR=0.0.0.0:8400` and point browsers at `http://<your-ip>:8400/`. For a multi-human table, open the page with `?humans=N` (1–4): the first browser at `?humans=2` creates a 2H+2B table; subsequent browsers without the param join its open human seat.
+
 ## Roadmap
 
 Each phase ships with a checked-in verification artifact — a fixture, a determinism check, or a judge-acceptance recording — not just code that compiles. Detailed exit criteria are in [docs/server-plan.md](docs/server-plan.md) (per-phase Verification) and [docs/ai-plan.md](docs/ai-plan.md) (per-component Verification).

@@ -1,13 +1,24 @@
-// Web client entry — Step 8.5 AUTH wire + table discovery.
+// Web client entry — Step 8.7.e multi-human lobby + START_HAND.
 //
 // <game-pane> renders a SeatView (state-schema.md § Per-seat projection)
 // as an ASCII table, mutates it per inbound EVENT, and — when a PROMPT is
 // outstanding — renders a prompt bar listing the legal actions with their
 // key bindings. Keystrokes get translated to ACTION frames and sent back.
 //
-// Step 8.5 adds: auth form (shown when HELLO.features includes "auth"),
-// AUTH_REQUEST / AUTH_RESPONSE handling, and post-auth table discovery
-// (LIST_TABLES → CREATE_TABLE if needed → ATTACH seat 0).
+// Step 8.5 added: auth form, AUTH_REQUEST/AUTH_RESPONSE, and post-auth
+// table discovery (LIST_TABLES → CREATE_TABLE if needed → ATTACH seat 0).
+//
+// Step 8.7.e adds:
+// - `?humans=N` URL param (1-4, default 1) — used as the CREATE_TABLE
+//   composition (N humans + 4-N CannedAdapter bots).
+// - Prefer joining an existing table with an open human seat over
+//   creating a fresh one (open-lobby model — multi-human-seats.md).
+// - Send `START_HAND` after the local ATTACHED arrives. Hand-loop
+//   ignition no longer auto-fires on ATTACH after Step 8.7.d.
+// - `humans_not_ready` → poll `LIST_TABLES` every 2s; when the table's
+//   `seats[]` show every `kind:"human"` seat as `occupied:true`, re-send
+//   `START_HAND`. `hand_already_started` is a benign race (another
+//   human at the same table got there first); treat as silent no-op.
 
 import { LitElement, html, css } from "lit";
 import { renderTable } from "/static/render.js";
@@ -657,6 +668,51 @@ function loadInitialTileStyle() {
   return "ascii";
 }
 
+// Read `?humans=N` from the URL, clamped to 1..4.  Default 1 keeps the
+// pre-8.7.e single-human flow when the user doesn't ask for anything else.
+function _readDesiredHumans() {
+  try {
+    const raw = new URL(location.href).searchParams.get("humans");
+    if (raw == null) return 1;
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 4) return n;
+  } catch {
+    // ignore — malformed URL or no URL API; fall through to default.
+  }
+  return 1;
+}
+
+// Compose a `seats: [...]` payload for CREATE_TABLE from a human count.
+// 1 human → [H, B, B, B]; 2 → [H, H, B, B]; etc.
+function _seatsForHumanCount(n) {
+  return Array.from({ length: 4 }, (_, i) => ({ kind: i < n ? "human" : "bot" }));
+}
+
+// Pick a table from a TABLE_LIST response that we can join right now: the
+// first table with any `kind:"human"` seat that isn't occupied.  Returns
+// `{tableId, seat}` or `null` if no such opening exists.
+function _findOpenHumanSeat(tables) {
+  if (!Array.isArray(tables)) return null;
+  for (const t of tables) {
+    const seats = Array.isArray(t.seats) ? t.seats : [];
+    for (const s of seats) {
+      if (s.kind === "human" && !s.occupied) {
+        return { tableId: t.table_id, seat: s.seat };
+      }
+    }
+  }
+  return null;
+}
+
+// Did the TABLE_LIST entry for *our* table show every human seat occupied?
+// Used by the START_HAND retry loop after a `humans_not_ready` error.
+function _allHumansOccupied(tables, tableId) {
+  const t = (tables ?? []).find((row) => row.table_id === tableId);
+  if (!t || !Array.isArray(t.seats)) return false;
+  const humans = t.seats.filter((s) => s.kind === "human");
+  return humans.length > 0 && humans.every((s) => s.occupied);
+}
+
 class MahjongApp extends LitElement {
   static properties = {
     route: { type: String },
@@ -777,6 +833,12 @@ class MahjongApp extends LitElement {
     this._authState = "idle";
     this._authError = null;
     this._sessionToken = null; // stored in memory; RESUME is a v2 concern
+    // Lobby state — see Step 8.7.e.
+    this._desiredHumans = _readDesiredHumans(); // 1..4 from ?humans=N
+    this._attachedTableId = null;               // populated on ATTACHED
+    this._attachedSeat = null;
+    this._lobbyPollHandle = null;               // setTimeout id while waiting
+    this._handStarted = false;                  // first EVENT clears the lobby state
   }
 
   connectedCallback() {
@@ -874,11 +936,29 @@ class MahjongApp extends LitElement {
           return;
         }
 
-        // --- Table discovery (Step 8.5) ------------------------------------
+        // --- Table discovery (Step 8.5; lobby logic widened in 8.7.e) ------
         if (frame.kind === "TABLE_LIST") {
           const tables = Array.isArray(frame.tables) ? frame.tables : [];
-          if (tables.length > 0) {
-            this._doAttach(tables[0].table_id);
+          // Already attached?  This TABLE_LIST is either a lobby-poll
+          // response (we sent START_HAND, got humans_not_ready, and asked
+          // again to see whether everyone is now seated) or a stray.  In
+          // either case the right action is the same: if every human seat
+          // is occupied, retry START_HAND; otherwise wait 2s and re-poll.
+          if (this._attachedTableId !== null) {
+            if (this._handStarted) return; // hand already running; ignore.
+            if (_allHumansOccupied(tables, this._attachedTableId)) {
+              this._lobbyPollHandle = null;
+              this._doStartHand();
+            } else if (this._lobbyPollHandle === null) {
+              this._lobbyPollHandle = setTimeout(() => this._doTableDiscovery(), 2000);
+            }
+            return;
+          }
+          // First-time discovery: prefer joining an open human seat
+          // anywhere before creating a fresh table (open-lobby model).
+          const opening = _findOpenHumanSeat(tables);
+          if (opening) {
+            this._doAttach(opening.tableId, opening.seat);
           } else {
             this._doCreateTable();
           }
@@ -886,22 +966,46 @@ class MahjongApp extends LitElement {
         }
 
         if (frame.kind === "TABLE_CREATED") {
-          this._doAttach(frame.table_id);
+          // We created the table ourselves; take seat 0 (the first human
+          // slot in any composition we emit).
+          this._doAttach(frame.table_id, 0);
           return;
         }
 
         // --- Gameplay (unchanged from Step 7.5) ----------------------------
         if (frame.kind === "ATTACHED" && frame.snapshot) {
           pane.setSnapshot(frame.snapshot, frame.seat ?? 0);
+          this._attachedTableId = frame.table_id ?? this._attachedTableId;
+          this._attachedSeat = frame.seat ?? this._attachedSeat;
+          // Step 8.7.d: ignition no longer rides ATTACH; we must ask.
+          this._doStartHand();
         } else if (frame.kind === "EVENT" && frame.event && pane.seatView) {
           // The pane's seatView is mutated by the reducer per event so the
           // ASCII layout stays current without a fresh snapshot per turn.
           const next = applyEvent(pane.seatView, frame.event, pane.ownSeat);
           pane.setSnapshot(next, pane.ownSeat);
+          // First EVENT means the hand is actually running; cancel any
+          // lobby polling that was still in flight.
+          this._handStarted = true;
+          if (this._lobbyPollHandle !== null) {
+            clearTimeout(this._lobbyPollHandle);
+            this._lobbyPollHandle = null;
+          }
         } else if (frame.kind === "PROMPT") {
           pane.setPrompt(frame);
         } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {
           pane.showIllegalBanner(frame.message ?? "Server rejected that action — try again.");
+        } else if (frame.kind === "ERROR" && frame.code === "humans_not_ready") {
+          // Not everyone is seated yet — poll the lobby and retry when the
+          // human-seat occupancy is complete.  We don't show this to the
+          // user; the existing "waiting for ATTACHED snapshot…" placeholder
+          // already conveys "we're not in a hand yet."
+          if (this._lobbyPollHandle === null && !this._handStarted) {
+            this._lobbyPollHandle = setTimeout(() => this._doTableDiscovery(), 2000);
+          }
+        } else if (frame.kind === "ERROR" && frame.code === "hand_already_started") {
+          // Another LIVE human at this table won the START_HAND race; the
+          // server is already feeding us the hand events.  No-op.
         }
       });
       pane.addEventListener("action-submitted", (e) => {
@@ -954,17 +1058,32 @@ class MahjongApp extends LitElement {
   _doCreateTable() {
     try {
       // No ruleset override needed — server uses its configured default.
-      this._conn.send({ kind: "CREATE_TABLE" });
+      // Composition follows the `?humans=N` URL param (default 1H+3B).
+      this._conn.send({
+        kind: "CREATE_TABLE",
+        seats: _seatsForHumanCount(this._desiredHumans),
+      });
     } catch (err) {
       console.warn("CREATE_TABLE send failed:", err);
     }
   }
 
-  _doAttach(tableId) {
+  _doAttach(tableId, seat) {
     try {
-      this._conn.send({ kind: "ATTACH", table_id: tableId, seat: 0 });
+      this._conn.send({ kind: "ATTACH", table_id: tableId, seat });
     } catch (err) {
       console.warn("ATTACH send failed:", err);
+    }
+  }
+
+  _doStartHand() {
+    // Idempotent on the server side: extra sends return `hand_already_started`
+    // which we treat as a no-op in the message handler.
+    if (this._attachedTableId == null) return;
+    try {
+      this._conn.send({ kind: "START_HAND", table_id: this._attachedTableId });
+    } catch (err) {
+      console.warn("START_HAND send failed:", err);
     }
   }
 
@@ -1024,7 +1143,7 @@ class MahjongApp extends LitElement {
       <header>
         <pre>
  ╔══════════════════════════════════════════════════════════╗
- ║   Mahjong / 麻将        — web client, step 8.5           ║
+ ║   Mahjong / 麻将        — web client, step 8.7.e         ║
  ╚══════════════════════════════════════════════════════════╝</pre>
         <div class="controls">
           <button
