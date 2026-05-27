@@ -252,8 +252,21 @@ def _claim_window_event(state_after: GameState, ts: str) -> dict[str, Any]:
 
 def _draw_event(state_after: GameState, ts: str) -> dict[str, Any]:
     actor = state_after["current_actor"]
-    concealed = state_after["seats"][actor]["concealed"]
-    drawn_tile = concealed[-1] if concealed else None
+    # The just-drawn tile is recorded on ``state.last_drawn`` by the engine's
+    # draw transition.  We MUST NOT read it from ``concealed[-1]`` because
+    # the engine sorts ``concealed`` after every draw (see
+    # ``transition.__init__.py``: ``seat_concealed.sort(...)``), so the last
+    # element is the largest tile in hand, not the new one.  Reading the
+    # wrong tile here meant every DRAW event on the wire reported the same
+    # high tile turn after turn, and client-side reducers re-appending the
+    # tile each turn would grow the hand past 14 (multi-human bug
+    # surfaced 2026-05-26).
+    last_drawn = state_after["last_drawn"]
+    drawn_tile = (
+        last_drawn["tile"]
+        if last_drawn is not None and last_drawn["seat"] == actor
+        else None
+    )
     return {
         "event": "DRAW",
         "turn_index": state_after["turn_index"],

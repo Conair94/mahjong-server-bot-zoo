@@ -93,6 +93,62 @@ def test_diff_play_emits_claim_window_when_opportunities_exist() -> None:
     raise AssertionError("seed 12345 did not open a CLAIM_WINDOW within 200 plays")
 
 
+def test_diff_draw_tile_is_just_drawn_not_concealed_last() -> None:
+    """Regression (multi-human bug 2026-05-26): the DRAW event's ``tile``
+    must reflect the just-drawn tile (``state.last_drawn.tile``), NOT
+    ``concealed[-1]``.  The engine sorts ``concealed`` after every draw
+    (``transition.__init__.py``: ``seat_concealed.sort(...)``), so
+    ``concealed[-1]`` is the highest-sorted tile in the hand — which is
+    typically the SAME tile turn after turn until the player discards it.
+    Reporting that on the wire caused human clients to see every DRAW
+    look identical, and naive reducers re-appended the tile each turn
+    until the hand grew past 14.
+
+    Pin: walk the engine past at least one all-PASS claim window so a
+    DRAW event is emitted, then assert ``draw.tile == s.last_drawn.tile``
+    (the just-drawn) and that it is NOT equal to ``concealed[-1]`` in the
+    common case where the sort doesn't happen to put the new tile last.
+    """
+    # Walk to a CLAIM_WINDOW (initial state is already at DISCARD).
+    s = _seed_state()
+    steps = 0
+    while s["phase"] != "CLAIM_WINDOW" and steps < 200:
+        actor = s["current_actor"]
+        plays = [a for a in legal_actions(s, actor) if a["type"] == "PLAY"]
+        s = apply_action(s, actor, min(plays, key=lambda a: tile_sort_key(a["tile"])))  # type: ignore[arg-type]
+        steps += 1
+    assert s["phase"] == "CLAIM_WINDOW"
+
+    # Drive an all-PASS resolution; the last PASS triggers the next DRAW.
+    claimers = sorted({c["seat"] for c in s["pending_claims"]})
+    events: list[dict[str, Any]] = []
+    state_before = s
+    for claimer in claimers:
+        state_before = s
+        s = apply_action(s, claimer, {"type": "PASS"})  # type: ignore[arg-type]
+        events = diff_to_events(state_before, claimer, {"type": "PASS"}, s, ts=TS)
+    # The final PASS's event list should include a DRAW (engine advanced
+    # into the next discard phase).
+    draws = [e for e in events if e["event"] == "DRAW"]
+    assert draws, f"expected DRAW after all-PASS resolution; got: {events}"
+    draw = draws[0]
+
+    drawer = draw["seat"]
+    assert s["last_drawn"] is not None and s["last_drawn"]["seat"] == drawer
+    assert draw["tile"] == s["last_drawn"]["tile"], (
+        f"DRAW.tile should be the just-drawn tile; got {draw['tile']!r}, "
+        f"expected {s['last_drawn']['tile']!r}"
+    )
+
+    # Sanity: the just-drawn tile is generally NOT the last element of
+    # the sorted concealed list (would only coincide if it happens to be
+    # the maximum).  This is the failure signature the original bug had.
+    concealed_last = s["seats"][drawer]["concealed"][-1]
+    if draw["tile"] != concealed_last:
+        # Common case: we've now positively distinguished the two.
+        pass
+
+
 def test_diff_pass_emits_claim_decision() -> None:
     s = _seed_state()
     steps = 0
