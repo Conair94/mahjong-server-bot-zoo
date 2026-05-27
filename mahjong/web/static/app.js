@@ -483,6 +483,257 @@ class SpectatorPane extends LitElement {
 
 customElements.define("spectator-pane", SpectatorPane);
 
+// --- <lobby-view> -------------------------------------------------------
+//
+// Post-auth landing page.  Lists active tables (one block each) with a
+// per-open-seat Join button.  Below the list, a composition picker +
+// Create button.  Auto-refreshes every 2s so seat occupancy updates
+// without manual interaction; a manual Refresh button is also available.
+
+const PHASE_LABEL_LOBBY = {
+  WAITING_FOR_PLAYERS: "waiting for players",
+  IN_PROGRESS: "in progress",
+};
+
+class LobbyView extends LitElement {
+  static properties = {
+    tables: { type: Array },
+    desiredHumans: { type: Number },
+    lastRefreshTs: { type: Number, state: true },
+    busy: { type: String, state: true }, // null | "joining" | "creating"
+  };
+
+  static styles = css`
+    :host { display: block; color: var(--fg); }
+    .lobby {
+      border: 1px solid var(--border);
+      padding: 0.75rem 1rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .lobby-title {
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+    .lobby-section-title {
+      color: var(--accent);
+      margin: 0.75rem 0 0.4rem;
+    }
+    .table-block {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .table-meta {
+      color: var(--fg-dim);
+      margin-bottom: 0.4rem;
+    }
+    .seat-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      padding: 0.1rem 0;
+    }
+    .seat-label { color: var(--fg-dim); min-width: 8ch; }
+    .seat-kind { min-width: 6ch; }
+    .seat-occupied { color: var(--accent); }
+    .seat-open { color: var(--fg-dim); }
+    .seat-bot { color: var(--fg-dim); }
+    .seat-join {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-family: inherit;
+      font-size: 0.9em;
+      padding: 0.1rem 0.6rem;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    .seat-join:hover:not(:disabled) {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .seat-join:disabled { opacity: 0.4; cursor: default; }
+    .empty {
+      color: var(--fg-dim);
+      padding: 0.5rem 0;
+    }
+    .pick-row {
+      display: flex;
+      gap: 0.4rem;
+      align-items: baseline;
+      margin: 0.4rem 0;
+      flex-wrap: wrap;
+    }
+    .pick-label { color: var(--fg-dim); }
+    .pick-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0.15rem 0.7rem;
+      cursor: pointer;
+    }
+    .pick-btn.selected {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .pick-btn:hover:not(.selected) { color: var(--accent); }
+    .lobby-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.4rem;
+      align-items: baseline;
+    }
+    .lobby-btn {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0.2rem 0.8rem;
+      cursor: pointer;
+    }
+    .lobby-btn:hover:not(:disabled) {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .lobby-btn:disabled { opacity: 0.4; cursor: default; }
+    .refresh-hint { color: var(--fg-dim); font-size: 0.85em; }
+  `;
+
+  constructor() {
+    super();
+    this.tables = [];
+    this.desiredHumans = 1;
+    this.lastRefreshTs = 0;
+    this.busy = null;
+  }
+
+  _emit(name, detail) {
+    this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
+  }
+
+  _onJoin(tableId, seat) {
+    if (this.busy) return;
+    this.busy = "joining";
+    this._emit("lobby-join", { tableId, seat });
+  }
+
+  _onCreate() {
+    if (this.busy) return;
+    this.busy = "creating";
+    this._emit("lobby-create", { humans: this.desiredHumans });
+  }
+
+  _onRefresh() {
+    this._emit("lobby-refresh", {});
+  }
+
+  _pickHumans(n) {
+    this.desiredHumans = n;
+  }
+
+  _renderSeat(seat) {
+    if (seat.kind === "bot") {
+      return html`
+        <div class="seat-row">
+          <span class="seat-label">Seat ${seat.seat}</span>
+          <span class="seat-kind">bot</span>
+          <span class="seat-bot">${seat.bot_id ?? "canned-pass"}</span>
+        </div>
+      `;
+    }
+    // Human seat.
+    if (seat.occupied) {
+      return html`
+        <div class="seat-row">
+          <span class="seat-label">Seat ${seat.seat}</span>
+          <span class="seat-kind">human</span>
+          <span class="seat-occupied">${seat.user_id ?? "occupied"}</span>
+        </div>
+      `;
+    }
+    return html`
+      <div class="seat-row">
+        <span class="seat-label">Seat ${seat.seat}</span>
+        <span class="seat-kind">human</span>
+        <span class="seat-open">open</span>
+        <button
+          class="seat-join"
+          ?disabled=${!!this.busy}
+          @click=${() => this._onJoin(seat.table_id, seat.seat)}
+        >
+          [ Join ]
+        </button>
+      </div>
+    `;
+  }
+
+  _renderTable(t) {
+    const seats = (t.seats ?? []).map((s) => ({ ...s, table_id: t.table_id }));
+    const phase = PHASE_LABEL_LOBBY[t.phase] ?? t.phase ?? "?";
+    return html`
+      <div class="table-block">
+        <div class="table-meta">
+          Table ${t.table_id} · ${t.ruleset ?? "mcr-2006"} · ${phase} · hand ${(t.hand_index ?? 0) + 1}
+        </div>
+        ${seats.map((s) => this._renderSeat(s))}
+      </div>
+    `;
+  }
+
+  render() {
+    const tables = Array.isArray(this.tables) ? this.tables : [];
+    return html`
+      <div class="lobby">
+        <div class="lobby-title">── Lobby ──</div>
+
+        <div class="lobby-section-title">Active tables (${tables.length})</div>
+        ${tables.length === 0
+          ? html`<div class="empty">No active tables. Create one below to get started.</div>`
+          : tables.map((t) => this._renderTable(t))}
+
+        <div class="lobby-section-title">Create a new table</div>
+        <div class="pick-row">
+          <span class="pick-label">Humans:</span>
+          ${[1, 2, 3, 4].map(
+            (n) => html`
+              <button
+                class="pick-btn ${this.desiredHumans === n ? "selected" : ""}"
+                ?disabled=${!!this.busy}
+                @click=${() => this._pickHumans(n)}
+              >
+                ${n}
+              </button>
+            `,
+          )}
+          <span class="pick-label">+ ${4 - this.desiredHumans} canned-pass bot${4 - this.desiredHumans === 1 ? "" : "s"}</span>
+        </div>
+        <div class="lobby-actions">
+          <button
+            class="lobby-btn"
+            ?disabled=${!!this.busy}
+            @click=${this._onCreate}
+          >
+            ${this.busy === "creating" ? "[ creating… ]" : "[ Create table ]"}
+          </button>
+          <button
+            class="lobby-btn"
+            ?disabled=${!!this.busy}
+            @click=${this._onRefresh}
+          >
+            [ Refresh ]
+          </button>
+          <span class="refresh-hint">(auto-refreshes every 2s)</span>
+        </div>
+      </div>
+    `;
+  }
+}
+
+customElements.define("lobby-view", LobbyView);
+
 // --- <table-page> -------------------------------------------------------
 
 const PANE_HOTKEYS = {
@@ -723,6 +974,11 @@ class MahjongApp extends LitElement {
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
     _authState: { state: true },    // "idle"|"waiting"|"submitting"|"authed"|"error"
     _authError: { state: true },    // null | error string shown under the form
+    // Lobby vs. in-game view.
+    _view: { state: true },         // "lobby" | "table"
+    _lobbyTables: { state: true },  // array of TABLE_LIST.tables entries
+    _lobbyHumans: { state: true },  // current composition pick (1..4)
+    _lobbyError: { state: true },   // null | error string above the table list
   };
 
   static styles = css`
@@ -837,8 +1093,15 @@ class MahjongApp extends LitElement {
     this._desiredHumans = _readDesiredHumans(); // 1..4 from ?humans=N
     this._attachedTableId = null;               // populated on ATTACHED
     this._attachedSeat = null;
-    this._lobbyPollHandle = null;               // setTimeout id while waiting
+    this._lobbyPollHandle = null;               // setTimeout id while waiting (humans_not_ready)
     this._handStarted = false;                  // first EVENT clears the lobby state
+    // Lobby view (post-auth landing).
+    this._view = "lobby";
+    this._lobbyTables = [];
+    this._lobbyHumans = this._desiredHumans;
+    this._lobbyError = null;
+    this._lobbyAutoRefresh = null;              // setInterval id while in lobby view
+    this._lobbyTargetSeat = null;               // seat we're attempting to join (debug/diagnostic)
   }
 
   connectedCallback() {
@@ -909,14 +1172,14 @@ class MahjongApp extends LitElement {
         // --- Auth phase (Step 8.5) -----------------------------------------
         if (frame.kind === "HELLO") {
           // Server signals auth via HELLO.features = ["auth"].
-          // Older/test servers that omit features skip straight to discovery.
+          // Older/test servers that omit features skip straight to lobby.
           const feats = Array.isArray(frame.features) ? frame.features : [];
           if (feats.includes("auth")) {
             this._authRequired = true;
             this._authState = "waiting"; // triggers auth form render
           } else {
-            // No auth required — go straight to table discovery.
-            this._doTableDiscovery();
+            // No auth required — go straight to lobby.
+            this._enterLobby();
           }
           return;
         }
@@ -926,7 +1189,7 @@ class MahjongApp extends LitElement {
             this._sessionToken = frame.session_token ?? null;
             this._authState = "authed";
             this._authError = null;
-            this._doTableDiscovery(); // LIST_TABLES → ATTACH
+            this._enterLobby();
           } else {
             // Server allows up to 3 attempts on the same connection; keep the
             // form open so the user can correct their credentials.
@@ -936,38 +1199,33 @@ class MahjongApp extends LitElement {
           return;
         }
 
-        // --- Table discovery (Step 8.5; lobby logic widened in 8.7.e) ------
+        // --- TABLE_LIST routing --------------------------------------------
         if (frame.kind === "TABLE_LIST") {
           const tables = Array.isArray(frame.tables) ? frame.tables : [];
-          // Already attached?  This TABLE_LIST is either a lobby-poll
-          // response (we sent START_HAND, got humans_not_ready, and asked
-          // again to see whether everyone is now seated) or a stray.  In
-          // either case the right action is the same: if every human seat
-          // is occupied, retry START_HAND; otherwise wait 2s and re-poll.
-          if (this._attachedTableId !== null) {
-            if (this._handStarted) return; // hand already running; ignore.
+          // In lobby view: refresh the displayed table list.  No auto-join.
+          if (this._view === "lobby") {
+            this._lobbyTables = tables;
+            return;
+          }
+          // In table view: this TABLE_LIST is the humans_not_ready poll
+          // response.  If every human seat is now occupied, retry
+          // START_HAND; otherwise schedule another poll in 2s.
+          if (this._attachedTableId !== null && !this._handStarted) {
             if (_allHumansOccupied(tables, this._attachedTableId)) {
               this._lobbyPollHandle = null;
               this._doStartHand();
             } else if (this._lobbyPollHandle === null) {
               this._lobbyPollHandle = setTimeout(() => this._doTableDiscovery(), 2000);
             }
-            return;
-          }
-          // First-time discovery: prefer joining an open human seat
-          // anywhere before creating a fresh table (open-lobby model).
-          const opening = _findOpenHumanSeat(tables);
-          if (opening) {
-            this._doAttach(opening.tableId, opening.seat);
-          } else {
-            this._doCreateTable();
           }
           return;
         }
 
         if (frame.kind === "TABLE_CREATED") {
-          // We created the table ourselves; take seat 0 (the first human
-          // slot in any composition we emit).
+          // The user just clicked Create in the lobby — auto-attach to
+          // seat 0 (the first human slot in any composition we emit) and
+          // transition to the table view.
+          this._enterTableView();
           this._doAttach(frame.table_id, 0);
           return;
         }
@@ -977,6 +1235,9 @@ class MahjongApp extends LitElement {
           pane.setSnapshot(frame.snapshot, frame.seat ?? 0);
           this._attachedTableId = frame.table_id ?? this._attachedTableId;
           this._attachedSeat = frame.seat ?? this._attachedSeat;
+          // Transition out of the lobby (idempotent — repeated ATTACHED on
+          // a between-hand transition keeps us in table view).
+          this._enterTableView();
           // Step 8.7.d: ignition no longer rides ATTACH; we must ask.
           this._doStartHand();
         } else if (frame.kind === "EVENT" && frame.event && pane.seatView) {
@@ -1006,6 +1267,21 @@ class MahjongApp extends LitElement {
         } else if (frame.kind === "ERROR" && frame.code === "hand_already_started") {
           // Another LIVE human at this table won the START_HAND race; the
           // server is already feeding us the hand events.  No-op.
+        } else if (
+          frame.kind === "ERROR" &&
+          this._view === "lobby" &&
+          (frame.code === "table_unknown" ||
+            frame.code === "seat_occupied" ||
+            frame.code === "seat_not_yours" ||
+            frame.code === "shutting_down" ||
+            frame.code === "framing")
+        ) {
+          // The lobby's join/create attempt failed.  Surface the reason
+          // and let the auto-refresh repopulate so the user can pick again.
+          const lobby = this.renderRoot.querySelector("lobby-view");
+          if (lobby) lobby.busy = null;
+          this._lobbyError = `${frame.code}${frame.message ? `: ${frame.message}` : ""}`;
+          this._doTableDiscovery();
         }
       });
       pane.addEventListener("action-submitted", (e) => {
@@ -1055,17 +1331,73 @@ class MahjongApp extends LitElement {
     }
   }
 
-  _doCreateTable() {
+  _doCreateTable(humans) {
+    // The lobby panel passes the chosen composition; falls back to the
+    // URL-param default when called from auto-flows.
+    const n = Number.isFinite(humans) ? humans : this._desiredHumans;
     try {
-      // No ruleset override needed — server uses its configured default.
-      // Composition follows the `?humans=N` URL param (default 1H+3B).
       this._conn.send({
         kind: "CREATE_TABLE",
-        seats: _seatsForHumanCount(this._desiredHumans),
+        seats: _seatsForHumanCount(n),
       });
     } catch (err) {
       console.warn("CREATE_TABLE send failed:", err);
     }
+  }
+
+  // --- Lobby / table-view transitions (Step 8.7.e+ lobby UI) -------------
+
+  _enterLobby() {
+    this._view = "lobby";
+    this._lobbyError = null;
+    // Reset any stale attach state — lobby is the "between-tables" view.
+    this._attachedTableId = null;
+    this._attachedSeat = null;
+    this._handStarted = false;
+    if (this._lobbyPollHandle !== null) {
+      clearTimeout(this._lobbyPollHandle);
+      this._lobbyPollHandle = null;
+    }
+    // Kick off auto-refresh: send LIST_TABLES immediately and every 2s.
+    this._doTableDiscovery();
+    if (this._lobbyAutoRefresh === null) {
+      this._lobbyAutoRefresh = setInterval(() => {
+        if (this._view === "lobby") this._doTableDiscovery();
+      }, 2000);
+    }
+  }
+
+  _enterTableView() {
+    this._view = "table";
+    if (this._lobbyAutoRefresh !== null) {
+      clearInterval(this._lobbyAutoRefresh);
+      this._lobbyAutoRefresh = null;
+    }
+  }
+
+  _onLobbyJoin(e) {
+    const { tableId, seat } = e.detail;
+    if (tableId == null || seat == null) return;
+    this._lobbyError = null;
+    this._lobbyTargetSeat = { tableId, seat };
+    // We send ATTACH now; on success the ATTACHED handler will transition
+    // to table view.  On error (seat_occupied etc.), the ERROR handler
+    // resets the lobby and surfaces the message.
+    this._doAttach(tableId, seat);
+  }
+
+  _onLobbyCreate(e) {
+    const { humans } = e.detail;
+    if (Number.isFinite(humans) && humans >= 1 && humans <= 4) {
+      this._lobbyHumans = humans;
+    }
+    this._lobbyError = null;
+    this._doCreateTable(this._lobbyHumans);
+  }
+
+  _onLobbyRefresh() {
+    this._lobbyError = null;
+    this._doTableDiscovery();
   }
 
   _doAttach(tableId, seat) {
@@ -1139,11 +1471,12 @@ class MahjongApp extends LitElement {
     const nextTile = this.tileStyle === "ascii" ? "unicode" : "ascii";
     // Show the auth form when the server requires auth and we haven't authed yet.
     const showAuth = this._authRequired && this._authState !== "authed";
+    const showLobby = !showAuth && this._view === "lobby";
     return html`
       <header>
         <pre>
  ╔══════════════════════════════════════════════════════════╗
- ║   Mahjong / 麻将        — web client, step 8.7.e         ║
+ ║   Mahjong / 麻将        — web client                     ║
  ╚══════════════════════════════════════════════════════════╝</pre>
         <div class="controls">
           <button
@@ -1163,7 +1496,25 @@ class MahjongApp extends LitElement {
         </div>
       </header>
       ${showAuth ? this._renderAuthForm() : ""}
-      <table-page .panes=${this.panes} .tileStyle=${this.tileStyle}></table-page>
+      ${showLobby
+        ? html`
+            ${this._lobbyError
+              ? html`<div class="auth-error">${this._lobbyError}</div>`
+              : ""}
+            <lobby-view
+              .tables=${this._lobbyTables}
+              .desiredHumans=${this._lobbyHumans}
+              @lobby-join=${this._onLobbyJoin.bind(this)}
+              @lobby-create=${this._onLobbyCreate.bind(this)}
+              @lobby-refresh=${this._onLobbyRefresh.bind(this)}
+            ></lobby-view>
+          `
+        : ""}
+      <table-page
+        .panes=${this.panes}
+        .tileStyle=${this.tileStyle}
+        ?hidden=${showLobby || showAuth}
+      ></table-page>
     `;
   }
 }
