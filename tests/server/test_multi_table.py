@@ -117,6 +117,14 @@ async def _drive_one_hand(url: str, *, table_id: str, user_suffix: str = "test")
         attached = json.loads(cast(str, await ws.recv()))
         assert attached["kind"] == "ATTACHED", attached
 
+        # Step 8.7.d: hand loop is no longer ignited by ATTACH; the client
+        # must explicitly ask to start.  For a single-human table the only
+        # human seat is LIVE the instant ATTACH succeeds, so START_HAND wins
+        # without further synchronisation.
+        await ws.send(
+            json.dumps({"kind": "START_HAND", "table_id": int(table_id)})
+        )
+
         deadline = asyncio.get_event_loop().time() + 60.0
         while True:
             remaining = deadline - asyncio.get_event_loop().time()

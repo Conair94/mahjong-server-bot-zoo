@@ -35,7 +35,7 @@ from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.persistence import Participant, Persistence
 from mahjong.server.seats import DEFAULT_COMPOSITION, SeatsTuple
 from mahjong.sessions import TableSessions
-from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
+from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS, SeatState
 from mahjong.table import manager as mgr
 
 _logger = logging.getLogger(__name__)
@@ -137,6 +137,15 @@ class SeatSummary:
 
 
 @dataclasses.dataclass(frozen=True)
+class StartHandOutcome:
+    """Result of ``TableHandle.start_hand`` — see multi-human-seats.md § START_HAND."""
+
+    ok: bool
+    error_code: str | None = None  # "not_authorized" | "humans_not_ready" | "hand_already_started"
+    error_message: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class TableSummary:
     """Snapshot of one table for LIST_TABLES wire response."""
 
@@ -173,8 +182,9 @@ class TableHandle:
     seat may be claimed by any authenticated user via ``attach``, each
     ``kind: "bot"`` seat is backed by a ``CannedAdapter``-PASS placeholder.
 
-    The first ATTACH to any human seat kicks off the hand loop in this
-    Step 8.7.b cut; the explicit ``START_HAND`` trigger lands in 8.7.d.
+    The hand loop is ignited by an explicit ``START_HAND`` wire message
+    from any LIVE human at the table (see ``start_hand``); ``attach`` no
+    longer auto-starts.
     """
 
     def __init__(
@@ -359,9 +369,9 @@ class TableHandle:
         with ``seat_not_yours``.  Returns True if the attach succeeded.
 
         Side effects on success: records the identity on
-        ``self._human_identities[seat]`` and (for the *first* attach to any
-        human seat) kicks off the hand loop.  In 8.7.d the hand-start trigger
-        moves out of ``attach`` into an explicit ``start_hand`` method.
+        ``self._human_identities[seat]``.  The hand loop is no longer ignited
+        here — clients must follow up with ``START_HAND`` once every human
+        seat is LIVE (see ``start_hand``).
         """
         if not self.is_human_seat(seat):
             with contextlib.suppress(Exception):
@@ -373,16 +383,92 @@ class TableHandle:
         # Most-recent successful attach wins for identity-tracking; this
         # is consistent with same-user-takeover (session-mux fixture 8).
         self._human_identities[seat] = identity
-        async with self._start_hand_lock:
-            if self._hand_task is None:
-                self._hand_task = asyncio.create_task(self._run_hand_loop())
         return True
 
     async def spectate(self, conn: Any, *, user_id: str) -> bool:
         outcome = await self._sessions.spectate(conn, user_id=user_id)
         return outcome.ok
 
+    # --- hand-start trigger (8.7.d) ---
+
+    def _seat_for_conn(self, conn: Any) -> int | None:
+        """Return the seat index whose session-mux sink is *conn*, else None.
+
+        Walks the four seat sessions; the session-mux maintains the canonical
+        sink → seat binding, so we don't track a separate map.
+        """
+        for i in range(4):
+            if self._sessions.seat(i).sink is conn:
+                return i
+        return None
+
+    def _humans_not_live_count(self) -> int:
+        """Count of ``kind: "human"`` seats that are not currently LIVE.
+
+        HELD seats count as not-LIVE per spec: ``START_HAND`` requires every
+        human to be actively connected, not just holding a reconnect window.
+        """
+        return sum(
+            1
+            for i in range(4)
+            if self._seats[i].kind == "human"
+            and self._sessions.seat(i).state is not SeatState.LIVE
+        )
+
+    async def start_hand(self, conn: Any) -> StartHandOutcome:
+        """Validate and ignite the hand loop on behalf of *conn*.
+
+        Three failure modes per ``docs/specs/multi-human-seats.md § START_HAND``:
+          - ``not_authorized``: *conn* doesn't own a human seat at this table.
+          - ``hand_already_started``: a hand is already in progress (idempotent
+            against concurrent ``START_HAND``s from multiple humans).
+          - ``humans_not_ready``: one or more human seats aren't LIVE yet.
+
+        Order of checks: authorization first (don't leak occupancy info), then
+        already-running (idempotent fast path), then readiness.  The
+        ``_start_hand_lock`` serialises the race between simultaneous starts.
+        """
+        seat = self._seat_for_conn(conn)
+        if seat is None or not self.is_human_seat(seat):
+            return StartHandOutcome(ok=False, error_code="not_authorized")
+
+        async with self._start_hand_lock:
+            if self._hand_task is not None:
+                return StartHandOutcome(ok=False, error_code="hand_already_started")
+
+            missing = self._humans_not_live_count()
+            if missing > 0:
+                return StartHandOutcome(
+                    ok=False,
+                    error_code="humans_not_ready",
+                    error_message=f"{missing} human seat(s) still unoccupied",
+                )
+
+            self._hand_task = asyncio.create_task(self._run_hand_loop())
+            return StartHandOutcome(ok=True)
+
+    async def _dispatch_start_hand(self, conn: Any, msg: dict[str, Any]) -> None:
+        """Translate a START_HAND wire frame into ``start_hand`` + ERROR reply.
+
+        Success path is silent: the originator's next visible signal is the
+        first ``EVENT`` from the hand loop.  ``msg`` carries an advisory
+        ``table_id`` we ignore — the connection already routes us to the
+        correct table.
+        """
+        del msg  # table_id is advisory; routing is by connection-→-table.
+        outcome = await self.start_hand(conn)
+        if outcome.ok:
+            return
+        err: dict[str, Any] = {"kind": "ERROR", "code": outcome.error_code}
+        if outcome.error_message is not None:
+            err["message"] = outcome.error_message
+        with contextlib.suppress(Exception):
+            await conn.send(err)
+
     async def handle_inbound(self, conn: Any, msg: dict[str, Any]) -> None:
+        if msg.get("kind") == "START_HAND":
+            await self._dispatch_start_hand(conn, msg)
+            return
         await self._sessions.handle_inbound(conn, msg)
 
     async def on_socket_dropped(self, conn: Any) -> None:

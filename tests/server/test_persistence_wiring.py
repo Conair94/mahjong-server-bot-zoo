@@ -73,6 +73,11 @@ async def _drive_one_hand_at(
         attached = json.loads(cast(str, await ws.recv()))
         assert attached["kind"] == "ATTACHED", attached
 
+        # Step 8.7.d: explicit START_HAND now drives the hand loop.
+        await ws.send(
+            json.dumps({"kind": "START_HAND", "table_id": int(table_id)})
+        )
+
         deadline = asyncio.get_event_loop().time() + 60.0
         while True:
             remaining = deadline - asyncio.get_event_loop().time()

@@ -200,9 +200,12 @@ async def test_fixture_14_phase_waiting_before_attach(tmp_path: Path) -> None:
 
 
 async def test_fixture_14_phase_in_progress_after_hand_starts(tmp_path: Path) -> None:
-    """In 8.7.b the hand task starts on first attach.  Once it's running, the
-    summary reports IN_PROGRESS.  (After 8.7.d the trigger moves to START_HAND
-    and this fixture is re-verified through that path.)"""
+    """Once a 2H+2B table has both humans LIVE and one of them issues
+    ``START_HAND``, the table's summary flips to ``IN_PROGRESS``.
+
+    Step 8.7.d moved hand-loop ignition off ATTACH and onto START_HAND, so
+    a single attach alone leaves the table WAITING_FOR_PLAYERS.
+    """
     orch = _make_orch(tmp_path)
     await orch.start()
     try:
@@ -213,12 +216,22 @@ async def test_fixture_14_phase_in_progress_after_hand_starts(tmp_path: Path) ->
             attached = json.loads(cast(str, await alice_ws.recv()))
             assert attached["kind"] == "ATTACHED"
 
-            # Hand task is created in attach() but the asyncio loop hasn't
-            # necessarily scheduled it yet; yield once to let it run.
-            await asyncio.sleep(0)
+            async with await _connect(url) as bob_ws:
+                await bob_ws.send(
+                    json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1})
+                )
+                bob_attached = json.loads(cast(str, await bob_ws.recv()))
+                assert bob_attached["kind"] == "ATTACHED"
 
-            async with await _connect(url) as observer_ws:
-                tables = await _list_tables(observer_ws)
-                assert tables[0]["phase"] == "IN_PROGRESS"
+                # Both humans LIVE; alice ignites the hand.
+                await alice_ws.send(
+                    json.dumps({"kind": "START_HAND", "table_id": table_id})
+                )
+                # Yield so the hand task can be scheduled.
+                await asyncio.sleep(0)
+
+                async with await _connect(url) as observer_ws:
+                    tables = await _list_tables(observer_ws)
+                    assert tables[0]["phase"] == "IN_PROGRESS"
     finally:
         await orch.close()

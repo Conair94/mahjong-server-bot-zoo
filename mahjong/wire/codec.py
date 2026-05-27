@@ -46,6 +46,7 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "CREATE_TABLE",
         "TABLE_CREATED",
         "CLOSE_TABLE",
+        "START_HAND",
     }
 )
 

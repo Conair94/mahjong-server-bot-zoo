@@ -246,6 +246,8 @@ _CLOSE_TABLE: dict[str, Any] = {
     "force": False,
 }
 
+_START_HAND: dict[str, Any] = {"kind": "START_HAND", "table_id": 17}
+
 ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("HELLO_server", _HELLO_SERVER),
     ("HELLO_client", _HELLO_CLIENT),
@@ -274,6 +276,7 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("CREATE_TABLE", _CREATE_TABLE),
     ("TABLE_CREATED", _TABLE_CREATED),
     ("CLOSE_TABLE", _CLOSE_TABLE),
+    ("START_HAND", _START_HAND),
 ]
 
 

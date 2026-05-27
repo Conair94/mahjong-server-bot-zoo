@@ -74,6 +74,9 @@ async def _play_one_hand(url: str, *, username: str, password: str) -> int:
         attached = json.loads(cast(str, await ws.recv()))
         assert attached["kind"] == "ATTACHED", attached
 
+        # Step 8.7.d: explicit START_HAND now ignites the hand loop.
+        await ws.send(json.dumps({"kind": "START_HAND", "table_id": table_id}))
+
         deadline = asyncio.get_event_loop().time() + 90.0
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
