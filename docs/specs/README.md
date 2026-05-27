@@ -37,6 +37,15 @@ S2 / S3 specs (drafted 2026-05-22, pre-implementation; tier per `s2-s3-plan.md`)
 | 15 | [persistence-api.md](persistence-api.md) | 2 | Python query/write layer over SQLite + record files. Transactional `reserve_hand` / `finalize_hand`; startup integrity check; records-as-source-of-truth rebuild path. | Table manager (hand-end hook), server-lifecycle, future overlay/stats code. |
 | 16 | [server-lifecycle.md](server-lifecycle.md) | 2 | Process startup, env-var configuration (`MAHJONG_*`), `/health` endpoint, multi-table orchestration (`TableRegistry`), graceful `SIGTERM` drain, crash recovery, periodic tasks, structured logging. | `python -m mahjong serve` entry point, ops tests. |
 
+Layer 8 follow-ups (drafted 2026-05-26, post-8.7.e lobby; pickup order per [implementation-order.md § Layer 8 follow-ups](implementation-order.md)):
+
+| # | Spec | Tier | Pins | Consumed by |
+| --- | --- | --- | --- | --- |
+| 17 | [multi-human-seats.md](multi-human-seats.md) | 2 | Open-lobby `CREATE_TABLE.seats[]={kind}`; explicit `START_HAND` wire message; per-seat `TABLE_LIST` projection; 22 fixtures. **Implemented in 8.7.a-f.** | wire-protocol, session-mux, server-lifecycle, web client. |
+| 18 | [cardinal-ui.md](cardinal-ui.md) | 3 | 3 × 3 cardinal-direction renderer (south = you, east/north/west = next/across/previous in CCW play order); turn arrow in center cell pointing at `current_actor`; last-discard tile glyph + caption in the center cell. No wire change. | Web client renderer (`mahjong/web/static/render.js`) only. |
+| 19 | [human-decide-timeout.md](human-decide-timeout.md) | 2 | Per-(seat_kind, prompt_kind) decide deadlines: human DISCARD 60s, human CLAIM 20s, bot 30s. New `SeatAdapter.kind` field; three `MAHJONG_DECIDE_TIMEOUT_*` env vars. | seat-port, table manager, server config, web client (renders the longer deadline in PROMPT). |
+| 20 | [late-join-replay.md](late-join-replay.md) | 2 | Refuse `ATTACH` to a previously-UNBOUND human seat once the table's hand is `IN_PROGRESS` with new `hand_in_progress` error code; lobby suppresses Join button on in-progress tables (Spectate stays). Replay-from-record path explicitly deferred to a future spec. | wire-protocol (new error code), session-mux (one-line gate), web client lobby. |
+
 ## Implementation order
 
 The bottom-up build sequence that respects the dependencies above lives in [implementation-order.md](implementation-order.md). It groups work into layers, names the fixtures that gate each step, and reaches the S0 walking skeleton, S1 Botzone-bot integration, and the self-play harness in a single linear sequence.

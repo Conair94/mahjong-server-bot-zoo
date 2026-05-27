@@ -685,6 +685,16 @@ This step ships the deferred items grouped by subsystem. No new spec is needed �
 
 **Why this step exists separately from 8.7:** the multi-human work is user-visible and motivating; the lifecycle items are correctness hardening with no current symptom. Sequencing 8.7 first lets us validate the new feature against real users; 8.8 closes the original S3 gate cleanly afterward.
 
+## Layer 8 follow-ups (client polish + UX defects surfaced post-8.7)
+
+Three specs landed 2026-05-26 covering work that surfaced once real two-human play started running through the lobby. Each is independent; pick them off in any order, but a single "client polish + decide-timeout" session can close 8.9 + 8.10 together.
+
+- **8.9 — Cardinal-direction table renderer.** Replace `mahjong/web/static/render.js`'s vertical stack with a 3 × 3 cardinal grid (you at south; right/across/left in the other three cardinal cells; center cell carries the last-discarded tile glyph + a turn arrow pointing at `current_actor`). Active-actor highlight tracks `current_actor`. No wire change. Spec: [cardinal-ui.md](cardinal-ui.md), eight fixtures (seat-cell mapping, arrow directions including claim-window `?` and terminal, last-discard rendering, active highlight, own-hand-only-in-south defense-in-depth).
+- **8.10 — Human-friendly decide timeouts.** Split `decide_timeout_seconds` into a `(seat_kind, prompt_kind)` table. Defaults: human DISCARD 60s, human CLAIM 20s, bot 30s (current). Adds `SeatAdapter.kind: Literal["human", "bot", "canned"]` to the seat-port protocol. Three env vars: `MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S`, `..._HUMAN_CLAIM_S`, `..._BOT_S`. Spec: [human-decide-timeout.md](human-decide-timeout.md), six fixtures. Closes the "the game keeps playing without me making choices" defect surfaced 2026-05-26 (the DRAW.tile bug from commit `9f831c7` was the proximate cause, but a 30s deadline is still hostile to new players once that's gone).
+- **8.11 — Mid-hand late-join: refuse with `hand_in_progress`.** Today a third party can ATTACH to a previously-UNBOUND human seat at a table whose hand is already running — the attach succeeds, but the joiner receives a pre-hand snapshot with no event replay (the seat's ring buffer was empty during UNBOUND). v1 picks "refuse with a new error code"; alternative B (replay from the record) is parked. Adds `hand_in_progress` to the wire error registry; updates the lobby to suppress Join buttons on `IN_PROGRESS` tables (Spectate stays available). Spec: [late-join-replay.md](late-join-replay.md), six fixtures.
+
+**Order:** 8.9 (cardinal UI) and 8.10 (timeouts) compose well in one session — both are user-visible fixes for the same complaint ("I keep losing my turn"). 8.11 is a wire + lobby change that can ship independently before or after.
+
 ## What's deferred
 
 These are explicitly *not* in this implementation order — they live in later S-phases ([server-plan.md](../server-plan.md)):
