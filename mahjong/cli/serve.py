@@ -34,6 +34,7 @@ from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
 from mahjong.server.config import ServerConfig, load_config_from_env
 from mahjong.server.orchestrator import MultiTableOrchestrator
+from mahjong.table.manager import DecideTimeouts
 from mahjong.web import static_root
 
 _logger = logging.getLogger("mahjong.serve")
@@ -133,6 +134,14 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         max_hands=None,  # play indefinitely
         between_hand_pause_seconds=2.0,
         persistence=persistence,
+        decide_timeouts=DecideTimeouts(
+            human_discard_s=float(cfg.decide_timeout_human_discard_s),
+            human_claim_s=float(cfg.decide_timeout_human_claim_s),
+            bot_s=float(cfg.decide_timeout_bot_s),
+        ),
+        bot_pacing_enabled=cfg.bot_pacing_enabled,
+        bot_min_delay_s=cfg.bot_min_delay_s,
+        bot_max_delay_s=cfg.bot_max_delay_s,
     )
     await orch.start()
     _logger.info(

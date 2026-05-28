@@ -29,6 +29,7 @@ class CannedAdapter:
     """
 
     identity: CannedIdentity
+    kind = "canned"
 
     def __init__(self, identity: CannedIdentity, actions: list[Action]) -> None:
         self.identity = identity

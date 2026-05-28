@@ -29,6 +29,7 @@ from mahjong.adapters.autopass import AutoPassAdapter
 from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
+from mahjong.adapters.paced import PacedAdapter
 from mahjong.engine import initial_state
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
@@ -37,6 +38,7 @@ from mahjong.server.seats import DEFAULT_COMPOSITION, SeatsTuple
 from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS, SeatState
 from mahjong.table import manager as mgr
+from mahjong.table.manager import DecideTimeouts
 
 _logger = logging.getLogger(__name__)
 
@@ -198,6 +200,7 @@ class TableHandle:
         server_info: dict[str, Any],
         canned_seat_actions: dict[int, list[Action]] | None = None,
         decide_timeout_seconds: float = 30.0,
+        decide_timeouts: DecideTimeouts | None = None,
         hold_seconds: float = DEFAULT_HOLD_SECONDS,
         strike_limit: int = 3,
         max_hands: int | None = 1,
@@ -205,6 +208,9 @@ class TableHandle:
         persistence: Persistence | None = None,
         data_dir: Path | None = None,
         seats: SeatsTuple | None = None,
+        bot_pacing_enabled: bool = False,
+        bot_min_delay_s: float = 5.0,
+        bot_max_delay_s: float = 10.0,
     ) -> None:
         self._table_id = table_id
         self._ruleset = ruleset
@@ -213,12 +219,19 @@ class TableHandle:
         self._record_path = record_path
         self._server_info = server_info
         self._decide_timeout_seconds = decide_timeout_seconds
+        self._decide_timeouts = decide_timeouts
         self._hold_seconds = hold_seconds
         self._strike_limit = strike_limit
         self._max_hands = max_hands
         self._between_hand_pause_seconds = between_hand_pause_seconds
         self._persistence = persistence
         self._data_dir = data_dir
+        # Bot pacing (Layer-8 §2 — humanize bot turn speed at multi-human
+        # tables).  Default off so unit tests don't pay the wall-clock cost;
+        # cli/serve.py turns it on via env vars for live deployments.
+        self._bot_pacing_enabled = bot_pacing_enabled
+        self._bot_min_delay_s = bot_min_delay_s
+        self._bot_max_delay_s = bot_max_delay_s
         self._match_id = f"match_t{table_id}"
         # Step 8.7: composition drives per-seat adapter construction and the
         # ATTACH-permission check.  ``None`` falls back to single-human legacy.
@@ -295,8 +308,7 @@ class TableHandle:
     # --- summary ---
 
     def summary(self) -> TableSummary:
-        in_progress = self._hand_task is not None and not self._hand_task.done()
-        phase = "IN_PROGRESS" if in_progress else "WAITING_FOR_PLAYERS"
+        phase = "IN_PROGRESS" if self._is_in_progress() else "WAITING_FOR_PLAYERS"
         return TableSummary(
             table_id=self._table_id,
             ruleset=self._ruleset.get("id", "mcr-2006"),
@@ -368,6 +380,13 @@ class TableHandle:
         """Attach *conn* to *seat*.  Rejects bot seats and out-of-range seats
         with ``seat_not_yours``.  Returns True if the attach succeeded.
 
+        Late-join refusal (Layer-8 §4, spec: ``docs/specs/late-join-replay.md``
+        Alternative A): if the table's hand is ``IN_PROGRESS`` and the seat
+        has never been bound (``SeatState.UNBOUND``), reject with
+        ``hand_in_progress``.  Same-user resume (HELD → LIVE) is unaffected —
+        the seat session is HELD, not UNBOUND, on a reconnect inside the
+        hold window.
+
         Side effects on success: records the identity on
         ``self._human_identities[seat]``.  The hand loop is no longer ignited
         here — clients must follow up with ``START_HAND`` once every human
@@ -377,6 +396,19 @@ class TableHandle:
             with contextlib.suppress(Exception):
                 await conn.send({"kind": "ERROR", "code": "seat_not_yours"})
             return False
+        if self._is_in_progress() and self._sessions.seat(seat).state is SeatState.UNBOUND:
+            with contextlib.suppress(Exception):
+                await conn.send(
+                    {
+                        "kind": "ERROR",
+                        "code": "hand_in_progress",
+                        "message": (
+                            f"table {self._table_id} is already running this hand; "
+                            f"wait for the next hand to join seat {seat}"
+                        ),
+                    }
+                )
+            return False
         outcome = await self._sessions.attach(conn, user_id=identity["user_id"], seat=seat)
         if not outcome.ok:
             return False
@@ -384,6 +416,12 @@ class TableHandle:
         # is consistent with same-user-takeover (session-mux fixture 8).
         self._human_identities[seat] = identity
         return True
+
+    def _is_in_progress(self) -> bool:
+        """True when the hand loop task is running.  Mirrors ``summary``'s
+        phase computation so attach and ``LIST_TABLES`` agree on what
+        IN_PROGRESS means."""
+        return self._hand_task is not None and not self._hand_task.done()
 
     async def spectate(self, conn: Any, *, user_id: str) -> bool:
         outcome = await self._sessions.spectate(conn, user_id=user_id)
@@ -484,6 +522,11 @@ class TableHandle:
         - ``kind: "human"`` seat with no bound identity → ``AutoPassAdapter``
           (interim safety net; 8.7.d gates the hand on all-humans-LIVE so
           this branch becomes unreachable on the production path).
+
+        Bot pacing (Layer-8 §2): when ``self._bot_pacing_enabled`` is True,
+        every non-human adapter is wrapped in ``PacedAdapter`` so its
+        ``decide`` calls sleep a per-prompt uniform-random delay.  Human
+        adapters are never wrapped — humans pace themselves.
         """
         adapters: list[SeatAdapter] = []
         for seat in range(4):
@@ -501,6 +544,18 @@ class TableHandle:
                     )
             else:
                 adapters.append(cast(SeatAdapter, self._canned_adapters[seat]))
+
+        if self._bot_pacing_enabled:
+            for i, a in enumerate(adapters):
+                if a.kind in ("bot", "canned"):
+                    adapters[i] = cast(
+                        SeatAdapter,
+                        PacedAdapter(
+                            a,
+                            min_s=self._bot_min_delay_s,
+                            max_s=self._bot_max_delay_s,
+                        ),
+                    )
         return adapters
 
     async def _run_hand_loop(self) -> None:
@@ -528,6 +583,7 @@ class TableHandle:
                         record_path=current_record_path,
                         server_info=self._server_info,
                         decide_timeout_seconds=self._decide_timeout_seconds,
+                        decide_timeouts=self._decide_timeouts,
                         strike_limit=self._strike_limit,
                         event_callback=self._sessions.fanout_event_to_spectators,
                         dealer_seat=self._dealer_seat,
@@ -710,11 +766,15 @@ class TableRegistry:
         data_dir: Path,
         canned_seat_actions: dict[int, list[Action]] | None = None,
         decide_timeout_seconds: float = 30.0,
+        decide_timeouts: DecideTimeouts | None = None,
         hold_seconds: float = DEFAULT_HOLD_SECONDS,
         strike_limit: int = 3,
         max_hands: int | None = 1,
         between_hand_pause_seconds: float = 2.0,
         seats: SeatsTuple | None = None,
+        bot_pacing_enabled: bool = False,
+        bot_min_delay_s: float = 5.0,
+        bot_max_delay_s: float = 10.0,
     ) -> str:
         """Allocate and register a new ``TableHandle``.  Returns the table_id.
 
@@ -745,6 +805,7 @@ class TableRegistry:
             server_info=server_info,
             canned_seat_actions=canned_seat_actions,
             decide_timeout_seconds=decide_timeout_seconds,
+            decide_timeouts=decide_timeouts,
             hold_seconds=hold_seconds,
             strike_limit=strike_limit,
             max_hands=max_hands,
@@ -752,6 +813,9 @@ class TableRegistry:
             persistence=self._persistence,
             data_dir=data_dir,
             seats=seats,
+            bot_pacing_enabled=bot_pacing_enabled,
+            bot_min_delay_s=bot_min_delay_s,
+            bot_max_delay_s=bot_max_delay_s,
         )
         self._tables[table_id] = handle
         _logger.info("table.created", extra={"table_id": table_id, "ruleset": ruleset_id})

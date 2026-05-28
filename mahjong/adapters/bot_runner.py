@@ -205,6 +205,7 @@ class BotRunnerAdapter:
     """
 
     identity: BotIdentity
+    kind = "bot"
 
     def __init__(
         self,

@@ -39,6 +39,8 @@ MASTER = 0xDEADBEEF12345678
 class _SpyAdapter:
     """Wraps a CannedAdapter and records the SeatView it was passed."""
 
+    kind = "bot"
+
     def __init__(self, bot_id: str, seat: int) -> None:
         self.identity: SeatIdentity = cast(
             SeatIdentity,

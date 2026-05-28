@@ -40,6 +40,7 @@ from mahjong.server.registry import (
 )
 from mahjong.server.seats import SeatsParseError, parse_seats_from_wire
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
+from mahjong.table.manager import DecideTimeouts
 from mahjong.wire.server import Connection, WebSocketServer
 
 _logger = logging.getLogger(__name__)
@@ -116,12 +117,16 @@ class MultiTableOrchestrator:
         identity_factory: IdentityFactory | None = None,
         admin_predicate: AdminPredicate | None = None,
         decide_timeout_seconds: float = 30.0,
+        decide_timeouts: DecideTimeouts | None = None,
         hold_seconds: float = DEFAULT_HOLD_SECONDS,
         strike_limit: int = 3,
         max_hands: int | None = 1,
         between_hand_pause_seconds: float = 2.0,
         persistence: Persistence | None = None,
         require_auth: bool | None = None,
+        bot_pacing_enabled: bool = False,
+        bot_min_delay_s: float = 5.0,
+        bot_max_delay_s: float = 10.0,
     ) -> None:
         self._host = host
         self._port = port
@@ -133,11 +138,15 @@ class MultiTableOrchestrator:
         self._identity_factory = identity_factory or _default_identity_factory
         self._admin_predicate = admin_predicate or _default_admin_predicate
         self._decide_timeout_seconds = decide_timeout_seconds
+        self._decide_timeouts = decide_timeouts
         self._hold_seconds = hold_seconds
         self._strike_limit = strike_limit
         self._max_hands = max_hands
         self._between_hand_pause_seconds = between_hand_pause_seconds
         self._persistence = persistence
+        self._bot_pacing_enabled = bot_pacing_enabled
+        self._bot_min_delay_s = bot_min_delay_s
+        self._bot_max_delay_s = bot_max_delay_s
         # auth_required defaults to: only when a persistence is supplied (so
         # existing tests without persistence keep their no-auth path).
         # Callers may force it on/off explicitly via require_auth.
@@ -393,11 +402,15 @@ class MultiTableOrchestrator:
                 server_info=self._server_info,
                 data_dir=self._data_dir,
                 decide_timeout_seconds=self._decide_timeout_seconds,
+                decide_timeouts=self._decide_timeouts,
                 hold_seconds=self._hold_seconds,
                 strike_limit=self._strike_limit,
                 max_hands=self._max_hands,
                 between_hand_pause_seconds=self._between_hand_pause_seconds,
                 seats=seats,
+                bot_pacing_enabled=self._bot_pacing_enabled,
+                bot_min_delay_s=self._bot_min_delay_s,
+                bot_max_delay_s=self._bot_max_delay_s,
             )
         except ShuttingDown:
             with contextlib.suppress(Exception):

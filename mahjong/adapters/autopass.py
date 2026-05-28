@@ -25,6 +25,7 @@ class AutoPassAdapter:
     """
 
     identity: CannedIdentity
+    kind = "canned"
 
     def __init__(self) -> None:
         # Marked as `canned`/`autopass` so it surfaces clearly in the record's

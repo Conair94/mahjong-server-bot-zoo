@@ -21,7 +21,7 @@
 //   human at the same table got there first); treat as silent no-op.
 
 import { LitElement, html, css } from "lit";
-import { renderTable } from "/static/render.js";
+import { renderTable, renderPinwheel } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { renderPromptBar, actionForKey, tileIndexForKeyCode } from "/static/prompt.js";
 
@@ -158,6 +158,85 @@ class GamePane extends LitElement {
         margin: 0.4rem 0;
         height: 0;
       }
+
+      /* Pinwheel widget (Step 8.9 — cardinal-ui.md).  Compact 3×3 grid
+       * answering "whose just discarded" + "which tile" at a glance.
+       * Sits in the top-right of the game pane; the unicode tile in the
+       * center is the visual anchor and is rendered large. */
+      .pinwheel-wrap {
+        position: relative;
+      }
+      .pinwheel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: grid;
+        grid-template-columns: repeat(3, auto);
+        grid-gap: 0.1rem 0.5rem;
+        padding: 0.35rem 0.6rem;
+        border: 1px dashed var(--border);
+        border-radius: 3px;
+        line-height: 1.1;
+        text-align: center;
+        background: var(--bg);
+      }
+      .pinwheel .pw-cell {
+        min-width: 1.5ch;
+        padding: 0 0.1rem;
+      }
+      .pinwheel .pw-badge {
+        color: var(--fg-dim);
+        font-size: 0.95em;
+      }
+      .pinwheel .pw-badge.own {
+        color: var(--accent);
+        font-weight: bold;
+        text-decoration: underline;
+      }
+      .pinwheel .pw-badge.active {
+        color: var(--accent-red);
+        font-weight: bold;
+      }
+      /* When the own seat is also the active discarder, the active
+       * (accent-red) color wins so it's clearly distinct from idle. */
+      .pinwheel .pw-badge.own.active {
+        color: var(--accent-red);
+        text-decoration: underline;
+      }
+      .pinwheel .pw-mid {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.15rem;
+      }
+      .pinwheel .pw-arrow {
+        font-size: 1.6em;
+        color: var(--accent);
+        line-height: 1;
+      }
+      .pinwheel .pw-last-discard {
+        line-height: 1;
+        min-height: 2.6em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .pinwheel .pw-last-discard.pw-empty {
+        color: var(--fg-dim);
+        font-size: 1.4em;
+      }
+      /* The pinwheel's last-discard tile is the main visual anchor.
+       * Override the table's default 1.8em with a much larger glyph so
+       * the unicode tile reads at a glance from across the room. */
+      .pinwheel .tile {
+        font-size: 2.6em;
+      }
+      .pinwheel .tile.dragon,
+      .pinwheel .tile.face-down {
+        font-size: 2.6em;
+      }
+
       .waiting {
         color: var(--fg-dim);
         font-style: italic;
@@ -193,6 +272,20 @@ class GamePane extends LitElement {
       .tile.dragon.dragon-red   { color: var(--dragon-red); }
       .tile.dragon.dragon-green { color: var(--dragon-green); }
       .tile.dragon.dragon-white { color: var(--dragon-white); }
+
+      /* --- Layer-8 §1 hand-display polish.  Per-tile modifier wrappers
+       * for the local player's concealed hand: selection cursor,
+       * just-drawn offset, and suit-group break. */
+      .tile-mod { display: inline; }
+      .tile-mod.selected {
+        text-decoration: underline;
+        text-decoration-color: var(--accent);
+        text-decoration-thickness: 0.15em;
+        font-weight: 600;
+      }
+      .tile-mod.just-drawn { margin-left: 1.2em; }
+      .tile-mod.suit-break { margin-left: 0.5em; }
+
       .empty { color: var(--fg-dim); }
       .seat-label { color: var(--accent); }
       .seat-position { color: var(--fg-dim); }
@@ -385,8 +478,16 @@ class GamePane extends LitElement {
   }
 
   render() {
+    // selectedTile threaded into renderTable so the renderer can mark the
+    // cursor tile with .selected — see §1 of layer8-closeout.md.
     const tableContent = this.seatView
-      ? renderTable(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
+      ? renderTable(this.seatView, this.ownSeat, {
+          tileStyle: this.tileStyle,
+          selectedTile: this.selectedTile,
+        })
+      : null;
+    const pinwheel = this.seatView
+      ? renderPinwheel(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
       : null;
 
     return html`
@@ -394,7 +495,10 @@ class GamePane extends LitElement {
         ${paneHeader("Game pane", null, null)}
         <div class="status ${this.status}">Connection: ${this.status}</div>
         ${tableContent !== null
-          ? html`<div class="table-ascii">${tableContent}</div>`
+          ? html`<div class="table-ascii pinwheel-wrap">
+              ${pinwheel}
+              ${tableContent}
+            </div>`
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
 
         ${this.illegalBanner
@@ -654,6 +758,19 @@ class LobbyView extends LitElement {
         </div>
       `;
     }
+    // Open human seat.  When the table's hand is IN_PROGRESS, late-join
+    // is refused server-side (Layer-8 §4) — the lobby suppresses the Join
+    // affordance and marks the row "in progress" so the user understands
+    // why they can't sit down.
+    if (seat.table_phase === "IN_PROGRESS") {
+      return html`
+        <div class="seat-row">
+          <span class="seat-label">Seat ${seat.seat}</span>
+          <span class="seat-kind">human</span>
+          <span class="seat-open">open (in progress — wait for next hand)</span>
+        </div>
+      `;
+    }
     return html`
       <div class="seat-row">
         <span class="seat-label">Seat ${seat.seat}</span>
@@ -671,7 +788,11 @@ class LobbyView extends LitElement {
   }
 
   _renderTable(t) {
-    const seats = (t.seats ?? []).map((s) => ({ ...s, table_id: t.table_id }));
+    const seats = (t.seats ?? []).map((s) => ({
+      ...s,
+      table_id: t.table_id,
+      table_phase: t.phase,
+    }));
     const phase = PHASE_LABEL_LOBBY[t.phase] ?? t.phase ?? "?";
     return html`
       <div class="table-block">

@@ -12,13 +12,21 @@ Public surface is `run_hand(...)`. Helpers are private.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from mahjong.adapters.autopass import AutoPassAdapter
-from mahjong.adapters.base import LeaveReason, Prompt, PromptKind, SeatAdapter, SeatContext
+from mahjong.adapters.base import (
+    AdapterKind,
+    LeaveReason,
+    Prompt,
+    PromptKind,
+    SeatAdapter,
+    SeatContext,
+)
 from mahjong.engine import apply_action, initial_state, is_terminal, legal_actions
 from mahjong.engine import state as state_module
 from mahjong.engine.types import Action, GameState, RuleSetRef, SeatView
@@ -28,6 +36,36 @@ from mahjong.records.writer import RecordWriter
 # Failure-mode marker returned alongside the chosen Action from a decide call.
 # Empty dict means the adapter's response was accepted as-is.
 FailureMeta = dict[str, Any]
+
+
+@dataclasses.dataclass(frozen=True)
+class DecideTimeouts:
+    """Per-(seat-kind, prompt-kind) decide deadline table.
+
+    Spec: docs/specs/human-decide-timeout.md § The schema / interface.
+
+    Non-human seats use ``bot_s`` for every prompt kind. Human seats split
+    on prompt kind: DISCARD prompts get the longer ``human_discard_s``;
+    CLAIM prompts get the shorter ``human_claim_s`` (claim windows block
+    all four seats, so a generous per-claim deadline stalls the table).
+    """
+
+    human_discard_s: float
+    human_claim_s: float
+    bot_s: float
+
+    def for_(self, seat_kind: AdapterKind, prompt_kind: PromptKind) -> float:
+        if seat_kind != "human":
+            return self.bot_s
+        if prompt_kind == "DISCARD":
+            return self.human_discard_s
+        return self.human_claim_s
+
+    @classmethod
+    def uniform(cls, seconds: float) -> DecideTimeouts:
+        """Back-compat shim: one value applies everywhere (mirrors the
+        pre-spec-19 single ``decide_timeout_seconds`` parameter)."""
+        return cls(human_discard_s=seconds, human_claim_s=seconds, bot_s=seconds)
 
 # Optional per-event hook the orchestrator can pass to fan record events to
 # additional consumers (e.g. spectators) without going through the adapter
@@ -132,6 +170,7 @@ async def run_hand(
     record_path: Path,
     server_info: dict[str, Any],
     decide_timeout_seconds: float = 30.0,
+    decide_timeouts: DecideTimeouts | None = None,
     observe_timeout_seconds: float = 0.5,
     seated_timeout_seconds: float = 1.0,
     strike_limit: int = 3,
@@ -152,9 +191,15 @@ async def run_hand(
       actor to ``dealer_seat``.  Default 0 preserves backwards compatibility.
     - ``hand_index_in_match``: zero-based index of this hand within its match.
       Written to the HEADER record. Default 0 for standalone hands.
+    - ``decide_timeouts``: per-(seat-kind, prompt-kind) deadline table (spec
+      19). When ``None``, falls back to a uniform ``decide_timeout_seconds``
+      across every adapter / prompt — the pre-spec-19 behaviour.
     """
     if len(adapters) != 4:
         raise ValueError(f"expected 4 adapters, got {len(adapters)}")
+
+    if decide_timeouts is None:
+        decide_timeouts = DecideTimeouts.uniform(decide_timeout_seconds)
 
     state = initial_state(ruleset, seed=seed, dealer_seat=dealer_seat)
     writer = RecordWriter(record_path)
@@ -212,7 +257,7 @@ async def run_hand(
                 state,
                 adapters,
                 writer,
-                decide_timeout_seconds,
+                decide_timeouts,
                 observe_timeout_seconds,
                 strikes,
                 strike_limit,
@@ -223,7 +268,7 @@ async def run_hand(
                 state,
                 adapters,
                 writer,
-                decide_timeout_seconds,
+                decide_timeouts,
                 observe_timeout_seconds,
                 strikes,
                 strike_limit,
@@ -264,14 +309,15 @@ async def _step_discard(
     state: GameState,
     adapters: list[SeatAdapter],
     writer: RecordWriter,
-    decide_timeout_seconds: float,
+    decide_timeouts: DecideTimeouts,
     observe_timeout_seconds: float,
     strikes: list[int],
     strike_limit: int,
     event_callback: EventCallback | None,
 ) -> GameState:
     actor = state["current_actor"]
-    prompt = _build_prompt(state, actor, "DISCARD", deadline_seconds=decide_timeout_seconds)
+    deadline_seconds = decide_timeouts.for_(adapters[actor].kind, "DISCARD")
+    prompt = _build_prompt(state, actor, "DISCARD", deadline_seconds=deadline_seconds)
     action, failure = await _decide_or_default(adapters[actor], prompt)
     if failure:
         strikes[actor] += 1
@@ -301,7 +347,7 @@ async def _step_claim_window(
     state: GameState,
     adapters: list[SeatAdapter],
     writer: RecordWriter,
-    decide_timeout_seconds: float,
+    decide_timeouts: DecideTimeouts,
     observe_timeout_seconds: float,
     strikes: list[int],
     strike_limit: int,
@@ -318,7 +364,12 @@ async def _step_claim_window(
     """
     claimers = sorted({c["seat"] for c in state["pending_claims"]})
     prompts = {
-        seat: _build_prompt(state, seat, "CLAIM", deadline_seconds=decide_timeout_seconds)
+        seat: _build_prompt(
+            state,
+            seat,
+            "CLAIM",
+            deadline_seconds=decide_timeouts.for_(adapters[seat].kind, "CLAIM"),
+        )
         for seat in claimers
     }
     results: list[tuple[Action, FailureMeta]] = list(
@@ -501,4 +552,4 @@ async def _decide_or_default(adapter: SeatAdapter, prompt: Prompt) -> tuple[Acti
     return action, {}
 
 
-__all__ = ["EventCallback", "run_hand"]
+__all__ = ["DecideTimeouts", "EventCallback", "run_hand"]

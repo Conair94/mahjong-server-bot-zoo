@@ -36,6 +36,13 @@ class ServerConfig:
     wal_checkpoint_interval_s: int
     log_level: str
     log_format: str  # "json" | "console"
+    decide_timeout_human_discard_s: int
+    decide_timeout_human_claim_s: int
+    decide_timeout_bot_s: int
+    # Bot pacing (Layer-8 §2 — humanize bot turn speed at multi-human tables).
+    bot_pacing_enabled: bool
+    bot_min_delay_s: float
+    bot_max_delay_s: float
     server_version: str
     server_id: str
     # Pragmatic-cut omissions vs spec: health_listen_addr, bot_manifest_dir.
@@ -84,8 +91,31 @@ _KNOWN_VARS: frozenset[str] = frozenset(
         "MAHJONG_WAL_CHECKPOINT_INTERVAL_SECONDS",
         "MAHJONG_LOG_LEVEL",
         "MAHJONG_LOG_FORMAT",
+        "MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S",
+        "MAHJONG_DECIDE_TIMEOUT_HUMAN_CLAIM_S",
+        "MAHJONG_DECIDE_TIMEOUT_BOT_S",
+        "MAHJONG_BOT_PACING",
+        "MAHJONG_BOT_MIN_DELAY_S",
+        "MAHJONG_BOT_MAX_DELAY_S",
     }
 )
+
+
+def _parse_float(name: str, raw: str) -> float:
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name}={raw!r}: not a number") from exc
+
+
+def _parse_bool(name: str, raw: str) -> bool:
+    """Accept ``1``/``0``, ``true``/``false``, ``yes``/``no`` (case-insensitive)."""
+    lo = raw.strip().lower()
+    if lo in {"1", "true", "yes", "on"}:
+        return True
+    if lo in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name}={raw!r}: expected 1/0 / true/false / yes/no")
 
 
 def load_config_from_env(
@@ -139,9 +169,38 @@ def load_config_from_env(
         ),
         log_level=e.get("MAHJONG_LOG_LEVEL", "INFO"),
         log_format=e.get("MAHJONG_LOG_FORMAT", "json"),
+        decide_timeout_human_discard_s=_parse_int(
+            "MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S",
+            e.get("MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S", "60"),
+        ),
+        decide_timeout_human_claim_s=_parse_int(
+            "MAHJONG_DECIDE_TIMEOUT_HUMAN_CLAIM_S",
+            e.get("MAHJONG_DECIDE_TIMEOUT_HUMAN_CLAIM_S", "20"),
+        ),
+        decide_timeout_bot_s=_parse_int(
+            "MAHJONG_DECIDE_TIMEOUT_BOT_S",
+            e.get("MAHJONG_DECIDE_TIMEOUT_BOT_S", "30"),
+        ),
+        bot_pacing_enabled=_parse_bool(
+            "MAHJONG_BOT_PACING",
+            e.get("MAHJONG_BOT_PACING", "1"),
+        ),
+        bot_min_delay_s=_parse_float(
+            "MAHJONG_BOT_MIN_DELAY_S",
+            e.get("MAHJONG_BOT_MIN_DELAY_S", "5.0"),
+        ),
+        bot_max_delay_s=_parse_float(
+            "MAHJONG_BOT_MAX_DELAY_S",
+            e.get("MAHJONG_BOT_MAX_DELAY_S", "10.0"),
+        ),
         server_version="0.1.0",
         server_id="mahjong-server-0.1.0",
     )
+    if cfg.bot_min_delay_s < 0 or cfg.bot_max_delay_s < cfg.bot_min_delay_s:
+        raise ConfigError(
+            "MAHJONG_BOT_MIN_DELAY_S / MAHJONG_BOT_MAX_DELAY_S: "
+            f"require 0 <= min <= max; got min={cfg.bot_min_delay_s} max={cfg.bot_max_delay_s}"
+        )
 
     unknown = sorted(
         k for k in e if k.startswith("MAHJONG_") and k not in _KNOWN_VARS

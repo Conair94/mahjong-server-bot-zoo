@@ -1,172 +1,169 @@
-# Spec 18 — Cardinal-direction table renderer
+# Spec 18 — Cardinal pinwheel widget
 
-Replace the current vertically-stacked seat layout (own seat at bottom, opponents stacked above) with a 4-cell cardinal layout that mirrors how mahjong is played at a physical table: you sit at the south edge, the three opponents occupy the west / north / east cells, and the table center carries the last-discarded tile plus an arrow pointing at the current actor.
+Add a small compact "who's-playing + last-discard" pinwheel widget that sits next to the existing stacked seat layout. The pinwheel mirrors how mahjong is played at a physical table (you at south, next-to-act on your right at east, across at north, previous actor on your left at west) and carries the turn arrow plus a miniature glyph of the most recently discarded tile.
 
-Tier-3 spec. Single consumer: the web client renderer ([mahjong/web/static/render.js](../../mahjong/web/static/render.js)). No wire-protocol change — the existing `SeatView` projection has every field this layout needs. Builds on [state-schema.md](state-schema.md) (`current_actor`, `last_discard`, `seats[]`) and is informed by the user-driven request 2026-05-26 ("a diagram of all four players arranged in a circle aligned with the cardinal directions with an arrow radiating from the center indicating whose turn it currently is, along with a tile depiction of the last tile discarded").
+**Design pivot (2026-05-27).** The original Step 8.9 spec replaced the vertically-stacked seat blocks with a full 3×3 cardinal grid. Manual two-human play showed the grid broke the seat-block formatting — opponents' hand rows, melds, and discards are wide ASCII content that doesn't fit gracefully into a third-of-pane cell. The revised design separates two concerns: the seat blocks stay stacked (their existing wide layout works), and a small *separate* pinwheel widget answers "who just discarded" and "what tile" at a glance.
+
+**Second revision (2026-05-27, same session).** Initial pinwheel implementation badged seats by relative position (`E4`, `N1`, `W2`, `YOU`). User correction: badge each seat by its **wind number** (MCR convention — East=1, South=2, West=3, North=4) so the dealer is always "1" and the play-order rotation is readable at a glance. The arrow follows the **last discarder**, not the current actor, and the center tile is rendered with the unicode glyph at large size.
+
+Tier-3 spec. Single consumer: the web client renderer ([mahjong/web/static/render.js](../../mahjong/web/static/render.js)). No wire-protocol change — the existing `SeatView` projection has every field this widget needs. Builds on [state-schema.md](state-schema.md) (`current_actor`, `last_discard`, `seats[]`) and is informed by the user-driven request 2026-05-26 ("a diagram of all four players arranged in a circle aligned with the cardinal directions with an arrow radiating from the center indicating whose turn it currently is, along with a tile depiction of the last tile discarded"), revised 2026-05-27 ("the players hands are arranged in a clock wise pattern which breaks the formatting … just a small separate pinwheel, perhaps only 5x5 characters wide").
 
 ## Goals
 
-- **Spatial layout matches physical mahjong.** The four seats render as four blocks arranged on the cardinal axes (south, west, north, east), with the local player's seat at south. The next player to act after the local player is on the east (right) edge; play proceeds counter-clockwise (E → S → W → N) so east → north → west → south matches the engine's `(actor + 1) % 4` advance.
-- **Turn at a glance.** A single visual indicator — an arrow rendered from the table center to the current actor's edge — answers "whose turn is it?" without the user reading the metadata strip. The arrow points down to the local seat when it's their turn.
-- **Last discard front and center.** The most recent discarded tile is rendered as a real tile glyph in the center cell of the layout, alongside a short caption identifying who discarded it. This is the same `last_discard` field already in [state-schema.md § SeatView](state-schema.md), surfaced visually instead of as a sentence on the metadata strip.
-- **Preserve seat-block content.** Each seat block keeps the same fields the current renderer shows (own-seat: full concealed list + melds + flowers + discards; opponent: face-down count + melds + flowers + discards). The only thing that changes is the *positioning* of those blocks, not their content.
-- **No regressions on existing display conventions.** Rank-first tile shorthand, suit colors, dragon glyphs, ASCII vs Unicode toggle, face-down rendering — all unchanged. See [render.js header comment](../../mahjong/web/static/render.js#L8-L28) for the locked conventions.
+- **Cardinal spatial cue without breaking the stack.** A small compact pinwheel (~5×5 chars + one badge per edge) sits next to the existing stacked seat blocks. The pinwheel encodes "you at south, neighbour to your right (east), across (north), to your left (west)" without consuming the horizontal space the wide opponent rows need.
+- **Wind numbers, not relative positions.** Each badge shows the seat's per-hand wind number: East=1, South=2, West=3, North=4. The dealer is always "1" and the numbers increase counter-clockwise (mahjong play order). This makes "who's the dealer right now?" and "where am I in the rotation?" readable at a glance, independent of which physical seat the viewer happens to sit in.
+- **Large unicode tile front and centre.** The last-discarded tile is the pinwheel's visual anchor. It is rendered with the unicode mahjong glyph (U+1F000–U+1F029) at a large font size, so a player can read it across the room. The local tile-style toggle (`ascii` vs `unicode`) does *not* apply inside the pinwheel — it forces unicode.
+- **Arrow points at the last discarder.** The arrow in the center cell points at the cardinal edge of whichever seat just played the tile shown — same source of truth as the tile itself. Before the first discard (or between hands) the arrow is a neutral `·`; during a `CLAIM_WINDOW` it is `?`.
+- **Stacked seat blocks unchanged.** `renderTable(seatView, ownSeat, options)` still produces the same `<pre class="section">` blocks it has produced since 7.5c.i. No regressions on suit colors, dragon glyphs, ASCII vs Unicode toggle for the stacked layout, face-down rendering, or the dealer / wind metadata strip.
 
 ## Non-goals
 
-- **Real "circular" geometry.** A 3 × 3 CSS grid is enough; the four blocks occupy the four edge cells. Rotating individual blocks to face their cardinal direction (so opponent text reads sideways) is a visual flourish, not a goal — readability wins.
-- **Animated arrow.** The arrow is static text/SVG; we don't tween it between actors on each turn.
-- **Reshuffling between hands.** The local player is always at south; we do not rotate the cardinal layout to track the dealer.  Dealer indication is already on the metadata strip and on the seat block itself.
-- **Spectator-mode reskin.** Spectators currently see no per-seat projection at all (concealed lists are empty in the public projection per [state-schema.md § Public projection](state-schema.md)); this spec is for the per-seat consumer.  A spectator-tailored layout is a future enhancement.
+- **Full cardinal grid for seat content.** Attempted 2026-05-27, rolled back — the wide ASCII opponent rows wrapped clockwise inside narrow grid cells and the result was confusing. The pinwheel is the cardinal map; the seat blocks stay stacked.
+- **Animated arrow.** Static text glyph; re-renders only when `current_actor` changes.
+- **Reshuffling between hands.** The local player is always at south; the pinwheel does not rotate to track the dealer. Dealer indication stays on the metadata strip.
+- **Spectator-mode reskin.** Spectators currently see the public projection (concealed lists empty); a spectator-tailored pinwheel is a future enhancement.
 
-## The layout
+## The widget
 
-The renderer in `renderTable(seatView, ownSeat, options)` switches from a `<pre>` stack to a CSS grid.  Three sections survive: the cardinal grid replaces the current "three opponents + last discard" + "you" sections; the bottom metadata strip (Round / Hand / Turn / Wall / Phase / Dealer / Active) carries over unchanged.
+`renderPinwheel(view, ownSeat, options) -> Lit fragment` is exported from [render.js](../../mahjong/web/static/render.js) alongside the existing `renderTable`. `<game-pane>` mounts it inside the existing `.table-ascii` wrapper, absolutely positioned in the top-right via `.pinwheel-wrap { position: relative }` + `.pinwheel { position: absolute; top: 0; right: 0 }`. The pinwheel does not nest inside `<pre>`; it owns its own div so its grid layout works.
 
-```
-┌──────────────┬────────────────────┬──────────────┐
-│              │  North seat block  │              │
-│              │  (across)          │              │
-├──────────────┼────────────────────┼──────────────┤
-│ West seat    │   ┌─ center ─┐     │  East seat   │
-│ block (left, │   │  ← arrow │     │  block       │
-│ previous     │   │  [tile]  │     │  (right,     │
-│ actor)       │   │  caption │     │  next actor) │
-│              │   └──────────┘     │              │
-├──────────────┼────────────────────┼──────────────┤
-│              │  South seat block  │              │
-│              │  (YOU)             │              │
-└──────────────┴────────────────────┴──────────────┘
-
-                  Round / Hand / Turn / Wall / Phase / Dealer / Active
+```text
+       ┌───────────────┐
+       │       4       │      <- north badge: wind number (4 = North)
+       │ 3    ↓   1    │      <- west / center (arrow + tile) / east badges
+       │     🀝         │      <- last-discard tile in unicode, large
+       │       2       │      <- south badge (YOU, underlined/accented)
+       └───────────────┘
 ```
 
-### Seat-to-cell mapping
+The center cell stacks the arrow above the large unicode last-discard tile. The four edge cells render a single-digit seat badge — the per-hand wind number of the seat occupying that cardinal position. The south badge additionally carries an `.own` class so CSS can underline / accent it without changing the badge text (the local player can always be found at the bottom of the pinwheel).
 
-Counter-clockwise play order is `E → S → W → N` (per [state-schema.md § Per-seat projection](state-schema.md) seat-wind rotation).  From the local player's point of view:
+### Seat-to-edge mapping (spatial)
 
-| Cell    | Engine seat                  | Why                                                                  |
-| ------- | ---------------------------- | -------------------------------------------------------------------- |
-| south   | `ownSeat`                    | local player                                                         |
-| east    | `(ownSeat + 1) % 4`          | next to act after you (CCW play order from your seat is rightward)   |
-| north   | `(ownSeat + 2) % 4`          | across from you (two seats away in either direction)                 |
-| west    | `(ownSeat + 3) % 4`          | previous actor (CCW from your seat ends to your left)                |
+Counter-clockwise play order is `E → S → W → N` (per [state-schema.md § Per-seat projection](state-schema.md) seat-wind rotation). The pinwheel positions are determined by spatial offset from `ownSeat` — YOU at south, neighbours radiating outward:
 
-This is the same mapping the current `seatPositions(view, ownSeat)` produces; we are renaming `top → north`, `middle → north` (same cell), `just_above → west`, `bottom → south` and *also* breaking `north / west` apart in the actual grid instead of stacking them.
+| Edge  | Engine seat         | Why                                                                |
+| ----- | ------------------- | ------------------------------------------------------------------ |
+| south | `ownSeat`           | local player (badge carries `.own` class)                          |
+| east  | `(ownSeat + 1) % 4` | next to act after you (CCW play order from your seat is rightward) |
+| north | `(ownSeat + 2) % 4` | across from you                                                    |
+| west  | `(ownSeat + 3) % 4` | previous actor                                                     |
 
-### Center cell — last discard + turn arrow
+### Badge content (wind number)
 
-The center cell renders two stacked elements:
+The badge *content* is independent of spatial position — each seat shows its per-hand wind number. With `dealer_seat = D`, seat `S`'s wind is `F((S - D) mod 4 + 1)`, and the badge is:
 
-1. **Last-discarded tile** — a real tile glyph rendered through the existing `tile(...)` helper (`mahjong/web/static/render.js`), in whichever style (`ascii` / `unicode`) the user has selected.  Below the glyph, a caption: *"discarded by East (Seat 3) · turn 14"*.  When there is no last discard (between hands, or before the first discard), the cell shows a dim `(no discards yet)` placeholder.  The data source is `seatView.last_discard = {seat, tile, turn_index}`.
-2. **Turn arrow** — a single arrow character positioned within the center cell to point at the current actor's edge.  Source: `seatView.current_actor`.
+| `seat.seat_wind` | Wind   | Badge |
+| ---------------- | ------ | ----- |
+| `F1`             | East   | `1`   |
+| `F2`             | South  | `2`   |
+| `F3`             | West   | `3`   |
+| `F4`             | North  | `4`   |
 
-Arrow direction:
+So the dealer's badge is always `1`, and the badges go up counter-clockwise around the table.
 
-| `current_actor` (relative to `ownSeat`) | Cardinal target | Arrow glyph |
-| --------------------------------------- | --------------- | ----------- |
-| `== ownSeat`                            | south (you)     | `↓`         |
-| `== (ownSeat + 1) % 4`                  | east            | `→`         |
-| `== (ownSeat + 2) % 4`                  | north           | `↑`         |
-| `== (ownSeat + 3) % 4`                  | west            | `←`         |
+### Arrow direction
 
-When the current phase is `CLAIM_WINDOW` (multiple seats may be deciding in parallel), the arrow is replaced by `?` and the caption reads `"claim window — N decisions pending"`.  Terminal phase (`HAND_END` rendered as `phase: TERMINAL`): no arrow; caption reads `"hand over — see results"`.
+The arrow points at whichever cardinal position holds `last_discard.seat` — same source of truth as the tile it sits above.
 
-### Per-seat block
+| `last_discard.seat` (relative to `ownSeat`) | Cardinal target | Arrow glyph |
+| ------------------------------------------- | --------------- | ----------- |
+| `== ownSeat`                                | south (you)     | `↓`         |
+| `== (ownSeat + 1) % 4`                      | east            | `→`         |
+| `== (ownSeat + 2) % 4`                      | north           | `↑`         |
+| `== (ownSeat + 3) % 4`                      | west            | `←`         |
 
-The existing `seatBlock` function continues to produce one Lit fragment per seat.  No changes to `renderOwn` / `renderOpponent` content.  The grid wraps each block in a `<div class="cell cell-{cardinal}">` so CSS can pad / align the four cells independently (e.g., the north block stretches horizontally to fill the top row).
+Before the first discard of a hand (`last_discard == null`): arrow is a neutral `·`. During a `CLAIM_WINDOW`: arrow is `?` (multiple seats may be deciding in parallel). At `TERMINAL`: arrow is `·` (no actor pending).
 
-Active-actor highlight: the seat block whose `seat === current_actor` gets an extra `.active` class so its border picks up `var(--accent-red)` (the same color the existing table header uses).  This is redundant with the arrow but pins down "who's playing" when the arrow is replaced (claim window / terminal).
+### Active highlight
+
+The badge whose seat equals `last_discard.seat` gets a `.active` class so its colour picks up `var(--accent-red)` (the existing table-active accent). The active badge and the arrow share the same source — they point at the same seat — so the viewer sees a coherent "this seat just played that tile" signal.
 
 ## Implementation sketch
 
 ```js
 // render.js (excerpt)
 
-const ARROW_FOR_RELATIVE = { 0: "↓", 1: "→", 2: "↑", 3: "←" };
+const WIND_TO_NUMBER = { F1: 1, F2: 2, F3: 3, F4: 4 };
+const PINWHEEL_ARROW = { 0: "↓", 1: "→", 2: "↑", 3: "←" };
 
-function renderCenterCell(view, ownSeat, options) {
-  const arrow = _arrowToActor(view, ownSeat);
-  const ld = view.last_discard;
-  const tileBlock = ld
-    ? html`${tile(ld.tile, options)}
-        <div class="caption">
-          ${fullSeatName(view, ld.seat)} · turn ${ld.turn_index}
-        </div>`
-    : html`<div class="caption dim">(no discards yet)</div>`;
-  return html`<div class="cell cell-center">
-    <div class="arrow">${arrow}</div>
-    ${tileBlock}
-  </div>`;
+function _seatBadge(seat) {
+  if (!seat) return "?";
+  return String(WIND_TO_NUMBER[seat.seat_wind] ?? "?");
 }
 
-function _arrowToActor(view, ownSeat) {
+function _pinwheelArrow(view, ownSeat) {
   if (view.phase === "CLAIM_WINDOW") return "?";
-  if (view.phase === "TERMINAL") return "";
-  const relative = ((view.current_actor ?? ownSeat) - ownSeat + 4) % 4;
-  return ARROW_FOR_RELATIVE[relative];
+  if (view.phase === "TERMINAL") return "·";
+  const ld = view.last_discard;
+  if (!ld || ld.seat == null) return "·";
+  const relative = (((ld.seat - ownSeat) % 4) + 4) % 4;
+  return PINWHEEL_ARROW[relative] ?? "·";
+}
+
+export function renderPinwheel(view, ownSeat, options = {}) {
+  // 3×3 grid: corners empty; north / east / south / west carry wind-number
+  // badges; center carries arrow + LARGE unicode last-discard tile.
+  // tileStyle is forced to "unicode" regardless of caller options.
 }
 ```
 
-The `<game-pane>` styles add a 3 × 3 grid; the metadata strip stays a separate trailing `<pre class="section">`.
+The `<game-pane>` styles add a small absolute-positioned `.pinwheel` block; the center tile font-size is bumped to ~2.6em so the unicode glyph dominates the widget.
 
 ## Worked example
 
-A 2H + 2B table where the local player is alice (seat 0, dealer = East).  Hand is in DISCARD phase; bob (seat 1, South) is the current actor; the last discard was alice's `T5` on turn 7.
+Local player is alice (seat 0, dealer this hand → wind East / badge `1`). bob is seat 1 (wind South / badge `2`). Hand is in DISCARD phase; alice just discarded a `T5` on turn 6, the engine has advanced `current_actor` to bob for his draw / discard, and `last_discard = {seat: 0, tile: "T5", turn_index: 6}`. The pinwheel — top-right of the game pane next to the stacked opponents block — reads:
 
-```
-┌─────────────────┬──────────────────────┬─────────────────┐
-│                 │  North · Seat 3      │                 │
-│                 │  canned-pass         │                 │
-│                 │  ?? ?? ?? ?? (13)    │                 │
-│                 │  Discards: B1 W4     │                 │
-├─────────────────┼──────────────────────┼─────────────────┤
-│ West · Seat 2   │       →              │ East · Seat 1   │
-│ canned-pass     │     ┌──┐             │ guest2 (bob)    │
-│ ?? ?? ?? (13)   │     │T5│             │ ?? ?? ?? (14)   │
-│ Discards: W7    │     └──┘             │ Discards: F2    │
-│                 │  alice · turn 7      │                 │
-├─────────────────┼──────────────────────┼─────────────────┤
-│                 │  South · Seat 0      │                 │
-│                 │  guest1 (alice) — YOU│                 │
-│                 │  W1 W3 W5 B2 ... (13)│                 │
-│                 │  Discards: T3 T5     │                 │
-└─────────────────┴──────────────────────┴─────────────────┘
-Round: East   Hand: 1   Turn: 7   Wall: 73 left
-Phase: Discard   Dealer: East (Seat 1)   Active: East (Seat 2)
+```text
+       4         <- north badge (seat 2 = West wind would be 3 here; with dealer=0 the across seat is seat 2 = wind 3, so N badge = 3.  See below for the worked numbers.)
+3       2        <- west / east badges (seat 3 = North = 4 on left; seat 1 = South = 2 on right)
+       🀝         <- last-discard tile (unicode bamboo-5), large
+       1         <- south badge: YOU (underlined / accented because of .own class), wind East
 ```
 
-The East cell (bob's seat) gets the `.active` highlight; the arrow in the center points east `→`; the tile glyph in the center shows `T5` colored as bamboo (or its Unicode glyph in unicode-tile mode); the caption credits alice (the seat that played T5).
+With `ownSeat = 0`, `dealer_seat = 0`:
+
+- south = seat 0, wind F1 East → badge `1` (carries `.own`, also `.active` because seat 0 is the last discarder).
+- east  = seat 1, wind F2 South → badge `2`.
+- north = seat 2, wind F3 West → badge `3`.
+- west  = seat 3, wind F4 North → badge `4`.
+
+Arrow: `last_discard.seat == 0 == ownSeat` → relative 0 → `↓` (pointing down at alice's own south badge). Center tile: `T5` rendered as the unicode mahjong glyph 🀔 at ~2.6em font size. The stacked seat layout below the pinwheel is unchanged — wide opponent rows, full own concealed list, and the existing `Last discard: …` caption above the metadata strip.
 
 ## Alternatives considered
 
-- **Keep the stacked layout, just add the arrow.**  Considered; rejected.  The user's "ah-ha" was that the spatial layout matters — a turn arrow on a vertical stack is far less legible than the same arrow on a cardinal grid that already encodes who is to your right / left / across.  We get both wins by changing layout once.
-- **Rotate opponent blocks to face their cardinal direction (west block reads top-to-bottom, etc.).**  Rejected: cute but degrades readability for English-language UI tokens (`?? ??`, `Discards: ...`, seat names).  Layout-only is enough.
-- **Animate the arrow.**  Rejected for v1 — adds tweening machinery without adding information.  Static arrow updates on each `current_actor` change are sufficient.
-- **Use SVG for the arrow.**  Considered; rejected.  A single Unicode arrow character positioned with CSS is simpler, themeable, and avoids vector-graphics dependencies in a no-build client.
+- **Full cardinal grid replacing the stack.** Attempted 2026-05-27; rolled back. Opponent rows are wide ASCII content that wrapped clockwise inside narrow cells, producing a worse layout than the stack it replaced. The pinwheel-plus-stack split keeps the spatial cue without paying that cost.
+- **Badge content = relative position (`E4`, `N1`, `W2`, `YOU`).** First attempt; superseded the same session. Wind-number badges (`1`/`2`/`3`/`4`) communicate "who is the dealer" and "where am I in the rotation" — facts that don't change with the viewer's seat — whereas relative-position labels just restated information the spatial layout already conveyed.
+- **Arrow follows `current_actor`.** First attempt; superseded. The arrow + tile share a single data source (`last_discard`) so a viewer can read "this seat played this tile" in one motion. `current_actor` answers the different question "whose turn is it now," and that lives on the metadata strip.
+- **Pinwheel as a header strip across the top.** Considered; rejected. The widget is small enough that absolute-positioning into the top-right corner of the existing table area uses zero new vertical space.
+- **Show the full "discarded by X · turn Y" caption inside the pinwheel.** Rejected to keep the widget ~5×5. The caption already exists on the stacked layout's last-discard line.
+- **Respect the caller's `tileStyle` option inside the pinwheel.** Rejected. The pinwheel exists to be readable at a glance, and the unicode mahjong glyphs are more legible at the large size than the rank+suit ASCII shorthand. The stacked layout still honors the user's ASCII/unicode toggle.
+- **Animate the arrow.** Rejected for v1 — adds tweening machinery without adding information.
+- **SVG arrow.** Rejected. A single Unicode glyph positioned with CSS is themeable and avoids vector-graphics dependencies in the no-build client.
 
 ## Verification fixtures
 
-Each fixture below is a single failing test before implementation (jsdom + Lit's `render` are already in scope per [test_e2e_s2.py](../../tests/web/test_e2e_s2.py) ancestors, but a fresh `tests/web/test_cardinal_render.js`-style suite under pytest's web tests is the right home).
+Tests live in `tests/web/test_cardinal_render.py`. Each fixture dynamically imports `renderPinwheel` from `/static/render.js`, renders into a disposable div, and asserts on the DOM via Playwright.
 
-1. **Seat-to-cell mapping respects `ownSeat`.**  With `ownSeat = 2`, the south cell renders seat 2; east is seat 3; north is seat 0; west is seat 1.  Pinned via DOM query: each cell's `.cell-south .seat-block` carries the seat-2 user_id (or "YOU" badge).
-2. **Arrow direction tracks `current_actor`.**  For each value of `current_actor` (0..3) with `ownSeat = 0`, the arrow glyph matches the table above.  Verify by querying the center cell's `.arrow` text content.
-3. **Claim-window arrow is `?`.**  With `phase = "CLAIM_WINDOW"`, the center cell's arrow text is exactly `?` (or rendered absent).  Caption shows "claim window".
-4. **Terminal phase has no arrow.**  With `phase = "TERMINAL"`, no arrow glyph in the center cell; caption shows "hand over".
-5. **Last-discard tile glyph.**  With `last_discard = {seat: 1, tile: "T5", turn_index: 7}`, the center cell contains a `.tile` element whose data attribute or text matches T5 (under ASCII and Unicode tile-style options).  Caption credits seat 1.
-6. **No last-discard placeholder.**  With `last_discard = null`, center cell shows the dim "(no discards yet)" string and no `.tile` element.
-7. **Active highlight follows `current_actor`.**  With `current_actor = 1` and `ownSeat = 0`, the east cell has `.active` class; the other three cells do not.
-8. **Ownseat full hand renders only in the south cell.**  For `ownSeat = 0`, the south cell shows the seat-0 concealed *list* (full tiles); the other cells render face-down counts even if the engine state happened to leak (defense-in-depth — should never happen given [state-schema.md § Per-seat projection](state-schema.md), but the renderer should not surface a list it accidentally received).
+1. **Badges are wind numbers, not position labels.** With `ownSeat = 2` and `dealer_seat = 0`: south = `3` (own seat is West), east = `4` (seat 3 = North), north = `1` (seat 0 = East), west = `2` (seat 1 = South).
+   - **1b.** For every `ownSeat ∈ {0, 1, 2, 3}` the four badges are exactly `{1, 2, 3, 4}` — the load-bearing "every hand has one East, one South, one West, one North" invariant.
+2. **Arrow points at the last discarder.** For each `last_discard.seat` ∈ {0, 1, 2, 3} with `ownSeat = 0`, the `.pw-arrow` text matches `{↓, →, ↑, ←}`. `current_actor` is deliberately set to a *different* seat to prove the arrow does not follow it.
+3. **Claim-window arrow is `?`.** With `phase = "CLAIM_WINDOW"`, the arrow is exactly `?`, even when a `last_discard` is present.
+4. **Terminal phase shows a neutral marker.** With `phase = "TERMINAL"`, the arrow text is not in `{↑, ↓, ←, →, ?}` — a static `·`.
+5. **Last-discard tile renders as a unicode glyph.** With `last_discard = {seat: 1, tile: "T5", turn_index: 7}` and `options.tileStyle = "ascii"`, the rendered `.tile` text is the unicode bamboo-5 codepoint `U+1F014`, not the ASCII shorthand. The pinwheel forces unicode.
+6. **No last-discard placeholder.** With `last_discard = null`, the center cell carries `.pw-empty` and no `.tile` element.
+7. **Active highlight follows the discarder.** With `last_discard.seat = 1` and `ownSeat = 0`, the east badge has `.active`; south, north, west do not.
+8. **South badge carries `.own`.** For every `ownSeat ∈ {0, 1, 2, 3}`, the south-position badge has the `.own` class; the other three do not. The badge text is the seat's wind number (so the underlying value still varies), but the `.own` class pins "this is the local player's seat" for CSS.
 
 ## Open questions
 
-- **How wide should the side cells be vs. the center cell?**  Working answer: equal-width thirds, with the center cell padded so its content (tile glyph + arrow + caption) is centered.  Re-evaluate after the first render — narrow viewports may want the center cell to consume less horizontal space.
-- **Should the arrow shift to match wind labels instead of cardinal directions (i.e., point at the current actor's *wind*, not their *seat*)?**  Working answer: no — winds rotate between hands, but the on-screen layout doesn't.  Pointing at the seat is what the user asked for.
-- **Mid-hand claim-window UI.**  When this player is one of N claim-window participants, do we also show a per-cell "deciding" badge?  Working answer: yes — add `.deciding` class to any seat with a `pending_claims` entry for that seat in the local seat view.  Stretch goal; not in the load-bearing fixtures above.
+- **Pinwheel positioning under narrow viewports.** Working answer: absolute top-right of `.table-ascii`. Re-evaluate if a future side-pane layout makes the absolute corner ambiguous.
+- **Should the badge carry the player display name instead of the seat number?** Working answer: no — names are wide and break the ≤5×5 footprint. The seat number is enough to disambiguate; the full name lives on the stacked seat block's header.
+- **Mid-hand claim-window per-seat "deciding" badge.** Working answer: not in the pinwheel for v1. The single center `?` is enough; per-seat decision indicators belong on the stacked seat blocks if they're added.
 
 ## Cross-spec impact
 
-- [state-schema.md](state-schema.md) — no change.  Every field the cardinal renderer needs is already projected (`seats[i]`, `current_actor`, `last_discard`, `phase`).
+- [state-schema.md](state-schema.md) — no change. Every field the pinwheel needs is already projected (`seats[i]`, `current_actor`, `last_discard`, `phase`).
 - [wire-protocol.md](wire-protocol.md) — no change.
-- [tui-client.md](tui-client.md) — superseded for the web client.  The TUI spec is now historical; the web ASCII client (Lit + render.js) is the live consumer.  Cardinal layout is web-only.
-- [render.js header comment](../../mahjong/web/static/render.js) — locked seat-positioning convention ("own seat at bottom, right opponent at top, across in the middle, left opponent just above you") becomes a *2D* convention; update the comment.
+- [tui-client.md](tui-client.md) — unchanged. The TUI spec is historical; the web client (Lit + render.js) is the live consumer.
+- [render.js header comment](../../mahjong/web/static/render.js) — the locked stacked-seat convention is preserved; the pinwheel is documented as a separate widget alongside it.

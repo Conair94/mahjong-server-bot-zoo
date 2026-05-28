@@ -38,6 +38,7 @@ class HumanAdapter:
     `SeatSession`). Implements the five-method seat-port Protocol."""
 
     identity: HumanIdentity
+    kind = "human"
 
     def __init__(self, *, session: SeatSession, identity: HumanIdentity) -> None:
         self._session = session

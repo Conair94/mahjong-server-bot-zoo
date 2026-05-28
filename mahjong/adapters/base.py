@@ -96,15 +96,20 @@ class SeatError(Exception):
 # --- The Protocol ---
 
 
+AdapterKind = Literal["human", "bot", "canned"]
+
+
 @runtime_checkable
 class SeatAdapter(Protocol):
     """Five-method async interface every seat implements.
 
     See seat-port.md for the full contract; in summary: `seated`/`observe`/`left`
-    are lifecycle, `decide` is the decision call, `identity` is data.
+    are lifecycle, `decide` is the decision call, `identity` is data, `kind`
+    drives the manager's per-seat-kind decide-timeout lookup (spec 19).
     """
 
     identity: SeatIdentity
+    kind: AdapterKind
 
     async def seated(self, ctx: SeatContext) -> None: ...
 
@@ -117,6 +122,7 @@ class SeatAdapter(Protocol):
 
 __all__ = [
     "Action",
+    "AdapterKind",
     "BotIdentity",
     "CannedIdentity",
     "HumanIdentity",

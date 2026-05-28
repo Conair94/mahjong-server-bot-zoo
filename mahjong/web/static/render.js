@@ -22,10 +22,16 @@
 // - Face-down tiles: `▒▒` in ASCII mode, `🀫` (back-of-tile glyph) in
 //   Unicode mode.
 //
-// Seat positioning (locked same conversation): own seat at the bottom; the
-// player on your *right* (next in counterclockwise play order) renders at
-// the top, then across, then your left, then you. Mahjong play order is
-// counterclockwise (E → S → W → N), so right = (own + 1) % 4.
+// Seat positioning (locked 2026-05-23 in conversation with user): own seat
+// at the bottom; the player on your *right* (next in counterclockwise play
+// order) renders at the top, then across, then your left, then you.
+// Mahjong play order is counterclockwise (E → S → W → N), so right =
+// (own + 1) % 4.
+//
+// Pinwheel widget (Step 8.9 — cardinal-ui.md):
+//   A separate compact "who's-playing + last-discard" indicator rendered
+//   next to the stacked seat blocks.  The pinwheel is the cardinal map;
+//   the seat blocks stay stacked so wide opponent rows don't fight a grid.
 
 import { html } from "lit";
 
@@ -209,9 +215,89 @@ function renderOpponent(seat, positionLabel, options) {
    Discards:  ${renderDiscards(seat.discards, options)}`;
 }
 
-function renderOwn(seat, options) {
+// Suit identifier for suit-break detection in the local hand.  Engine
+// prefix W (characters), B (bing/dots), T (tiao/bamboo), F (winds), J
+// (dragons).  Flowers are public-knowledge and never appear in concealed.
+function _suitOf(token) {
+  return typeof token === "string" && token.length > 0 ? token[0] : "";
+}
+
+// Layer-8 close-out §1 hand-display polish.  Render the local player's
+// concealed hand with per-tile decoration:
+//
+//   .selected     on the tile at `options.selectedTile` (index into the
+//                 engine-sorted concealed list — the cursor the player
+//                 moves with digit keys / arrow keys).
+//   .just-drawn   on the tile matching `view.last_drawn.tile` when the
+//                 player has drawn but not yet discarded.  Pulled out of
+//                 sort order and appended at the end with a wider gap,
+//                 mirroring the physical-table convention of keeping the
+//                 just-drawn tile separate from the rest of your hand.
+//   .suit-break   on the first tile of each new suit group, so the
+//                 m/p/s/F/J boundaries read at a glance instead of having
+//                 to scan the suit letters.
+//
+// Each tile is wrapped in a <span class="tile-mod ..."> so modifier
+// classes don't fight the existing .tile class set by tile().
+export function renderOwnConcealedTiles(seat, view, ownSeat, options = {}) {
+  const concealed = seat?.concealed ?? [];
+  if (concealed.length === 0) return emptyMarker();
+
+  const selectedIdx = options.selectedTile;
+  const ld = view?.last_drawn;
+  const hasJustDrawn = ld && ld.seat === ownSeat && ld.tile != null;
+
+  // Find first concealed index whose token equals the just-drawn tile —
+  // findIndex correctly removes only one when the hand contains duplicates.
+  let drawnIdx = -1;
+  if (hasJustDrawn) {
+    drawnIdx = concealed.findIndex((t) => t === ld.tile);
+  }
+
+  // Build the rendered order: everything except just-drawn first, then
+  // just-drawn at the end when present.
+  const order = [];
+  concealed.forEach((tok, i) => {
+    if (i === drawnIdx) return;
+    order.push({ token: tok, origIdx: i, isJustDrawn: false });
+  });
+  if (drawnIdx >= 0) {
+    order.push({
+      token: concealed[drawnIdx],
+      origIdx: drawnIdx,
+      isJustDrawn: true,
+    });
+  }
+
+  // Emit per-tile spans, tracking suit transitions on the way.  No
+  // suit-break on the just-drawn tile — it carries .just-drawn instead,
+  // and its larger offset already signals "this one is separate."
+  const out = [];
+  let prevSuit = null;
+  order.forEach((item, renderIdx) => {
+    const curSuit = _suitOf(item.token);
+    const isSuitBreak =
+      renderIdx > 0 && !item.isJustDrawn && curSuit !== prevSuit;
+
+    const classes = ["tile-mod"];
+    if (item.origIdx === selectedIdx) classes.push("selected");
+    if (item.isJustDrawn) classes.push("just-drawn");
+    if (isSuitBreak) classes.push("suit-break");
+
+    if (renderIdx > 0) out.push(" ");
+    out.push(
+      html`<span class=${classes.join(" ")}>${tile(item.token, options)}</span>`,
+    );
+
+    prevSuit = curSuit;
+  });
+
+  return out;
+}
+
+function renderOwn(seat, view, ownSeat, options) {
   return html`${seatHeader(seat, "— YOU")}
-   Concealed: ${joinTiles(seat.concealed ?? [], " ", options)}
+   Concealed: ${renderOwnConcealedTiles(seat, view, ownSeat, options)}
    Melds:     ${renderMelds(seat.melds, options)}
    Flowers:   ${renderFlowers(seat.flowers, options)}
    Discards:  ${renderDiscards(seat.discards, options)}`;
@@ -249,12 +335,110 @@ function seatPositions(view, ownSeat) {
   };
 }
 
-function seatBlock(seat, positionLabel, ownSeat, options) {
+function seatBlock(seat, positionLabel, view, ownSeat, options) {
   if (!seat) return "";
   // Own seat has a list concealed; opponents have {count: N}.
+  // `view` is threaded only for the own-seat path — renderOwn needs
+  // `last_drawn` to offset the just-drawn tile (§1 hand-display polish).
   return seat.seat === ownSeat && Array.isArray(seat.concealed)
-    ? renderOwn(seat, options)
+    ? renderOwn(seat, view, ownSeat, options)
     : renderOpponent(seat, positionLabel, options);
+}
+
+// --- Pinwheel widget (Step 8.9, cardinal-ui.md) ----------------------------
+//
+// A small compact "who's playing + last discard" indicator that sits next
+// to the stacked seat blocks.  Its job is to answer two questions at a
+// glance: whose turn is it (arrow), and what was the last tile played
+// (center glyph).  Cardinal layout mirrors a physical mahjong table —
+// you at south, next-to-act on your right (east), across (north), previous
+// actor on your left (west).
+
+// Wind-to-pinwheel-number lookup.  MCR convention: East=1, South=2,
+// West=3, North=4 — numbers increase counter-clockwise (mahjong play
+// order).  The badge displays this wind number per seat regardless of
+// where the seat sits in the pinwheel relative to ownSeat; the spatial
+// position is determined by `(seatIndex - ownSeat) % 4` (YOU at south,
+// neighbours radiating CCW from there).
+const WIND_TO_NUMBER = { F1: 1, F2: 2, F3: 3, F4: 4 };
+
+// (relative seat from ownSeat) -> arrow glyph pointing at that cardinal.
+const PINWHEEL_ARROW = { 0: "↓", 1: "→", 2: "↑", 3: "←" };
+
+function _seatBadge(seat) {
+  if (!seat) return "?";
+  const n = WIND_TO_NUMBER[seat.seat_wind];
+  return n != null ? String(n) : "?";
+}
+
+// The arrow points at whoever just discarded the tile shown in the
+// center.  Falls back to a neutral marker before the first discard, and
+// to a `?` during a claim window where multiple seats are deciding.
+function _pinwheelArrow(view, ownSeat) {
+  if (view.phase === "CLAIM_WINDOW") return "?";
+  if (view.phase === "TERMINAL") return "·";
+  const ld = view.last_discard;
+  if (!ld || ld.seat == null) return "·";
+  const relative = (((ld.seat - ownSeat) % 4) + 4) % 4;
+  return PINWHEEL_ARROW[relative] ?? "·";
+}
+
+// Renders a 3×3 compact grid: north badge top, west/center/east in the
+// middle row, south badge at the bottom.  Center cell carries the arrow
+// + (when present) a large unicode last-discard tile.  The four corner
+// cells are empty padding so the badges line up on the cardinal axes.
+//
+// Badges show the per-hand *wind number* of each seat (1=East, 2=South,
+// 3=West, 4=North) so the player can read who's the dealer at a glance
+// (dealer is always East = "1").  The own seat additionally carries a
+// `.own` class so CSS can mark "this is you".
+export function renderPinwheel(view, ownSeat, options = {}) {
+  if (!view) return "";
+  const ld = view.last_discard;
+  const arrow = _pinwheelArrow(view, ownSeat);
+  const activeSeat = ld?.seat ?? -1;
+
+  const seatAt = (offset) => {
+    const seatIndex = ((ownSeat + offset) % 4 + 4) % 4;
+    return view.seats.find((s) => s.seat === seatIndex) ?? null;
+  };
+
+  function badge(offset) {
+    const seat = seatAt(offset);
+    if (!seat) return "";
+    const seatIndex = seat.seat;
+    const label = _seatBadge(seat);
+    const classes = ["pw-badge"];
+    if (seatIndex === activeSeat) classes.push("active");
+    if (seatIndex === ownSeat) classes.push("own");
+    return html`<div class=${classes.join(" ")}>${label}</div>`;
+  }
+
+  // Force unicode tile in the pinwheel: the tile is the main visual
+  // anchor and unicode mahjong glyphs read at a glance.  The surrounding
+  // CSS knocks the tile up to a large size.
+  const tileOptions = { ...options, tileStyle: "unicode" };
+
+  const center = html`
+    <div class="pw-center">
+      <div class="pw-arrow">${arrow}</div>
+      ${ld
+        ? html`<div class="pw-last-discard">${tile(ld.tile, tileOptions)}</div>`
+        : html`<div class="pw-last-discard pw-empty">·</div>`}
+    </div>
+  `;
+
+  return html`<div class="pinwheel" title="Arrow points at the last discarder · 1=E 2=S 3=W 4=N">
+    <div class="pw-cell pw-corner"></div>
+    <div class="pw-cell pw-north">${badge(2)}</div>
+    <div class="pw-cell pw-corner"></div>
+    <div class="pw-cell pw-west">${badge(3)}</div>
+    <div class="pw-cell pw-mid">${center}</div>
+    <div class="pw-cell pw-east">${badge(1)}</div>
+    <div class="pw-cell pw-corner"></div>
+    <div class="pw-cell pw-south">${badge(0)}</div>
+    <div class="pw-cell pw-corner"></div>
+  </div>`;
 }
 
 export function renderTable(seatView, ownSeat, options = {}) {
@@ -272,22 +456,32 @@ export function renderTable(seatView, ownSeat, options = {}) {
   // Section order (top to bottom): the three opponents + last discard,
   // then your own hand, then the Round/Phase metadata strip. Metadata at
   // the bottom keeps the player's attention on the table; the strip stays
-  // visible just above the wire-log toggle.
+  // visible just above the wire-log toggle.  The pinwheel is mounted next
+  // to this stack by <game-pane> — it isn't part of the stacked content.
   return html`
     <pre class="section">
-${seatBlock(positions.top, "your right", ownSeat, options)}
+${seatBlock(positions.top, "your right", seatView, ownSeat, options)}
 
-${seatBlock(positions.middle, "across", ownSeat, options)}
+${seatBlock(positions.middle, "across", seatView, ownSeat, options)}
 
-${seatBlock(positions.just_above, "your left", ownSeat, options)}
+${seatBlock(positions.just_above, "your left", seatView, ownSeat, options)}
 
 ${renderLastDiscard(seatView, options)}</pre
     >
     <hr class="ascii-rule" />
     <pre class="section">
-${seatBlock(positions.bottom, "you", ownSeat, options)}</pre
+${seatBlock(positions.bottom, "you", seatView, ownSeat, options)}</pre
     >
     <hr class="ascii-rule" />
     <pre class="section">${renderHeader(seatView)}</pre>
   `;
 }
+
+// Test hooks (jsdom).  The pinwheel's pure helpers are easy to pin without
+// rendering, which keeps the cardinal-ui fixtures fast.
+export const __test__ = {
+  PINWHEEL_ARROW,
+  WIND_TO_NUMBER,
+  pinwheelArrow: _pinwheelArrow,
+  seatBadge: _seatBadge,
+};
