@@ -1,0 +1,10 @@
+{"event":"HEADER","format_version":1,"hand_id":"t2-h0_5","hand_index_in_match":5,"match_id":null,"phase":"DEAL","ruleset":{"config_hash":"sha256:feb801d0bb3bcf26e80d5a250559789db28d8023ed70cdb2ccb7cda69a5418d0","id":"mcr-2006","version":1},"seats":[{"identity":{"display":"guest1","kind":"human","user_id":"u_3"},"seat":0,"wind":"F4"},{"identity":{"kind":"canned","script":"pass"},"seat":1,"wind":"F1"},{"identity":{"kind":"canned","script":"pass"},"seat":2,"wind":"F2"},{"identity":{"kind":"canned","script":"pass"},"seat":3,"wind":"F3"}],"seed":"1779896692","seq":0,"server":{"git_sha":"unknown","host":"127.0.0.1","server_id":"mahjong-server-0.1.0","version":"0.1.0"},"ts":"2026-05-28T02:46:38.823Z","turn_index":0}
+{"event":"DISCARD","from_hand":false,"phase":"CLAIM_WINDOW","seat":1,"seq":1,"tile":"T6","ts":"2026-05-28T02:46:38.825Z","turn_index":1}
+{"event":"CLAIM_WINDOW","opportunities":[{"chi_tiles":["T4","T5","T6"],"claim":"CHI","seat":2},{"chi_tiles":["T5","T6","T7"],"claim":"CHI","seat":2}],"phase":"CLAIM_WINDOW","seq":2,"ts":"2026-05-28T02:46:38.825Z","turn_index":1}
+{"decision":"PASS","event":"CLAIM_DECISION","phase":"DISCARD","seat":2,"seq":3,"ts":"2026-05-28T02:46:38.828Z","turn_index":1}
+{"event":"CLAIM_RESOLUTION","outcome":"PASSED","phase":"DISCARD","seq":4,"ts":"2026-05-28T02:46:38.828Z","turn_index":1}
+{"event":"DRAW","flower_replacements":[],"phase":"DISCARD","seat":2,"seq":5,"tile":"W8","ts":"2026-05-28T02:46:38.828Z","turn_index":1}
+{"event":"DISCARD","from_hand":false,"phase":"DISCARD","seat":2,"seq":6,"tile":"W8","ts":"2026-05-28T02:46:38.830Z","turn_index":2}
+{"event":"DRAW","flower_replacements":[],"phase":"DISCARD","seat":3,"seq":7,"tile":"B1","ts":"2026-05-28T02:46:38.830Z","turn_index":2}
+{"event":"DISCARD","from_hand":false,"phase":"DISCARD","seat":3,"seq":8,"tile":"B1","ts":"2026-05-28T02:46:38.832Z","turn_index":3}
+{"event":"DRAW","flower_replacements":[],"phase":"DISCARD","seat":0,"seq":9,"tile":"W2","ts":"2026-05-28T02:46:38.832Z","turn_index":3}
