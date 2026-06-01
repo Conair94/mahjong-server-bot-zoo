@@ -21,7 +21,7 @@
 //   human at the same table got there first); treat as silent no-op.
 
 import { LitElement, html, css } from "lit";
-import { renderTable, renderPinwheel } from "/static/render.js";
+import { renderTable, renderPinwheel, renderHandEndSummary } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
 
@@ -382,6 +382,32 @@ class GamePane extends LitElement {
         .claim-chip { animation: none; }
       }
 
+      /* --- Hand-end summary (§22.9). Modular sections stacked vertically. */
+      .hand-end-summary {
+        margin: 0.5rem 0;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--accent);
+        border-left-width: 3px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .he-headline { font-size: 1.1em; }
+      .he-winner { color: var(--accent); font-weight: 600; }
+      .he-section-title { color: var(--fg-dim); margin-bottom: 0.15rem; }
+      .he-fan-row, .he-score-row {
+        display: flex;
+        justify-content: space-between;
+        max-width: 22rem;
+      }
+      .he-fan-total { border-top: 1px dashed var(--border); font-weight: 600; }
+      .he-fan-value, .he-score-delta { color: var(--accent); }
+      .he-score-row.he-winner .he-score-name,
+      .he-score-row.he-winner .he-score-delta { color: var(--accent); font-weight: 600; }
+      .he-hand-row { margin: 0.1rem 0; }
+      .he-hand-name { color: var(--fg-dim); margin-right: 0.4rem; }
+      .he-hand-melds { margin-left: 0.6rem; }
+
       /* --- Illegal-action banner (transient). The prompt stays open. */
       .illegal-banner {
         margin: 0.5rem 0;
@@ -529,6 +555,9 @@ class GamePane extends LitElement {
     const pinwheel = this.seatView
       ? renderPinwheel(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
       : null;
+    const handEndSummary = this.seatView?.terminal
+      ? renderHandEndSummary(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
+      : null;
 
     const claimAvailable = isClaimAvailable(this.currentPrompt);
     return html`
@@ -544,6 +573,8 @@ class GamePane extends LitElement {
               ${tableContent}
             </div>`
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
+
+        ${handEndSummary ?? ""}
 
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`

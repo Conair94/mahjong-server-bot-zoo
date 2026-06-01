@@ -406,7 +406,9 @@ Client local hand has drifted to `[W2, W3, B5, T7, W9, B1]` (W9/B1 stranded at t
 
 ---
 
-## § 22.9 Hand-end scoring summary (Tier 3 — renderer)
+## § 22.9 Hand-end scoring summary (Tier 3 — renderer) — ✅ RESOLVED 2026-06-01
+
+**Fix landed:** [render.js](../../mahjong/web/static/render.js) `renderHandEndSummary(view, ownSeat, options)` renders when `view.terminal != null`, composed from an ordered `HAND_END_SECTIONS` list of `(terminal, view, ownSeat, options) -> html|""` section renderers — **modular by design**: adding a new detail later (stats widget, win-prob bar, next-hand button) is just appending a function to that array, no other change. Current sections: `_summaryHeadline` (winner + self-draw/discard + win tile, or "Exhausted draw"), `_summaryFan` (each `{name, value}` + total; skipped on a draw), `_summaryScores` (per-seat `score_delta`, winner highlighted), `_summaryHands` (everyone's revealed concealed + melds from `terminal.final_hands`). [apply_event.js](../../mahjong/web/static/apply_event.js) `applyHandEnd` now captures `final_hands` (HAND_END reveals all hands; `project_event` passes it through unredacted). Mounted in `<game-pane>` ([app.js](../../mahjong/web/static/app.js)) at TERMINAL. Note: `FanEntry` is `{name, value}` (not `{name, points}` as first sketched). Pinned by [tests/web/test_hand_end_summary.py](../../tests/web/test_hand_end_summary.py) (6). **Browser verify owed.**
 
 ### Goal
 

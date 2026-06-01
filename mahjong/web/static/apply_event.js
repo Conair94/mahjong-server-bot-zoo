@@ -320,6 +320,10 @@ function applyHandEnd(view, event, _ownSeat) {
     fan: event.fan ?? [],
     fan_total: event.fan_total ?? 0,
     score_delta: event.score_delta ?? [],
+    // HAND_END reveals every seat's hand (MCR shows all hands at the end);
+    // project_event passes final_hands through unredacted. Captured so the
+    // §22.9 summary can show everyone's concealed + melds.
+    final_hands: event.final_hands ?? null,
   };
   // Apply scores; engine carries them as a per-seat delta list.
   if (Array.isArray(event.score_delta) && event.score_delta.length === 4) {
