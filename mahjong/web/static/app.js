@@ -23,7 +23,7 @@
 import { LitElement, html, css } from "lit";
 import { renderTable, renderPinwheel } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
-import { renderPromptBar, actionForKey, tileIndexForKeyCode } from "/static/prompt.js";
+import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
 
 // --- ConnectionManager --------------------------------------------------
 
@@ -353,6 +353,35 @@ class GamePane extends LitElement {
         padding: 0;
       }
 
+      /* --- Claim-available alert (§22.2). When a CLAIM_WINDOW prompt offers
+       * a real (non-PASS) option, the bar pulses and a chip pins to the pane
+       * header so the cue survives the player glancing at another tab.
+       * Sound is a future enhancement (see spec). */
+      .prompt-bar.claim-active {
+        animation: claim-pulse 1s ease-in-out infinite alternate;
+      }
+      @keyframes claim-pulse {
+        from { border-color: var(--accent); }
+        to   { border-color: var(--accent-red); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .prompt-bar.claim-active { animation: none; border-color: var(--accent-red); }
+      }
+      .claim-chip {
+        margin: 0.25rem 0 0;
+        color: var(--accent-red);
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        animation: chip-pulse 1s ease-in-out infinite alternate;
+      }
+      @keyframes chip-pulse {
+        from { opacity: 0.45; }
+        to   { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .claim-chip { animation: none; }
+      }
+
       /* --- Illegal-action banner (transient). The prompt stays open. */
       .illegal-banner {
         margin: 0.5rem 0;
@@ -501,9 +530,13 @@ class GamePane extends LitElement {
       ? renderPinwheel(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
       : null;
 
+    const claimAvailable = isClaimAvailable(this.currentPrompt);
     return html`
       <div class="pane">
         ${paneHeader("Game pane", null, null)}
+        ${claimAvailable
+          ? html`<div class="claim-chip">[ CLAIM AVAILABLE ]</div>`
+          : ""}
         <div class="status ${this.status}">Connection: ${this.status}</div>
         ${tableContent !== null
           ? html`<div class="table-ascii pinwheel-wrap">
@@ -616,6 +649,13 @@ class LobbyView extends LitElement {
     desiredHumans: { type: Number },
     lastRefreshTs: { type: Number, state: true },
     busy: { type: String, state: true }, // null | "joining" | "creating"
+    // §22.6 Part A — table creation options (collapsed by default).
+    showAdvanced: { state: true },
+    pacingPreset: { state: true },       // "fast" | "normal" | "slow" | "custom"
+    customMin: { state: true },
+    customMax: { state: true },
+    decideTimeout: { state: true },
+    timeoutsEnabled: { state: true },
   };
 
   static styles = css`
@@ -694,6 +734,35 @@ class LobbyView extends LitElement {
       color: var(--accent);
     }
     .pick-btn:hover:not(.selected) { color: var(--accent); }
+    /* §22.6 Part A — advanced table-creation options. */
+    .adv-options { margin: 0.4rem 0; }
+    .adv-toggle {
+      background: transparent;
+      border: none;
+      color: var(--fg-dim);
+      font-family: inherit;
+      font-size: inherit;
+      cursor: pointer;
+      padding: 0;
+    }
+    .adv-toggle:hover:not(:disabled) { color: var(--accent); }
+    .adv-body {
+      margin: 0.3rem 0 0 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .adv-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+    .adv-label { color: var(--fg-dim); }
+    .adv-radio { color: var(--fg); display: inline-flex; align-items: center; gap: 0.2rem; }
+    .adv-custom input,
+    .adv-row input[type="number"] {
+      width: 4rem;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      font-family: inherit;
+    }
     .lobby-actions {
       display: flex;
       gap: 0.75rem;
@@ -723,10 +792,33 @@ class LobbyView extends LitElement {
     this.desiredHumans = 1;
     this.lastRefreshTs = 0;
     this.busy = null;
+    this.showAdvanced = false;
+    this.pacingPreset = "normal";
+    this.customMin = 5.0;
+    this.customMax = 10.0;
+    this.decideTimeout = 60;
+    this.timeoutsEnabled = true;
   }
 
   _emit(name, detail) {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
+  }
+
+  // Build the CREATE_TABLE.options object from the advanced controls.
+  // Returns null when every control is at its default (keeps the wire
+  // message minimal and lets the server apply its own defaults).
+  _buildOptions() {
+    const atDefault =
+      this.pacingPreset === "normal" && this.decideTimeout === 60 && this.timeoutsEnabled;
+    if (atDefault) return null;
+    const options = {};
+    options.bot_pacing =
+      this.pacingPreset === "custom"
+        ? { min_s: Number(this.customMin), max_s: Number(this.customMax) }
+        : this.pacingPreset;
+    options.timeouts_enabled = this.timeoutsEnabled;
+    if (this.timeoutsEnabled) options.decide_timeout_seconds = Number(this.decideTimeout);
+    return options;
   }
 
   _onJoin(tableId, seat) {
@@ -738,7 +830,7 @@ class LobbyView extends LitElement {
   _onCreate() {
     if (this.busy) return;
     this.busy = "creating";
-    this._emit("lobby-create", { humans: this.desiredHumans });
+    this._emit("lobby-create", { humans: this.desiredHumans, options: this._buildOptions() });
   }
 
   _onRefresh() {
@@ -798,6 +890,85 @@ class LobbyView extends LitElement {
     `;
   }
 
+  _renderAdvancedOptions() {
+    const presets = ["fast", "normal", "slow", "custom"];
+    return html`
+      <div class="adv-options">
+        <button
+          class="adv-toggle"
+          ?disabled=${!!this.busy}
+          @click=${() => (this.showAdvanced = !this.showAdvanced)}
+        >
+          ${this.showAdvanced ? "▼" : "▶"} Options (advanced)
+        </button>
+        ${this.showAdvanced
+          ? html`
+              <div class="adv-body">
+                <div class="adv-row">
+                  <span class="adv-label">Bot pacing:</span>
+                  ${presets.map(
+                    (p) => html`
+                      <label class="adv-radio">
+                        <input
+                          type="radio"
+                          name="pacing"
+                          .checked=${this.pacingPreset === p}
+                          ?disabled=${!!this.busy}
+                          @change=${() => (this.pacingPreset = p)}
+                        />${p}
+                      </label>
+                    `,
+                  )}
+                  ${this.pacingPreset === "custom"
+                    ? html`<span class="adv-custom"
+                        ><input
+                          type="number"
+                          min="0"
+                          max="60"
+                          step="0.5"
+                          .value=${String(this.customMin)}
+                          @input=${(e) => (this.customMin = e.target.value)}
+                        />–<input
+                          type="number"
+                          min="0"
+                          max="60"
+                          step="0.5"
+                          .value=${String(this.customMax)}
+                          @input=${(e) => (this.customMax = e.target.value)}
+                        />s</span
+                      >`
+                    : ""}
+                </div>
+                <div class="adv-row">
+                  <span class="adv-label">Decide time:</span>
+                  <input
+                    type="number"
+                    min="5"
+                    max="600"
+                    step="5"
+                    .value=${String(this.decideTimeout)}
+                    ?disabled=${!this.timeoutsEnabled || !!this.busy}
+                    @input=${(e) => (this.decideTimeout = e.target.value)}
+                  />
+                  <span class="adv-label">seconds per discard prompt</span>
+                </div>
+                <div class="adv-row">
+                  <label class="adv-radio">
+                    <input
+                      type="checkbox"
+                      .checked=${this.timeoutsEnabled}
+                      ?disabled=${!!this.busy}
+                      @change=${(e) => (this.timeoutsEnabled = e.target.checked)}
+                    />Use time limits (uncheck → no deadline on this table)
+                  </label>
+                </div>
+              </div>
+            `
+          : ""}
+      </div>
+    `;
+  }
+
   _renderTable(t) {
     const seats = (t.seats ?? []).map((s) => ({
       ...s,
@@ -842,6 +1013,7 @@ class LobbyView extends LitElement {
           )}
           <span class="pick-label">+ ${4 - this.desiredHumans} canned-pass bot${4 - this.desiredHumans === 1 ? "" : "s"}</span>
         </div>
+        ${this._renderAdvancedOptions()}
         <div class="lobby-actions">
           <button
             class="lobby-btn"
@@ -1463,15 +1635,14 @@ class MahjongApp extends LitElement {
     }
   }
 
-  _doCreateTable(humans) {
+  _doCreateTable(humans, options = null) {
     // The lobby panel passes the chosen composition; falls back to the
     // URL-param default when called from auto-flows.
     const n = Number.isFinite(humans) ? humans : this._desiredHumans;
+    const msg = { kind: "CREATE_TABLE", seats: _seatsForHumanCount(n) };
+    if (options) msg.options = options; // §22.6 Part A; omit → server defaults
     try {
-      this._conn.send({
-        kind: "CREATE_TABLE",
-        seats: _seatsForHumanCount(n),
-      });
+      this._conn.send(msg);
     } catch (err) {
       console.warn("CREATE_TABLE send failed:", err);
     }
@@ -1519,12 +1690,12 @@ class MahjongApp extends LitElement {
   }
 
   _onLobbyCreate(e) {
-    const { humans } = e.detail;
+    const { humans, options } = e.detail;
     if (Number.isFinite(humans) && humans >= 1 && humans <= 4) {
       this._lobbyHumans = humans;
     }
     this._lobbyError = null;
-    this._doCreateTable(this._lobbyHumans);
+    this._doCreateTable(this._lobbyHumans, options ?? null);
   }
 
   _onLobbyRefresh() {

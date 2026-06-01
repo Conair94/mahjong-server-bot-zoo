@@ -39,6 +39,7 @@ from mahjong.server.registry import (
     TableRegistry,
 )
 from mahjong.server.seats import SeatsParseError, parse_seats_from_wire
+from mahjong.server.table_options import TableOptionsError, parse_table_options
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table.manager import DecideTimeouts
 from mahjong.wire.server import Connection, WebSocketServer
@@ -395,6 +396,24 @@ class MultiTableOrchestrator:
                 await conn.send({"kind": "ERROR", "code": "framing", "message": str(exc)})
             return False
 
+        # Per-table creation options (§22.6 Part A) override the server
+        # defaults for this table only. Resolve against the server defaults.
+        default_timeouts = self._decide_timeouts or DecideTimeouts.uniform(
+            self._decide_timeout_seconds
+        )
+        try:
+            opts = parse_table_options(
+                msg.get("options"),
+                default_pacing_enabled=self._bot_pacing_enabled,
+                default_min_delay_s=self._bot_min_delay_s,
+                default_max_delay_s=self._bot_max_delay_s,
+                default_decide_timeouts=default_timeouts,
+            )
+        except TableOptionsError as exc:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "framing", "message": str(exc)})
+            return False
+
         try:
             table_id = self._registry.create_table_direct(
                 ruleset=self._ruleset,
@@ -402,15 +421,15 @@ class MultiTableOrchestrator:
                 server_info=self._server_info,
                 data_dir=self._data_dir,
                 decide_timeout_seconds=self._decide_timeout_seconds,
-                decide_timeouts=self._decide_timeouts,
+                decide_timeouts=opts.decide_timeouts,
                 hold_seconds=self._hold_seconds,
                 strike_limit=self._strike_limit,
                 max_hands=self._max_hands,
                 between_hand_pause_seconds=self._between_hand_pause_seconds,
                 seats=seats,
-                bot_pacing_enabled=self._bot_pacing_enabled,
-                bot_min_delay_s=self._bot_min_delay_s,
-                bot_max_delay_s=self._bot_max_delay_s,
+                bot_pacing_enabled=opts.bot_pacing_enabled,
+                bot_min_delay_s=opts.bot_min_delay_s,
+                bot_max_delay_s=opts.bot_max_delay_s,
             )
         except ShuttingDown:
             with contextlib.suppress(Exception):

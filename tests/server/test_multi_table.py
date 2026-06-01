@@ -363,6 +363,71 @@ async def test_mt_f18_create_table_rejected_post_drain(
 
 
 # ---------------------------------------------------------------------------
+# §22.6 Part A: CREATE_TABLE.options apply per-table overrides
+# ---------------------------------------------------------------------------
+
+
+async def test_mt_create_table_with_options_applies_overrides(tmp_path: Path) -> None:
+    """A CREATE_TABLE with options resolves to per-table pacing + decide
+    timeouts on the created TableHandle, leaving server defaults untouched."""
+    orch = _make_orch(tmp_path)
+    await orch.start()
+    url = f"ws://127.0.0.1:{orch.port}"
+    try:
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
+            await ws.recv()  # HELLO
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "CREATE_TABLE",
+                        "ruleset": "mcr-2006",
+                        "seats": [{"kind": "human"}, {"kind": "bot"}, {"kind": "bot"}, {"kind": "bot"}],
+                        "options": {"bot_pacing": "slow", "decide_timeout_seconds": 90},
+                    }
+                )
+            )
+            resp = json.loads(cast(str, await ws.recv()))
+            assert resp["kind"] == "TABLE_CREATED", resp
+            handle = orch.registry.get_table(str(resp["table_id"]))
+            assert (handle._bot_min_delay_s, handle._bot_max_delay_s) == (15.0, 30.0)
+            assert handle._bot_pacing_enabled is True
+            assert handle._decide_timeouts is not None
+            assert handle._decide_timeouts.human_discard_s == 90.0
+            # CLAIM + bot deadlines stay at the orchestrator default (this
+            # test orch leaves decide_timeouts unset → uniform(30)); only the
+            # DISCARD deadline moved.
+            assert handle._decide_timeouts.human_claim_s == 30.0
+            assert handle._decide_timeouts.bot_s == 30.0
+    finally:
+        await orch.close()
+
+
+async def test_mt_create_table_invalid_options_rejected(tmp_path: Path) -> None:
+    """Malformed options → ERROR { code: 'framing' }, no table created."""
+    orch = _make_orch(tmp_path)
+    await orch.start()
+    url = f"ws://127.0.0.1:{orch.port}"
+    try:
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
+            await ws.recv()  # HELLO
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "CREATE_TABLE",
+                        "ruleset": "mcr-2006",
+                        "seats": [{"kind": "human"}, {"kind": "bot"}, {"kind": "bot"}, {"kind": "bot"}],
+                        "options": {"bot_pacing": {"min_s": -1.0, "max_s": 2.0}},
+                    }
+                )
+            )
+            resp = json.loads(cast(str, await ws.recv()))
+            assert resp["kind"] == "ERROR", resp
+            assert resp["code"] == "framing", resp
+    finally:
+        await orch.close()
+
+
+# ---------------------------------------------------------------------------
 # F_CLOSE_ADMIN: CLOSE_TABLE rejected for non-admin connection
 # ---------------------------------------------------------------------------
 

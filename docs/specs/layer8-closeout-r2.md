@@ -60,7 +60,9 @@ The active-badge `.active` class is already tied to `last_discard.seat`, so that
 
 ---
 
-## § 22.2 Claimable-action alerts (Tier 3 — UI)
+## § 22.2 Claimable-action alerts (Tier 3 — UI) — ✅ RESOLVED 2026-06-01 (visual; sound deferred)
+
+**Fix landed:** [prompt.js](../../mahjong/web/static/prompt.js) `isClaimAvailable(prompt)` = `phase === "CLAIM_WINDOW"` with a non-PASS legal action (note: the real prompt shape keys on `phase`/`legal_actions[].type`, not the `kind`/`action` this spec first sketched). When true, the prompt bar gets `.claim-active` (pulsing border via `@keyframes claim-pulse`, accent↔accent-red) and a `.claim-chip` "[ CLAIM AVAILABLE ]" pins under the pane header ([app.js](../../mahjong/web/static/app.js)). Both honour `prefers-reduced-motion`. Pinned by `test_claim_prompt_triggers_alert`, `test_discard_prompt_has_no_alert`, `test_pass_only_claim_has_no_alert`, `test_alert_clears_on_prompt_change` in [tests/web/test_prompt.py](../../tests/web/test_prompt.py). **Sound still deferred** per the original non-goal.
 
 ### Goal
 
@@ -251,7 +253,15 @@ Rule-engine correctness — the spec contract (BUGANG → replacement draw) is v
 
 ---
 
-## § 22.6 Table-creation options + claim-resolution window (Tier 2)
+## § 22.6 Table-creation options + claim-resolution window (Tier 2) — Part A ✅ RESOLVED 2026-06-01; Part B ✅ NOT NEEDED (already satisfied)
+
+**Part A landed 2026-06-01:** `CREATE_TABLE.options` is parsed by [mahjong/server/table_options.py](../../mahjong/server/table_options.py) (`parse_table_options` → `ResolvedTableOptions`) and threaded through the orchestrator's `_handle_create_table` into `create_table_direct` (bot pacing presets/custom → `bot_min/max_delay_s`; `decide_timeout_seconds` → human-DISCARD override; `timeouts_enabled=false` → effectively-unlimited human deadlines). Invalid options → `ERROR { code: "framing" }`. Lobby UI: collapsible "Options (advanced)" in `<lobby-view>` ([app.js](../../mahjong/web/static/app.js)) with pacing radios + custom min/max, decide-time input, and a use-time-limits checkbox; `_buildOptions()` collapses all-defaults to `null`. Pinned by [tests/server/test_table_options.py](../../tests/server/test_table_options.py) (17), the two `test_mt_create_table_*` integration tests in [tests/server/test_multi_table.py](../../tests/server/test_multi_table.py), and [tests/web/test_lobby_options.py](../../tests/web/test_lobby_options.py) (4).
+
+**Part B — NOT NEEDED. The premise below was wrong about the current code.** Part B was specced to fix a supposed first-come-first-served claim race ("a slower HU loses to a faster PENG"). On inspection, [`_step_claim_window`](../../mahjong/table/manager.py) **already** prompts every claimer in parallel via `asyncio.gather` and resolves with `_resolve_claim_priority` (HU > PENG/GANG > CHI, lower-seat tiebreak) — the resolution waits for all claimers and is *invariant to arrival order*. Order-independence and the priority tiebreak are already pinned by `test_resolve_priority_picks_higher_kind` and `test_resolve_priority_seat_tiebreak` in [tests/table/test_manager_claims.py](../../tests/table/test_manager_claims.py). The proposed 1.5 s "minimum claim window" would only *add* latency (a floor on resolution time) without adding any fairness the design doesn't already have, so it is deliberately **not** implemented. If a concrete unfairness ever surfaces in live multi-human play, reopen with a failing fixture that reproduces it first. The original (refuted) design is kept below for the record.
+
+---
+
+### (Original Part B design — superseded; kept for history)
 
 Two related but distinct asks: per-table bot pacing + decide-timeout knobs at creation time, AND a more principled multi-player claim resolution model.
 
@@ -474,13 +484,14 @@ By "smallest blast radius first" with one exception: § 22.5 (BUGANG) is biggest
 3. ✅ **§ 22.7 Hand re-sort** — DONE 2026-06-01 (reducer, not renderer).
 4. ✅ **§ 22.3 Selection highlight under Unicode** — DONE 2026-06-01 (`color-mix` tint).
 5. ✅ **§ 22.4 Discard tile size** — DONE 2026-06-01.
-6. **§ 22.2 Claimable alerts (visual)** — CSS keyframe + chip + fixtures. 1–2 hours. Sound deferred. *(in progress)*
-7. **§ 22.9 Hand-end scoring summary** — renderer-only; data already in `view.terminal`. ~1–2 hours.
-8. **§ 22.6 Table-creation options + claim window** — bigger work. Part A (options) is ~1 day; Part B (claim window) is a careful refactor of the table manager — TDD-mandatory per the working agreement. 1–2 days.
+6. ✅ **§ 22.2 Claimable alerts (visual)** — DONE 2026-06-01 (pulse + chip; sound deferred).
+7. **§ 22.9 Hand-end scoring summary** — renderer-only; data already in `view.terminal`. ~1–2 hours. *(open)*
+8. **§ 22.6 Table-creation options + claim window** — Part A ✅ DONE 2026-06-01. Part B ✅ not needed (existing parallel-gather + priority resolution already fair).
 
-**Gate to close Layer 8:** items 1–7 done + browser-verified. § 22.6 Part B can land separately as the first piece of Layer 9 if it gets too large for the close-out window.
+**Gate to close Layer 8:** §22.9 is the last open close-out item (plus the browser-verify pass for the landed UI work). Everything else in Spec 22 is done.
 
 ## Open questions
 
-- **§ 22.6 Part B default window length.** 1.5s is a guess. After two-tab play with the window enabled, we should pick the value that feels right rather than the one the spec defaulted to.
+- **§ 22.9 — when?** The only remaining Spec 22 implementation item. Renderer-only, low risk.
 - **§ 22.2 sound — when?** If we have a target session for adding sound, the audio asset + Web Audio plumbing is small (~1 hour). Just needs to be scheduled.
+- **Qiang-gang-hu** (robbing the kong) — unspecced rules gap surfaced in §22.5; needs its own small spec when prioritised.
