@@ -10,8 +10,10 @@ Badges display the **wind number** of each seat (MCR convention):
     F1 East = 1, F2 South = 2, F3 West = 3, F4 North = 4.
 
 The center cell carries an arrow that points at the cardinal position
-of whoever just discarded the tile shown in the center.  The arrow is
-``?`` during a CLAIM_WINDOW and a neutral ``·`` at TERMINAL.
+of whoever just discarded the tile shown in the center.  It points at the
+discarder in every phase that has a last-discard (including CLAIM_WINDOW —
+a `?` there leaked a claim-deciding tell, Spec 22 § 22.1) and falls back to
+a neutral ``·`` at TERMINAL or before the first discard.
 """
 
 from __future__ import annotations
@@ -163,18 +165,34 @@ async def test_fixture_2_arrow_points_at_last_discarder(
     assert arrow == expected_arrow, f"discarder={discarder_seat} → expected {expected_arrow!r}, got {arrow!r}"
 
 
-# --- Fixture 3: claim-window arrow is `?` ----------------------------------
+# --- Fixture 3: claim-window arrow follows the discarder (no info leak) -----
 
 
-async def test_fixture_3_claim_window_arrow_is_question_mark(
+async def test_fixture_3_claim_window_arrow_points_at_discarder(
     page: Page, fake_wire_server: FakeWireServer
 ) -> None:
+    """Spec 22 § 22.1: during a CLAIM_WINDOW the arrow must point at the
+    discarder exactly as in DISCARD phase — never a `?`. A `?` leaked the
+    fact that someone is deciding whether to claim, a tell you'd only have
+    by reading body language at a physical table."""
     view = _base_view(own_seat=0)
     view["phase"] = "CLAIM_WINDOW"
     view["pending_claims"] = [{"seat": 1}, {"seat": 2}]
-    view["last_discard"] = {"seat": 0, "tile": "T5", "turn_index": 1}
+    view["last_discard"] = {"seat": 1, "tile": "T5", "turn_index": 1}
     await _render_pinwheel(page, fake_wire_server, view, own_seat=0)
-    assert await _text(page, ".pw-arrow") == "?"
+    assert await _text(page, ".pw-arrow") == "→"  # discarder seat 1, relative to own seat 0
+
+
+async def test_fixture_3b_claim_window_without_discard_is_neutral(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Defensive: a CLAIM_WINDOW with no last_discard (currently impossible
+    per spec) falls back to the neutral marker, not a directional arrow."""
+    view = _base_view(own_seat=0)
+    view["phase"] = "CLAIM_WINDOW"
+    view["last_discard"] = None
+    await _render_pinwheel(page, fake_wire_server, view, own_seat=0)
+    assert await _text(page, ".pw-arrow") == "·"
 
 
 # --- Fixture 4: terminal phase shows neutral indicator ---------------------

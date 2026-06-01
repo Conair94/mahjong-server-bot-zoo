@@ -22,11 +22,33 @@
 //   an opponent's concealed (we only know the count). We decrement the
 //   count by the meld arity (2 / 3 / 4) and trust the meld payload on the
 //   event for what to show in the meld bar.
-// - We don't re-sort concealed after a DRAW; the canonical-sort invariant
-//   lives in the engine, not the projection. Newly-drawn tiles appear at
-//   the end of the hand — the same behavior as a physical table.
+// - We re-sort own concealed after a DRAW so the local hand mirrors the
+//   engine's canonical-sort invariant (the engine sorts concealed after
+//   every draw — mahjong/engine/transition/__init__.py). Earlier this was
+//   deliberately skipped, which left previously-drawn-then-kept tiles
+//   stranded at the tail of the hand and the suit-break logic broke (Spec
+//   22 § 22.7). The renderer still pulls the *just-drawn* tile out to the
+//   end via view.last_drawn (it matches by value, not array position), so
+//   the "newest tile sits apart" physical-table cue survives the sort.
 
 // ---- helpers ----------------------------------------------------------
+
+// Canonical tile order, mirroring engine/tiles.py `tile_sort_key`
+// (sections W < B < T < F < J < H, then by rank). Kept in lockstep with
+// the engine so the client hand reads in the same order the server uses.
+const _SUIT_ORDER = { W: 0, B: 1, T: 2, F: 3, J: 4, H: 5 };
+
+function _tileSortKey(token) {
+  const suit = _SUIT_ORDER[token?.[0]] ?? 99;
+  const rank = parseInt(token?.[1], 10) || 0;
+  return suit * 10 + rank;
+}
+
+function sortOwnConcealed(seatBlock) {
+  if (isOwnConcealed(seatBlock)) {
+    seatBlock.concealed.sort((a, b) => _tileSortKey(a) - _tileSortKey(b));
+  }
+}
 
 function cloneSeatView(view) {
   // Shallow-clone the top + each seat dict (we always copy seats we touch).
@@ -109,6 +131,7 @@ function applyDraw(view, event, _ownSeat) {
   if (event.tile) {
     // The drawing seat (own perspective) sees the tile.
     addToConcealed(seat, event.tile);
+    sortOwnConcealed(seat); // keep the local hand in engine-canonical order
     view.last_drawn = { seat: event.seat, tile: event.tile };
   } else {
     // Opponent draw — only the count moves.

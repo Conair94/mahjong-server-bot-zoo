@@ -188,7 +188,9 @@ function renderDiscards(discards, options) {
     if (idx > 0) out.push("\n              ");
     out.push(...joinTiles(row, " ", options));
   });
-  return out;
+  // Wrap in .discard-row so CSS can render the pile smaller than the hand
+  // (high-frequency, low-importance background info — Spec 22 § 22.4).
+  return html`<span class="discard-row">${out}</span>`;
 }
 
 function seatHeader(seat, positionLabel) {
@@ -372,10 +374,14 @@ function _seatBadge(seat) {
 }
 
 // The arrow points at whoever just discarded the tile shown in the
-// center.  Falls back to a neutral marker before the first discard, and
-// to a `?` during a claim window where multiple seats are deciding.
+// center.  Falls back to a neutral marker before the first discard /
+// after the hand ends.  It deliberately does NOT special-case
+// CLAIM_WINDOW: a `?` there broadcast that *someone is deciding whether
+// to claim*, which is a tell you'd only have by watching body language
+// at a physical table (Spec 22 § 22.1).  `last_discard` is already
+// public (the tile is on the table), so pointing at the discarder in
+// every phase reveals nothing new.
 function _pinwheelArrow(view, ownSeat) {
-  if (view.phase === "CLAIM_WINDOW") return "?";
   if (view.phase === "TERMINAL") return "·";
   const ld = view.last_discard;
   if (!ld || ld.seat == null) return "·";

@@ -54,6 +54,15 @@ def diff_to_events(
         events.append(_claim_resolution_claimed(state_after, seat, action, ts))
     elif t == "GANG":
         events.append(_gang_event(state_before, state_after, seat, action, ts))
+        # All three gang variants draw a replacement tile (gangshanghua) via
+        # internal_draw and return to DISCARD for the same seat. Surface that
+        # DRAW or the wire/record never reports the replacement tile, the
+        # client hand desyncs, and the table stalls (Spec 22 § 22.5).
+        if (
+            state_after["phase"] == "DISCARD"
+            and state_after["wall"]["drawn_count"] > state_before["wall"]["drawn_count"]
+        ):
+            events.append(_draw_event(state_after, ts))
     elif t == "HU":
         events.append(_hand_end_event(state_after, ts))
     else:  # pragma: no cover — exhaustive

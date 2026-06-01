@@ -98,7 +98,9 @@ When the user is ready: a single short pings via Web Audio API or a 30-byte WAV 
 
 ---
 
-## § 22.3 Selection highlight under Unicode tile style (Tier 3 — CSS)
+## § 22.3 Selection highlight under Unicode tile style (Tier 3 — CSS) — ✅ RESOLVED 2026-06-01
+
+**Fix landed:** [app.js](../../mahjong/web/static/app.js) `.tile-mod.selected` now uses `background-color: color-mix(in srgb, var(--accent) 22%, transparent)` + `border-radius`/`padding` instead of the unreliable `text-decoration: underline`. `color-mix` keeps the tint derived from `--accent` (follows theme swaps, no parallel `--accent-rgb` to maintain). Pinned by `test_fixture_8_selection_background_visible_in_both_styles` (asserts a non-transparent computed background under both ascii and unicode, mounting the real `<game-pane>` so the shadow CSS applies). The ASCII-bracket fallback in the original interface was not needed — the tint reads in both styles.
 
 ### Goal
 
@@ -127,7 +129,9 @@ Verify on light theme + dark theme + both tile styles. The tint should remain vi
 
 ---
 
-## § 22.4 Discard tile font sizing (Tier 3 — CSS)
+## § 22.4 Discard tile font sizing (Tier 3 — CSS) — ✅ RESOLVED 2026-06-01
+
+**Fix landed:** [render.js](../../mahjong/web/static/render.js) `renderDiscards` now wraps its output in `<span class="discard-row">`; [app.js](../../mahjong/web/static/app.js) adds `.discard-row .tile { font-size: 1.2em }` (dragons/face-down 1.45em). Hand tiles stay at 1.8em. Pinned by `test_fixture_9_discards_wrapped_in_discard_row` (structure) + `test_fixture_9b_discard_tile_smaller_than_hand_tile` (computed px on the mounted `<game-pane>`).
 
 ### Goal
 
@@ -163,7 +167,9 @@ The `last_discard` glyph in the pinwheel center is unaffected — it's a separat
 
 ---
 
-## § 22.5 BUGANG from hand stalls the hand loop (Tier 1 — engine bug)
+## § 22.5 BUGANG from hand stalls the hand loop (Tier 1 — engine bug) — ✅ RESOLVED 2026-06-01
+
+**Fix landed:** [diff.py](../../mahjong/records/diff.py) `GANG` branch now appends a `DRAW` event when the post-transition `drawn_count` increased — surfacing the gangshanghua replacement for all three gang variants. Pinned by `test_diff_{added,concealed,exposed}_gang_emits_replacement_draw` in [tests/records/test_diff.py](../../tests/records/test_diff.py). The client reducer ([apply_event.js](../../mahjong/web/static/apply_event.js)) already handled both `CLAIM_DECISION(GANG)` (meld upgrade) and `DRAW` (hand restore) correctly, so no client change was needed. **Still owed:** live two-tab browser verify of a real BUGANG (the working-agreement gate for UI-facing fixes).
 
 ### Goal
 
@@ -192,26 +198,52 @@ PLAYER declares BUGANG (legal_actions includes it during their DISCARD-eligible 
         → engine emits PROMPT (DISCARD) to the same player
 ```
 
-### What to investigate first
+### Root cause — CONFIRMED 2026-06-01 (supersedes the speculation below)
 
-1. Find the BUGANG transition in [mahjong/engine/transition/gang.py](../../mahjong/engine/transition/gang.py). Confirm where the post-bugang state ends up. Does the engine emit a DRAW event after the CLAIM_WINDOW resolves with all-PASS? If not, where does control return?
-2. Look at the table manager's CLAIM_WINDOW resolution in [mahjong/table/manager.py](../../mahjong/table/manager.py). After all seats PASS on a BUGANG, does the manager schedule the replacement draw or does it skip back to "whose turn is next"?
-3. Check if the same path works for regular GANG (closed kong). If GANG works and BUGANG doesn't, the regression is BUGANG-specific.
+The bug is **not** in `gang.py` and **not** in `manager.py`. Both were verified correct against `seed=42`:
 
-### Interface (sketch — pending root-cause)
+- [gang.py:67-81 `_gang_added`](../../mahjong/engine/transition/gang.py#L67-L81) promotes the PENG → GANG_ADDED, removes the tile from concealed, and calls `internal_draw(new, seat)`. After the transition the state is back in `DISCARD` with the same `current_actor`, `last_drawn` updated to the freshly-drawn tile, and `concealed` count preserved (14 → 14). The replacement draw **does** happen at the engine level.
+- The manager's main loop ([manager.py:254-278](../../mahjong/table/manager.py#L254-L278)) re-enters `_step_discard` for the same actor on the next iteration, so the manager *would* issue the follow-up DISCARD prompt.
 
-If the gap is in `gang.py`: add the replacement-draw transition for `is_added_kong`. If in `manager.py`: extend the CLAIM_WINDOW-resolution branch that recognises "this was a BUGANG, not a DISCARD-claim" and issues the gangshanghua draw before the next PROMPT.
+The actual defect is in **[mahjong/records/diff.py:55-56](../../mahjong/records/diff.py#L55-L56)**. The `GANG` branch emits a single `_gang_event` (a `CLAIM_DECISION`-shaped event) and **never appends the replacement `DRAW` event** — unlike the `PLAY` branch, which calls `_maybe_append_window_or_draw` to surface the engine's auto-advance draw. Because the DRAW is dropped from `diff_to_events`, the wire stream and the on-disk record never report the replacement tile. The web client's local hand is left one tile short, so it cannot render the follow-up DISCARD prompt and the table *appears* stuck even though the server-side engine state is fine.
+
+**Scope:** this affects **all three gang variants** (EXPOSED, CONCEALED, ADDED) — every one calls `internal_draw` and every one loses its DRAW event in `diff_to_events`. The user reported it via BUGANG-from-hand because that was the variant they hit first; the closed/exposed kongs have the same missing event (likely unnoticed because they occur less often in casual play). Verified via repro: `diff_to_events` for both CONCEALED and ADDED gangs returns only `[CLAIM_DECISION]`.
+
+This is a **record-format / wire-contract** bug, not a rules-engine bug. It still belongs to Tier 1 because the record is the replay + training source of truth (per [record-format.md](record-format.md)): a record that omits a wall draw is non-replayable and would silently corrupt the training corpus.
+
+### Interface (confirmed)
+
+In [diff.py](../../mahjong/records/diff.py) `diff_to_events`, the `GANG` branch must append a `DRAW` event when the post-transition `wall.drawn_count` increased — mirroring `_maybe_append_window_or_draw`. Sketch:
+
+```python
+elif t == "GANG":
+    events.append(_gang_event(state_before, state_after, seat, action, ts))
+    # All three gang variants draw a replacement tile (gangshanghua) via
+    # internal_draw. Surface it so the wire/record stay replayable.
+    if state_after["wall"]["drawn_count"] > state_before["wall"]["drawn_count"]:
+        events.append(_draw_event(state_after, ts))
+```
+
+The `_draw_event` constructor already reads `state_after["last_drawn"]` (the authoritative slot — see [[feedback_prefer_authoritative_state_over_derivation]]) and emits the standard DRAW shape (`seat`, `tile`, `flower_replacements`). Reuse it as-is — **do not** invent an `is_replacement` field: the record schema has no such field, and the web renderer already offsets the just-drawn tile from `last_drawn`, not from a per-event flag. The gangshanghua draw is structurally identical to a normal wall-front draw for replay purposes (same `drawn_count` advance, same tile recorded).
+
+**Flower-on-replacement:** `internal_draw` ([transition/__init__.py:125](../../mahjong/engine/transition/__init__.py#L125)) already loops past flowers — it routes flower tiles into the seat's `flowers` list and continues to the next non-flower. The existing `_draw_event` hardcodes `flower_replacements: []` (a pre-existing gap on *all* DRAW events, not gang-specific), so the gang DRAW inherits the same behaviour. Leaving that consistent is in scope; populating `flower_replacements` from the diff is a separate, pre-existing record-completeness item and is **not** part of this fix.
+
+### Out of scope for this fix (tracked separately)
+
+- **Qiang-gang-hu (robbing the kong).** MCR allows an opponent holding the winning tile to HU off a BUGANG before the replacement draw. The current engine does **not** open a claim window for this — `_gang_added` draws immediately. This is a *rules-completeness gap*, not the stall, and is deferred to its own spec item (see Open questions). The stall fix above does not depend on it.
 
 ### Verification fixtures
 
-[tests/engine/test_bugang_replacement.py](../../tests/engine/test_bugang_replacement.py) (new file):
+[tests/records/test_diff.py](../../tests/records/test_diff.py) extension (the bug lives in the diff layer, so the pinning test goes there):
 
-1. **bugang_emits_replacement_draw** — deterministic state: seat 0 has PENG of T5 melded + T5 in concealed. Seat 0 declares BUGANG. No qiang-gang-hu available (no other seat has the winning tile). Assert the next event sequence is `MELD(GANG, added_kong=true)` → `CLAIM_WINDOW` → all-PASS → `DRAW(is_replacement=true, seat=0)` → `PROMPT(DISCARD, seat=0)`.
-2. **bugang_with_flower_replacement** — replacement draw is a flower; engine emits `FLOWER` then another `DRAW(is_replacement=true)`.
-3. **bugang_qiang_gang_hu_wins** — opponent has the winning tile; declares HU; assert terminal with `qiang_gang_hu` fan applied; no replacement draw issued.
-4. **bugang_from_drawn_tile** — regression: BUGANG declared with the just-drawn tile (the existing path that arguably works) — assert it still works and emits the replacement draw.
+1. **added_gang_emits_replacement_draw** — seat has PENG of W1 melded + W1 in concealed; apply `GANG/ADDED`; assert `diff_to_events` returns `[CLAIM_DECISION(GANG, ADDED), DRAW(seat=actor, is_replacement=true)]` and the DRAW tile equals `state_after["last_drawn"]["tile"]`.
+2. **concealed_gang_emits_replacement_draw** — 4-of-a-kind concealed; apply `GANG/CONCEALED`; assert the same DRAW is emitted.
+3. **exposed_gang_emits_replacement_draw** — claim a discard into an exposed kong; assert the DRAW is emitted (and that the discarder's discard-pop event ordering is unchanged).
+4. **gang_replacement_flower** — if the gangshanghua is a flower, assert the `FLOWER` event precedes the final `DRAW` (only if `internal_draw` surfaces flowers; otherwise document that flowers are consumed silently and drop this fixture).
 
-The seeded-rollout determinism fixture in [tests/determinism/](../../tests/determinism/) should be extended to cover at least one hand that involves a BUGANG so a future regression doesn't silently change the wall-consumption order.
+Plus one **manager-level e2e** in [tests/table/](../../tests/table/) (the contract that actually broke for the user): drive a hand where a seat declares BUGANG, assert the record contains a `DRAW` event for the actor immediately after the `CLAIM_DECISION(GANG)` and that the next `PROMPT` is a DISCARD to the same seat — i.e. the table does not stall.
+
+The seeded-rollout determinism fixture in [tests/determinism/](../../tests/determinism/) should be extended to cover at least one hand that involves a GANG so a future regression doesn't silently change the wall-consumption order or re-drop the DRAW event.
 
 ### Why Tier 1
 
@@ -335,53 +367,92 @@ Touches the table manager's central claim path. Spec the change carefully; pin t
 
 ---
 
-## § 22.7 Re-sort concealed hand after every mutation (Tier 3 — renderer)
+## § 22.7 Re-sort concealed hand after every mutation (Tier 3 — client reducer) — ✅ RESOLVED 2026-06-01
 
-### Goal
+### Corrected diagnosis (the original premise below was wrong)
 
-The engine sorts `concealed` in `initial_state` (per [state.py:92](../../mahjong/engine/state.py)) but does **not** re-sort on subsequent transitions — DRAW appends, DISCARD removes by value, CHI/PENG/GANG/BUGANG remove a subset. After a couple of turns the local player's hand drifts out of canonical order, breaking the suit-break logic in [§ 1 hand-display polish](layer8-closeout.md) (the .suit-break class only fires when consecutive tokens differ by suit prefix, which assumes contiguous suit groups).
+The original spec assumed the **engine** stops sorting after `initial_state`. That is false: `internal_draw` sorts `concealed` after **every** draw ([transition/__init__.py:141](../../mahjong/engine/transition/__init__.py#L141)), and the removal paths (DISCARD/CHI/PENG/GANG) use `.remove()`/value-removal, which preserve a sorted list. The engine hand is always canonical.
 
-Fix: re-sort on the renderer side every time we render. Engine state stays in its post-transition order (preserves whatever determinism guarantees the engine relies on); the seat-projected view that the renderer consumes is sorted before display.
+The drift the user saw came from the **client reducer**: [apply_event.js](../../mahjong/web/static/apply_event.js) deliberately appended drawn tiles to the tail and never re-sorted (an explicit scope decision in its header comment). After a few draw-then-keep turns, the tail of the *client's local* hand was a jumble, which is what broke the suit-break logic.
 
-### Why renderer-side, not engine-side
+### Why the fix moved to the reducer, not the renderer
 
-- Engine determinism: any reordering inside the engine risks shifting the canonical state hash that the determinism gates compare against (per [determinism.md](determinism.md)). Worth avoiding unless we have a stronger reason.
-- Renderer-only: the sort is a presentation concern. The wire payload is unchanged; only the JS `renderOwnConcealedTiles` helper sorts before walking.
-- Single point of fix: one function in `render.js`.
+The original interface (sort inside `renderOwnConcealedTiles`) would **break tile selection**. The selection cursor `selectedTile` is an index into the reducer's concealed array ([app.js `_ownConcealedTiles`](../../mahjong/web/static/app.js)), and both arrow-key nav and digit-key selection (`actionForKey`) resolve the chosen tile by that same raw index. Sorting only the *display* would leave digit "3" highlighting whatever sits at raw index 3 — not the third visible tile. Sorting in the reducer keeps the array, the cursor, and the display all in one order.
 
-### Interface
+The just-drawn "sits apart" cue is unaffected: the renderer pulls `view.last_drawn` out to the end by **value**, not array position, so it still offsets correctly over a fully-sorted array.
 
-[render.js](../../mahjong/web/static/render.js) — add a sort comparator matching [engine/tiles.py `tile_sort_key`](../../mahjong/engine/tiles.py):
+### Fix landed
 
-```js
-const SUIT_ORDER = { W: 0, B: 1, T: 2, F: 3, J: 4, H: 5 };
-
-function _tileSortKey(token) {
-  const suit = SUIT_ORDER[token?.[0]] ?? 99;
-  const rank = parseInt(token?.[1], 10) || 0;
-  return suit * 10 + rank;
-}
-```
-
-In `renderOwnConcealedTiles`, sort a *copy* of the concealed list before splitting into render-order. The just-drawn handling (find by token, pull to end) operates on the sorted copy.
-
-The original `seat.concealed` is left untouched so any other code consuming it sees the engine-canonical (possibly unsorted) order.
+[apply_event.js](../../mahjong/web/static/apply_event.js): added `_tileSortKey` (mirrors [engine/tiles.py `tile_sort_key`](../../mahjong/engine/tiles.py), sections W<B<T<F<J<H) + `sortOwnConcealed`, called in `applyDraw` right after the drawn tile is appended. Opponent concealed (a count) is untouched. Pinned by [tests/web/test_reducer_sort.py](../../tests/web/test_reducer_sort.py) (`test_draw_resorts_own_concealed_into_canonical_order`, `test_just_drawn_tile_is_sorted_in_array_but_offset_by_renderer`).
 
 ### Worked example
 
-Engine emits `concealed=[W2, T7, W3, B5]` after several turns. Renderer sorts → `[W2, W3, B5, T7]`. Suit-breaks fire on B5 (W → B) and T7 (B → T). Display reads m2 m3 ·p5 ·s7 with visible gaps.
-
-### Verification fixtures
-
-[tests/web/test_hand_display.py](../../tests/web/test_hand_display.py) extension:
-
-- **render_sorts_unsorted_concealed** — `concealed=[T7, W3, W2, B5]` (engine-order); render; assert displayed tokens are in order `[W2, W3, B5, T7]`.
-- **just_drawn_after_resort** — `concealed=[T7, W2, B5]`, `last_drawn={tile:"B5"}`. After sort the list is `[W2, B5, T7]`; pulling B5 to the end produces `[W2, T7, B5]` with B5 as just-drawn. Assert the rendered order matches.
+Client local hand has drifted to `[W2, W3, B5, T7, W9, B1]` (W9/B1 stranded at the tail from earlier draws). Next DRAW of `T2` → reducer re-sorts → `[W2, W3, W9, B1, B5, T2, T7]`. The renderer then offsets `T2` (last_drawn) to the end; suit-breaks fire on B1 (W→B) and T2 (B→T).
 
 ### Non-goals
 
-- **Engine-side re-sort.** Out of scope per the determinism argument above.
-- **Stable sort across renders.** The sort is by canonical key, so it's deterministic on each render; tiles with identical token are interchangeable.
+- **Engine-side change.** None needed — the engine is already canonical.
+- **Renderer-side sort.** Rejected: breaks selection-cursor indexing (see above).
+
+---
+
+## § 22.9 Hand-end scoring summary (Tier 3 — renderer)
+
+### Goal
+
+When a hand ends — HU (someone wins) or a draw (exhausted wall) — the client shows nothing beyond the per-seat score in each block header and a neutral `·` on the pinwheel. The player gets no summary of *what happened*: who won, off which tile, the fan breakdown (which patterns scored and for how much), the total fan, and the per-seat point swing. Add an end-of-hand summary panel.
+
+### Background — the data is already on the wire
+
+No wire or reducer change is needed. [apply_event.js](../../mahjong/web/static/apply_event.js) `applyHandEnd` already populates `view.terminal` from the `HAND_END` event with everything required:
+
+```js
+view.terminal = {
+  kind,            // "HU" | "DRAW" (exhausted) | ...
+  winner,          // seat index, or null on a draw
+  win_tile,        // the winning tile token
+  win_type,        // "SELF_DRAW" | "DISCARD"
+  deal_in_seat,    // who dealt the winning tile (null on self-draw / draw)
+  fan,             // [{ name, points, count? }, ...] — the scored patterns
+  fan_total,       // total fan
+  score_delta,     // [d0, d1, d2, d3] per-seat point change
+};
+```
+
+`score_delta` is also already applied to each seat's running `score`. The gap is purely that [render.js](../../mahjong/web/static/render.js) renders nothing for `phase === "TERMINAL"`.
+
+### Interface
+
+[render.js](../../mahjong/web/static/render.js): add `renderHandEndSummary(view, ownSeat)` that returns a panel when `view.terminal != null`, wired into `renderTable` (or surfaced as a sibling block in the game pane). Contents:
+
+- **Headline.** HU: `"{seat wind} ({You|Seat N}) wins"` + win-type (`"self-draw"` / `"on {discarder wind}'s discard"`) + the winning tile glyph. Draw: `"Exhausted draw — no winner"`.
+- **Fan breakdown.** One row per `fan[]` entry: pattern name + its point value (× count when an entry repeats). MCR fan names come straight from the engine's scorer (per [engine-api.md](engine-api.md) / the Botzone 81-fan table — do not re-translate names client-side; render what the event carries).
+- **Total.** `fan_total` (must be ≥ 8 for a legal MCR win).
+- **Point swing.** The four `score_delta` values, labelled by seat, with the winner highlighted.
+
+Styling lives in the `<game-pane>` shadow CSS ([app.js](../../mahjong/web/static/app.js)), consistent with §22.3/§22.4. Use `--accent` for the winner row, `--accent-red`/`--fg-dim` for payers.
+
+### Non-goals
+
+- **Match-level / cumulative scoreboard across hands.** This panel is per-hand. A running multi-hand scoreboard is a separate feature (likely Layer 9, tied to the multi-hand match flow).
+- **Replaying the winning hand tile-by-tile.** Out of scope — show the final melds + winning tile, not an animation.
+- **"Next hand" button wiring.** The summary is display-only; hand advancement is the existing `START_HAND` / orchestrator path.
+
+### Verification fixtures
+
+[tests/web/test_hand_display.py](../../tests/web/test_hand_display.py) (or a new `test_hand_end_summary.py`):
+
+- **hu_summary_shows_winner_and_fan** — feed a `view.terminal` with `kind=HU`, a known winner, two fan entries, `fan_total`; render; assert the panel shows the winner, both fan names + points, and the total.
+- **self_draw_vs_discard_headline** — `win_type=SELF_DRAW` → "self-draw"; `win_type=DISCARD` + `deal_in_seat` → "on {wind}'s discard".
+- **draw_summary_shows_no_winner** — `kind=DRAW`, `winner=null` → "exhausted draw" headline, no fan rows.
+- **score_delta_rendered_per_seat** — assert each seat's delta appears and the winner's row carries the accent/highlight class.
+- **no_summary_before_terminal** — `view.terminal == null` (mid-hand) → panel absent.
+
+Mount the real `<game-pane>` for any computed-style assertions (the §22.3/§22.4 pattern), bare-div render for structure-only checks.
+
+### Why Tier 3
+
+Pure presentation over data the reducer already holds; no wire/engine/manager change. Low blast radius, high player-facing value — currently a win just silently bumps the score with no explanation of the fan, which is exactly the part of MCR a learning player most needs to see.
 
 ---
 
@@ -398,18 +469,18 @@ For completeness — this spec does NOT close out the following items from [laye
 
 By "smallest blast radius first" with one exception: § 22.5 (BUGANG) is biggest by lines-of-code but unblocks live play with kongs, so it goes first.
 
-1. **§ 22.5 BUGANG replacement draw** — Tier 1 engine bug. Test-first; pin the rule via fixtures before changing the engine. Half to one day depending on root cause depth.
-2. **§ 22.1 Claim-window arrow leak** — one-line renderer fix + one updated fixture. 15 min.
-3. **§ 22.7 Hand re-sort on render** — small renderer addition + 2 fixtures. 30 min.
-4. **§ 22.3 Selection highlight under Unicode** — CSS swap + screenshot fixture. 1 hour.
-5. **§ 22.4 Discard tile size** — CSS + class wrapper. 30 min.
-6. **§ 22.2 Claimable alerts (visual)** — CSS keyframe + chip + fixtures. 1–2 hours. Sound deferred.
-7. **§ 22.6 Table-creation options + claim window** — bigger work. Part A (options) is ~1 day; Part B (claim window) is a careful refactor of the table manager — TDD-mandatory per the working agreement. 1–2 days.
+1. ✅ **§ 22.5 BUGANG replacement draw** — DONE 2026-06-01 (diff-layer DRAW emission, all 3 gang variants).
+2. ✅ **§ 22.1 Claim-window arrow leak** — DONE 2026-06-01.
+3. ✅ **§ 22.7 Hand re-sort** — DONE 2026-06-01 (reducer, not renderer).
+4. ✅ **§ 22.3 Selection highlight under Unicode** — DONE 2026-06-01 (`color-mix` tint).
+5. ✅ **§ 22.4 Discard tile size** — DONE 2026-06-01.
+6. **§ 22.2 Claimable alerts (visual)** — CSS keyframe + chip + fixtures. 1–2 hours. Sound deferred. *(in progress)*
+7. **§ 22.9 Hand-end scoring summary** — renderer-only; data already in `view.terminal`. ~1–2 hours.
+8. **§ 22.6 Table-creation options + claim window** — bigger work. Part A (options) is ~1 day; Part B (claim window) is a careful refactor of the table manager — TDD-mandatory per the working agreement. 1–2 days.
 
-**Gate to close Layer 8:** items 1–6 done + browser-verified. § 22.6 Part B can land separately as the first piece of Layer 9 if it gets too large for the close-out window.
+**Gate to close Layer 8:** items 1–7 done + browser-verified. § 22.6 Part B can land separately as the first piece of Layer 9 if it gets too large for the close-out window.
 
 ## Open questions
 
-- **§ 22.5 root cause unknown.** Could be in `gang.py`'s state transitions, in `manager.py`'s claim-window resolution, or in the table manager's "next actor" computation. Investigation is the first half-day; the fix shape depends on what we find.
 - **§ 22.6 Part B default window length.** 1.5s is a guess. After two-tab play with the window enabled, we should pick the value that feels right rather than the one the spec defaulted to.
 - **§ 22.2 sound — when?** If we have a target session for adding sound, the audio asset + Web Audio plumbing is small (~1 hour). Just needs to be scheduled.

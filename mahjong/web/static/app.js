@@ -260,6 +260,12 @@ class GamePane extends LitElement {
         vertical-align: baseline;
       }
       .tile.dragon, .tile.face-down { font-size: 2.2em; }
+      /* Discard pile is high-frequency background info — render it smaller
+       * than the hand so attention stays on the concealed tiles (Spec 22
+       * § 22.4). Dragons / face-down keep a slightly larger ratio. */
+      .discard-row .tile { font-size: 1.2em; }
+      .discard-row .tile.dragon,
+      .discard-row .tile.face-down { font-size: 1.45em; }
       .tile .rank { color: var(--fg); }
       .tile .suit-bamboo,
       .tile.suit-bamboo { color: var(--suit-bamboo); }
@@ -277,10 +283,15 @@ class GamePane extends LitElement {
        * for the local player's concealed hand: selection cursor,
        * just-drawn offset, and suit-group break. */
       .tile-mod { display: inline; }
+      /* Selection cue: a translucent accent-tint box rather than an
+       * underline. The underline didn't render reliably under the unicode
+       * mahjong glyphs (Spec 22 § 22.3); a background box reads under both
+       * ASCII and unicode and on both themes. color-mix keeps it derived
+       * from --accent so it follows theme swaps without a parallel var. */
       .tile-mod.selected {
-        text-decoration: underline;
-        text-decoration-color: var(--accent);
-        text-decoration-thickness: 0.15em;
+        background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+        border-radius: 0.15em;
+        padding: 0 0.1em;
         font-weight: 600;
       }
       .tile-mod.just-drawn { margin-left: 1.2em; }
