@@ -24,6 +24,7 @@ import { LitElement, html, css } from "lit";
 import { renderTable, renderPinwheel, renderHandEndSummary } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
+import "/static/feedback.js";
 
 // --- ConnectionManager --------------------------------------------------
 
@@ -1314,6 +1315,7 @@ class MahjongApp extends LitElement {
     _lobbyTables: { state: true },  // array of TABLE_LIST.tables entries
     _lobbyHumans: { state: true },  // current composition pick (1..4)
     _lobbyError: { state: true },   // null | error string above the table list
+    _sessionToken: { state: true }, // drives <feedback-button> visibility
   };
 
   static styles = css`
@@ -1531,6 +1533,16 @@ class MahjongApp extends LitElement {
             this._authState = "error";
             this._authError = "Invalid credentials — please try again.";
           }
+          return;
+        }
+
+        // --- Feedback (Spec 23) --------------------------------------------
+        if (frame.kind === "FEEDBACK_ACK") {
+          this._feedbackResult(true);
+          return;
+        }
+        if (frame.kind === "ERROR" && frame.code === "feedback_error") {
+          this._feedbackResult(false, frame.message);
           return;
         }
 
@@ -1849,7 +1861,26 @@ class MahjongApp extends LitElement {
         .tileStyle=${this.tileStyle}
         ?hidden=${showLobby || showAuth}
       ></table-page>
+      <feedback-button
+        .sessionToken=${this._sessionToken}
+        @feedback-submit=${this._onFeedbackSubmit}
+      ></feedback-button>
     `;
+  }
+
+  _onFeedbackSubmit(e) {
+    // Child <feedback-button> validated locally; relay over the WS connection.
+    const { type, text } = e.detail;
+    try {
+      this._conn.send({ kind: "FEEDBACK", type, text });
+    } catch {
+      this._feedbackResult(false, "Not connected. Please try again.");
+    }
+  }
+
+  _feedbackResult(ok, message) {
+    const btn = this.renderRoot.querySelector("feedback-button");
+    if (btn) btn.onResult(ok, message);
   }
 }
 

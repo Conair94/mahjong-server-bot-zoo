@@ -42,6 +42,7 @@ from mahjong.server.seats import SeatsParseError, parse_seats_from_wire
 from mahjong.server.table_options import TableOptionsError, parse_table_options
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table.manager import DecideTimeouts
+from mahjong.wire.feedback import SanitiseError, sanitise_report_text
 from mahjong.wire.server import Connection, WebSocketServer
 
 _logger = logging.getLogger(__name__)
@@ -175,6 +176,7 @@ class MultiTableOrchestrator:
     async def start(self) -> None:
         if self._ws_server is not None:
             raise RuntimeError("MultiTableOrchestrator already started")
+        (self._data_dir / "reports").mkdir(parents=True, exist_ok=True)
         self._ws_server = WebSocketServer(
             host=self._host,
             port=self._port,
@@ -235,6 +237,9 @@ class MultiTableOrchestrator:
 
                 elif kind == "CLOSE_TABLE":
                     await self._handle_close_table(conn, msg)
+
+                elif kind == "FEEDBACK":
+                    await self._handle_feedback(conn, msg)
 
                 elif kind == "ATTACH":
                     table = await self._handle_attach(conn, msg)
@@ -469,6 +474,53 @@ class MultiTableOrchestrator:
             _logger.exception("close_table.failed", exc_info=exc)
             with contextlib.suppress(Exception):
                 await conn.send({"kind": "ERROR", "code": "internal_error"})
+
+    # --- feedback ---
+
+    async def _handle_feedback(self, conn: Connection, msg: dict[str, Any]) -> None:
+        """Handle FEEDBACK: sanitise, write to data_dir/reports/, send FEEDBACK_ACK."""
+        report_type = msg.get("type")
+        if report_type not in ("bug", "feature"):
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": "invalid type"})
+            return
+
+        raw_text = msg.get("text")
+        if not isinstance(raw_text, str):
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": "text must be a string"})
+            return
+
+        try:
+            clean_text = sanitise_report_text(raw_text)
+        except SanitiseError as exc:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": str(exc)})
+            return
+
+        auth = self._auth_state.get(conn)
+        submitter = auth["display_name"] if auth else "anonymous"
+
+        reports_dir = self._data_dir / "reports"
+        await asyncio.get_running_loop().run_in_executor(
+            None, self._write_report, reports_dir, report_type, submitter, clean_text
+        )
+        with contextlib.suppress(Exception):
+            await conn.send({"kind": "FEEDBACK_ACK"})
+
+    @staticmethod
+    def _write_report(reports_dir: Path, report_type: str, submitter: str, text: str) -> None:
+        import datetime
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        stem = now.strftime("%Y%m%d_%H%M%S") + f"_{report_type}"
+        for attempt in range(10):
+            suffix = "" if attempt == 0 else f"_{attempt}"
+            path = reports_dir / f"{stem}{suffix}.txt"
+            if not path.exists():
+                break
+        header = f"type: {report_type}\nsubmitted: {now.isoformat(timespec='seconds')}\nsubmitter: {submitter}\n---\n"
+        path.write_text(header + text, encoding="utf-8")
 
     # --- attach / spectate ---
 

@@ -47,6 +47,8 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "TABLE_CREATED",
         "CLOSE_TABLE",
         "START_HAND",
+        "FEEDBACK",
+        "FEEDBACK_ACK",
     }
 )
 
@@ -237,6 +239,16 @@ class CloseTable(TypedDict):
     force: NotRequired[bool]
 
 
+class Feedback(TypedDict):
+    kind: Literal["FEEDBACK"]
+    type: Literal["bug", "feature"]
+    text: str
+
+
+class FeedbackAck(TypedDict):
+    kind: Literal["FEEDBACK_ACK"]
+
+
 WireMessage = (
     HelloServer
     | HelloClient
@@ -263,6 +275,8 @@ WireMessage = (
     | CreateTable
     | TableCreated
     | CloseTable
+    | Feedback
+    | FeedbackAck
 )
 
 

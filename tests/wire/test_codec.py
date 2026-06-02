@@ -248,6 +248,14 @@ _CLOSE_TABLE: dict[str, Any] = {
 
 _START_HAND: dict[str, Any] = {"kind": "START_HAND", "table_id": 17}
 
+_FEEDBACK: dict[str, Any] = {
+    "kind": "FEEDBACK",
+    "type": "bug",
+    "text": "The discard button disappears sometimes.",
+}
+
+_FEEDBACK_ACK: dict[str, Any] = {"kind": "FEEDBACK_ACK"}
+
 ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("HELLO_server", _HELLO_SERVER),
     ("HELLO_client", _HELLO_CLIENT),
@@ -277,6 +285,8 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("TABLE_CREATED", _TABLE_CREATED),
     ("CLOSE_TABLE", _CLOSE_TABLE),
     ("START_HAND", _START_HAND),
+    ("FEEDBACK", _FEEDBACK),
+    ("FEEDBACK_ACK", _FEEDBACK_ACK),
 ]
 
 
