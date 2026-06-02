@@ -30,6 +30,7 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "AUTH_REQUEST",
         "AUTH_RESPONSE",
         "RESUME",
+        "REGISTER",
         "LIST_TABLES",
         "TABLE_LIST",
         "ATTACH",
@@ -116,6 +117,14 @@ class AuthResponseFail(TypedDict):
 class Resume(TypedDict):
     kind: Literal["RESUME"]
     session_token: str
+
+
+class Register(TypedDict):
+    kind: Literal["REGISTER"]
+    username: str
+    password: str
+    display_name: str
+    invite_code: str
 
 
 class ListTables(TypedDict):
@@ -258,6 +267,7 @@ WireMessage = (
     | AuthResponseOk
     | AuthResponseFail
     | Resume
+    | Register
     | ListTables
     | TableList
     | Attach

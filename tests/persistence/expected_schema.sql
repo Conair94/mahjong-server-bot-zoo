@@ -38,6 +38,15 @@ CREATE TABLE hand_participants (
             final_score_delta    INTEGER,
             PRIMARY KEY (hand_id, seat)
         )
+CREATE TABLE invites (
+            code              TEXT PRIMARY KEY,
+            created_by        INTEGER NOT NULL REFERENCES accounts(account_id),
+            created_at_ms     INTEGER NOT NULL,
+            expires_at_ms     INTEGER,
+            max_uses          INTEGER NOT NULL DEFAULT 1 CHECK (max_uses >= 1),
+            used_count        INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
+            disabled          INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1))
+        )
 CREATE TABLE schema_version (
             version           INTEGER NOT NULL PRIMARY KEY CHECK (version >= 0),
             applied_at_ms     INTEGER NOT NULL,

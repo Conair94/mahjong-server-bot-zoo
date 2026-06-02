@@ -29,7 +29,9 @@ from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
 from mahjong.persistence.auth import (
     AuthResult,
+    RegisterError,
     handle_auth_request,
+    handle_register,
     handle_resume,
 )
 from mahjong.server.registry import (
@@ -301,6 +303,28 @@ class MultiTableOrchestrator:
                     self._run_resume,
                     str(msg.get("session_token") or ""),
                 )
+            elif kind == "REGISTER":
+                try:
+                    result = await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        self._run_register,
+                        msg,
+                    )
+                except RegisterError as exc:
+                    # Rejection: generic for invite problems, specific for a
+                    # taken username (public-deployment.md § 24.2). Counts
+                    # against the per-connection attempt budget like a failed
+                    # AUTH_REQUEST.
+                    with contextlib.suppress(Exception):
+                        await conn.send(
+                            {
+                                "kind": "ERROR",
+                                "code": "register_rejected",
+                                "message": exc.message,
+                            }
+                        )
+                    attempts += 1
+                    continue
             else:
                 with contextlib.suppress(Exception):
                     await conn.send({"kind": "ERROR", "code": "auth_required"})
@@ -350,6 +374,16 @@ class MultiTableOrchestrator:
     def _run_resume(self, token: str) -> AuthResult:
         assert self._persistence is not None
         return handle_resume(self._persistence._conn, token)
+
+    def _run_register(self, msg: dict[str, Any]) -> AuthResult:
+        assert self._persistence is not None
+        return handle_register(
+            self._persistence._conn,
+            username=str(msg.get("username") or ""),
+            password=str(msg.get("password") or ""),
+            display_name=str(msg.get("display_name") or ""),
+            invite_code=str(msg.get("invite_code") or ""),
+        )
 
     def _lookup_role(self, account_id: int) -> str:
         assert self._persistence is not None

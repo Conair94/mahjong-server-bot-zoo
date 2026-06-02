@@ -40,6 +40,19 @@ class SessionRow:
     user_agent: str | None
 
 
+@dataclasses.dataclass(frozen=True)
+class InviteRow:
+    """An invite-code row (public-deployment.md § 24.2)."""
+
+    code: str
+    created_by: int
+    created_at_ms: int
+    expires_at_ms: int | None
+    max_uses: int
+    used_count: int
+    disabled: bool
+
+
 # ---------------------------------------------------------------------------
 # Hand / participant types  (consumed by table manager + queries)
 # ---------------------------------------------------------------------------
@@ -120,6 +133,7 @@ __all__ = [
     "Account",
     "HandRow",
     "IntegrityReport",
+    "InviteRow",
     "Participant",
     "RebuildReport",
     "SessionRow",
