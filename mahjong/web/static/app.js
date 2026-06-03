@@ -30,19 +30,33 @@ import "/static/feedback.js";
 
 const SUBPROTOCOL = "mahjong-v1";
 
+// Auto-reconnect tuning: exponential backoff, capped. The server sends HELLO
+// on (re)connect; the app re-authenticates with the stored session token via
+// RESUME, so a dropped socket (tunnel warm-up, Wi-Fi↔cellular handoff, sleep)
+// recovers without a manual reload.
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10000;
+
 class ConnectionManager extends EventTarget {
   constructor(url) {
     super();
     this.url = url;
     this.ws = null;
+    this._shouldReconnect = true; // false after a deliberate close()
+    this._reconnectDelay = RECONNECT_BASE_MS;
+    this._reconnectTimer = null;
   }
 
   connect() {
     this.ws = new WebSocket(this.url, SUBPROTOCOL);
-    this.ws.addEventListener("open", () => this.dispatchEvent(new Event("open")));
-    this.ws.addEventListener("close", (e) =>
-      this.dispatchEvent(new CustomEvent("close", { detail: { code: e.code, reason: e.reason } })),
-    );
+    this.ws.addEventListener("open", () => {
+      this._reconnectDelay = RECONNECT_BASE_MS; // reset backoff on a good connect
+      this.dispatchEvent(new Event("open"));
+    });
+    this.ws.addEventListener("close", (e) => {
+      this.dispatchEvent(new CustomEvent("close", { detail: { code: e.code, reason: e.reason } }));
+      this._scheduleReconnect();
+    });
     this.ws.addEventListener("error", () => this.dispatchEvent(new Event("error")));
     this.ws.addEventListener("message", (e) => {
       let msg;
@@ -56,6 +70,18 @@ class ConnectionManager extends EventTarget {
     });
   }
 
+  _scheduleReconnect() {
+    // Don't reconnect after a deliberate close, and never stack timers.
+    if (!this._shouldReconnect || this._reconnectTimer !== null) return;
+    const delay = this._reconnectDelay;
+    this.dispatchEvent(new CustomEvent("reconnecting", { detail: { delay } }));
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect();
+    }, delay);
+    this._reconnectDelay = Math.min(this._reconnectDelay * 2, RECONNECT_MAX_MS);
+  }
+
   send(message) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not open");
@@ -64,6 +90,12 @@ class ConnectionManager extends EventTarget {
   }
 
   close(code = 1000) {
+    // Deliberate teardown: stop auto-reconnecting and cancel any pending retry.
+    this._shouldReconnect = false;
+    if (this._reconnectTimer !== null) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     if (this.ws) this.ws.close(code);
   }
 }
@@ -1527,7 +1559,19 @@ class MahjongApp extends LitElement {
           const feats = Array.isArray(frame.features) ? frame.features : [];
           if (feats.includes("auth")) {
             this._authRequired = true;
-            this._authState = "waiting"; // triggers auth form render
+            if (this._sessionToken) {
+              // Reconnect path: we already hold a token — re-authenticate
+              // silently with RESUME instead of forcing the user to log in
+              // again. The AUTH_RESPONSE handler returns us to the lobby.
+              try {
+                this._conn.send({ kind: "RESUME", session_token: this._sessionToken });
+              } catch (err) {
+                console.warn("RESUME on reconnect failed:", err);
+                this._authState = "waiting";
+              }
+            } else {
+              this._authState = "waiting"; // triggers auth form render
+            }
           } else {
             // No auth required — go straight to lobby.
             this._enterLobby();
