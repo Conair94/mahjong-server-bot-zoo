@@ -22,3 +22,6 @@ htmlcov/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Runtime data (DB, WAL, live game records)
+var/
