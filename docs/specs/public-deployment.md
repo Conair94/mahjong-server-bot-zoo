@@ -499,19 +499,21 @@ is the permanent name, not the security.
 Build the end-to-end "stranger registers and plays" slice before hardening, so integration
 bugs surface early — then layer the abuse defenses, then deploy.
 
-1. **Schema + invite persistence** (TDD): `invites` migration; `mint_invite` /
-   `redeem_invite` helpers with the in-transaction increment; fixtures 9–14.
-2. **`REGISTER` wire + `handle_register`** (TDD): codec entry (16), auth-phase dispatch,
-   orchestrator wiring; auto-login on success. Fixtures 9–13, 15.
-3. **Registration UI**: login-view toggle + `REGISTER` send; browser-verify (21).
-4. **Client-IP plumbing** (TDD): `_client_ip` + `MAHJONG_TRUST_PROXY` + thread onto the
-   connection; fixtures 1–4. *(No behavior change yet — just makes the IP available.)*
-5. **Rate limiter** (TDD): `SlidingWindowLimiter` (fixtures 5–8), then wire to
-   `AUTH_REQUEST` failures + `REGISTER` + reinstate `FEEDBACK` (fixtures 17–20). Connection
-   cap + confirm `max_size`.
-6. **Deploy**: write `docs/ops/cloudflare-tunnel.md`; stand up `cloudflared` + systemd on
-   the Linux box; off-network smoke (22). Flip `MAHJONG_TRUST_PROXY=1` only here.
+1. ✅ **Schema + invite persistence** — `_0002_invites` migration; `mint_invite` /
+   `redeem_invite` (atomic conditional UPDATE); fixtures 9–14. *(commit `8aebed4`)*
+2. ✅ **`REGISTER` wire + `handle_register`** — codec entry, auth-phase dispatch,
+   auto-login; fixtures 9–13, 15. Plus the **`account invite` CLI** (create/list/revoke),
+   the operator path that mints codes. *(commits `8aebed4`, step-6 commit)*
+3. ✅ **Registration UI** — login↔register toggle + `REGISTER`; browser-verify (21).
+   *(commit `b805b6b`)*
+4. ✅ **Client-IP plumbing** — `resolve_client_ip` + `MAHJONG_TRUST_PROXY` on the
+   connection; fixtures 1–4 + live-extraction tests. *(commit `0f87da5`)*
+5. ✅ **Rate limiter** — `SlidingWindowLimiter` (5–8) wired to login/REGISTER/FEEDBACK
+   (17–20). `max_size` already 16 KiB; **connection cap deferred** (§24.4). *(commit `62eb3ca`)*
+6. ◐ **Deploy** — runbook written ([docs/ops/cloudflare-tunnel.md](../ops/cloudflare-tunnel.md));
+   local commands (`serve` with `MAHJONG_TRUST_PROXY=1`, `account invite create`) verified
+   on macOS. **Remaining (operator):** stand up `cloudflared` quick tunnel + off-network
+   smoke (22) on the host — needs the Linux box / real internet.
 
-Steps 1–5 are all runnable and testable on macOS/localhost with `trust_proxy=false`. Step
-6 is the only Linux-host-specific piece and the only one that touches the public internet —
-it lands last, after everything it fronts is verified.
+Steps 1–5 are all runnable and tested on macOS/localhost with `trust_proxy=false`. Step 6
+is the only Linux-host-specific piece and the only one that touches the public internet.
