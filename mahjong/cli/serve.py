@@ -120,6 +120,7 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
     orch = MultiTableOrchestrator(
         host=cfg.listen_host,
         port=cfg.listen_port,
+        trust_proxy=cfg.trust_proxy,
         data_dir=cfg.data_dir,
         ruleset=_ruleset_ref(cfg),
         seed=int(time.time()),  # nondeterministic for live play; deterministic seeds are for self-play

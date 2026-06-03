@@ -297,3 +297,109 @@ async def test_fixture_7_combined_decoration(
     assert "selected" not in cls[3]
     assert "just-drawn" in cls[3], cls[3]
     assert "suit-break" in cls[2], cls[2]
+
+
+# --- Computed-style fixtures (Spec 22 § 22.3 / § 22.4) ---------------------
+#
+# §22.3 (selection tint) and §22.4 (discard size) are CSS-only changes that
+# live in the <game-pane> shadow styles, not in render.js. The bare-div
+# render path used above can't see those styles, so these fixtures mount the
+# real component (carrying its shadow CSS + inheriting :root theme vars) and
+# read computed styles.
+
+
+def _view_with_discards(own_seat: int, concealed: list[str], discards: list[str]) -> dict[str, Any]:
+    view = _view_with_concealed(own_seat=own_seat, concealed=concealed)
+    view["seats"][own_seat]["discards"] = discards
+    return view
+
+
+async def _mount_game_pane(
+    page: Page,
+    server: FakeWireServer,
+    view: dict[str, Any],
+    *,
+    own_seat: int = 0,
+    tile_style: str = "ascii",
+    selected_tile: int | None = None,
+) -> None:
+    """Append a standalone <game-pane> (real shadow CSS) and feed it state."""
+    await page.goto(server.url)
+    await page.wait_for_load_state("domcontentloaded")
+    await page.evaluate(
+        """async ({ view, own_seat, tile_style, selected_tile }) => {
+          await import('/static/app.js');  // registers custom elements
+          await customElements.whenDefined('game-pane');
+          const el = document.createElement('game-pane');
+          el.id = '__gp_test';
+          el.tileStyle = tile_style;
+          document.body.appendChild(el);
+          el.setSnapshot(view, own_seat);
+          if (selected_tile !== null) el.selectedTile = selected_tile;
+          await el.updateComplete;
+          return null;
+        }""",
+        {"view": view, "own_seat": own_seat, "tile_style": tile_style, "selected_tile": selected_tile},
+    )
+
+
+@pytest.mark.parametrize("tile_style", ["ascii", "unicode"])
+async def test_fixture_8_selection_background_visible_in_both_styles(
+    page: Page, fake_wire_server: FakeWireServer, tile_style: str
+) -> None:
+    """The selection cue computes to a non-transparent background under both
+    tile styles — the underline it replaced didn't render under unicode."""
+    view = _view_with_concealed(own_seat=0, concealed=["W2", "W3", "W4"])
+    await _mount_game_pane(
+        page, fake_wire_server, view, tile_style=tile_style, selected_tile=1
+    )
+    bg = cast(
+        str,
+        await page.evaluate(
+            """() => {
+              const gp = document.getElementById('__gp_test');
+              const el = gp.shadowRoot.querySelector('.tile-mod.selected');
+              return el ? getComputedStyle(el).backgroundColor : "MISSING";
+            }"""
+        ),
+    )
+    # Transparent computes to "rgba(0, 0, 0, 0)"; a real tint does not.
+    assert bg not in ("MISSING", "rgba(0, 0, 0, 0)", "transparent"), bg
+
+
+async def test_fixture_9_discards_wrapped_in_discard_row(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """render.js contract: the discard pile is wrapped in .discard-row (the
+    hook the §22.4 CSS targets). Pure DOM structure — bare-div render is fine."""
+    view = _view_with_discards(own_seat=0, concealed=["W2", "W3"], discards=["B5", "T7"])
+    await _render_table(page, fake_wire_server, view, own_seat=0)
+    has_row = await page.evaluate(
+        """() => {
+          const root = document.getElementById('__hand_test_root');
+          return root.querySelectorAll('.discard-row').length > 0;
+        }"""
+    )
+    assert has_row is True
+
+
+async def test_fixture_9b_discard_tile_smaller_than_hand_tile(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    view = _view_with_discards(own_seat=0, concealed=["W2", "W3"], discards=["B5", "T7"])
+    await _mount_game_pane(page, fake_wire_server, view)
+    sizes = cast(
+        list[float],
+        await page.evaluate(
+            """() => {
+              const gp = document.getElementById('__gp_test');
+              const root = gp.shadowRoot;
+              const hand = root.querySelector('.tile-mod .tile');
+              const disc = root.querySelector('.discard-row .tile');
+              const px = (el) => parseFloat(getComputedStyle(el).fontSize);
+              return [px(hand), px(disc)];
+            }"""
+        ),
+    )
+    hand_px, disc_px = sizes
+    assert disc_px < hand_px, f"discard {disc_px}px should be smaller than hand {hand_px}px"

@@ -188,7 +188,9 @@ function renderDiscards(discards, options) {
     if (idx > 0) out.push("\n              ");
     out.push(...joinTiles(row, " ", options));
   });
-  return out;
+  // Wrap in .discard-row so CSS can render the pile smaller than the hand
+  // (high-frequency, low-importance background info — Spec 22 § 22.4).
+  return html`<span class="discard-row">${out}</span>`;
 }
 
 function seatHeader(seat, positionLabel) {
@@ -372,10 +374,14 @@ function _seatBadge(seat) {
 }
 
 // The arrow points at whoever just discarded the tile shown in the
-// center.  Falls back to a neutral marker before the first discard, and
-// to a `?` during a claim window where multiple seats are deciding.
+// center.  Falls back to a neutral marker before the first discard /
+// after the hand ends.  It deliberately does NOT special-case
+// CLAIM_WINDOW: a `?` there broadcast that *someone is deciding whether
+// to claim*, which is a tell you'd only have by watching body language
+// at a physical table (Spec 22 § 22.1).  `last_discard` is already
+// public (the tile is on the table), so pointing at the discarder in
+// every phase reveals nothing new.
 function _pinwheelArrow(view, ownSeat) {
-  if (view.phase === "CLAIM_WINDOW") return "?";
   if (view.phase === "TERMINAL") return "·";
   const ld = view.last_discard;
   if (!ld || ld.seat == null) return "·";
@@ -475,6 +481,109 @@ ${seatBlock(positions.bottom, "you", seatView, ownSeat, options)}</pre
     <hr class="ascii-rule" />
     <pre class="section">${renderHeader(seatView)}</pre>
   `;
+}
+
+// --- Hand-end summary (§22.9) ---------------------------------------------
+//
+// Modular by design: the summary is a list of independent *section*
+// renderers, each `(terminal, view, ownSeat) -> html|""`. To add a new
+// detail later (e.g. a stats widget, a win-probability bar, a "next hand"
+// button), write a section function and append it to HAND_END_SECTIONS —
+// no other code changes. A section returning "" is skipped, so sections can
+// opt out (e.g. fan breakdown on an exhausted draw).
+
+// Section: headline — who won and how, or "exhausted draw".
+function _summaryHeadline(terminal, view, _ownSeat) {
+  if (terminal.kind !== "HU" || terminal.winner == null) {
+    return html`<div class="he-headline">Exhausted draw — no winner</div>`;
+  }
+  const who = fullSeatName(view, terminal.winner);
+  let how = "";
+  if (terminal.win_type === "SELF_DRAW") {
+    how = "self-draw";
+  } else if (terminal.win_type === "DISCARD" && terminal.deal_in_seat != null) {
+    how = `on ${fullSeatName(view, terminal.deal_in_seat)}'s discard`;
+  }
+  return html`<div class="he-headline">
+    <span class="he-winner">${who} wins</span>${how ? html` — ${how}` : ""}
+    ${terminal.win_tile
+      ? html` &nbsp;${tile(terminal.win_tile, { tileStyle: "unicode" })}`
+      : ""}
+  </div>`;
+}
+
+// Section: fan breakdown — each scored pattern + its value, then the total.
+function _summaryFan(terminal, _view, _ownSeat) {
+  if (terminal.kind !== "HU") return "";
+  const fans = Array.isArray(terminal.fan) ? terminal.fan : [];
+  return html`<div class="he-fan">
+    <div class="he-section-title">Fan</div>
+    ${fans.length === 0
+      ? html`<div class="he-fan-row">(none recorded)</div>`
+      : fans.map(
+          (f) => html`<div class="he-fan-row">
+            <span class="he-fan-name">${f.name}</span>
+            <span class="he-fan-value">${f.value}</span>
+          </div>`,
+        )}
+    <div class="he-fan-row he-fan-total">
+      <span class="he-fan-name">Total</span>
+      <span class="he-fan-value">${terminal.fan_total ?? 0}</span>
+    </div>
+  </div>`;
+}
+
+// Section: point swing — per-seat score delta, winner highlighted.
+function _summaryScores(terminal, view, _ownSeat) {
+  const deltas = Array.isArray(terminal.score_delta) ? terminal.score_delta : [];
+  if (deltas.length !== 4) return "";
+  return html`<div class="he-scores">
+    <div class="he-section-title">Points</div>
+    ${deltas.map((d, seat) => {
+      const sign = d > 0 ? "+" : "";
+      const cls = seat === terminal.winner ? "he-score-row he-winner" : "he-score-row";
+      return html`<div class=${cls}>
+        <span class="he-score-name">${fullSeatName(view, seat)}</span>
+        <span class="he-score-delta">${sign}${d}</span>
+      </div>`;
+    })}
+  </div>`;
+}
+
+// Section: everyone's revealed hands (concealed + melds). final_hands is the
+// authoritative reveal from the HAND_END event; fall back to the projected
+// view only for the own seat if it's absent.
+function _summaryHands(terminal, view, _ownSeat, options) {
+  const hands = Array.isArray(terminal.final_hands) ? terminal.final_hands : null;
+  if (!hands) return "";
+  return html`<div class="he-hands">
+    <div class="he-section-title">Hands</div>
+    ${hands
+      .slice()
+      .sort((a, b) => a.seat - b.seat)
+      .map(
+        (h) => html`<div class="he-hand-row">
+          <span class="he-hand-name">${fullSeatName(view, h.seat)}:</span>
+          <span class="he-hand-tiles"
+            >${joinTiles(h.concealed ?? [], " ", options)}</span
+          >
+          ${(h.melds ?? []).length > 0
+            ? html`<span class="he-hand-melds">${renderMelds(h.melds, options)}</span>`
+            : ""}
+        </div>`,
+      )}
+  </div>`;
+}
+
+// The ordered section list. Append here to add a new summary detail.
+const HAND_END_SECTIONS = [_summaryHeadline, _summaryFan, _summaryScores, _summaryHands];
+
+export function renderHandEndSummary(view, ownSeat, options = {}) {
+  const terminal = view?.terminal;
+  if (!terminal) return "";
+  return html`<div class="hand-end-summary">
+    ${HAND_END_SECTIONS.map((section) => section(terminal, view, ownSeat, options))}
+  </div>`;
 }
 
 // Test hooks (jsdom).  The pinwheel's pure helpers are easy to pin without

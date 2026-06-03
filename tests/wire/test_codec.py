@@ -248,6 +248,22 @@ _CLOSE_TABLE: dict[str, Any] = {
 
 _START_HAND: dict[str, Any] = {"kind": "START_HAND", "table_id": 17}
 
+_REGISTER: dict[str, Any] = {
+    "kind": "REGISTER",
+    "username": "alice",
+    "password": "correct-horse-battery-staple",
+    "display_name": "Alice",
+    "invite_code": "inv_a1b2c3d4e5f60718",
+}
+
+_FEEDBACK: dict[str, Any] = {
+    "kind": "FEEDBACK",
+    "type": "bug",
+    "text": "The discard button disappears sometimes.",
+}
+
+_FEEDBACK_ACK: dict[str, Any] = {"kind": "FEEDBACK_ACK"}
+
 ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("HELLO_server", _HELLO_SERVER),
     ("HELLO_client", _HELLO_CLIENT),
@@ -259,6 +275,7 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("AUTH_RESPONSE_ok", _AUTH_RESPONSE_OK),
     ("AUTH_RESPONSE_fail", _AUTH_RESPONSE_FAIL),
     ("RESUME", _RESUME),
+    ("REGISTER", _REGISTER),
     ("LIST_TABLES", _LIST_TABLES),
     ("TABLE_LIST", _TABLE_LIST),
     ("ATTACH", _ATTACH),
@@ -277,6 +294,8 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("TABLE_CREATED", _TABLE_CREATED),
     ("CLOSE_TABLE", _CLOSE_TABLE),
     ("START_HAND", _START_HAND),
+    ("FEEDBACK", _FEEDBACK),
+    ("FEEDBACK_ACK", _FEEDBACK_ACK),
 ]
 
 

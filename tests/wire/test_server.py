@@ -39,6 +39,7 @@ async def _running_server(
     health_handler: Any = None,
     static_dir: Any = None,
     max_size: int = 16 * 1024,
+    trust_proxy: bool = False,
 ) -> AsyncIterator[WebSocketServer]:
     """Start a server on a free port, yield it, then close cleanly."""
     server = WebSocketServer(
@@ -48,6 +49,7 @@ async def _running_server(
         health_handler=health_handler,
         static_dir=static_dir,
         max_size=max_size,
+        trust_proxy=trust_proxy,
     )
     await server.start()
     try:
@@ -412,3 +414,51 @@ def _fetch_with_ctype(url: str) -> tuple[bytes, int, str]:
             return resp.read(), resp.status, resp.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         return exc.read(), exc.code, exc.headers.get("Content-Type", "")
+
+
+# --- client-IP resolution (public-deployment.md § 24.1) ---
+
+
+async def test_real_loopback_connection_client_ip_is_peer() -> None:
+    """A direct loopback connection (trust_proxy off) resolves to 127.0.0.1.
+
+    Exercises the real ws.remote_address / ws.request extraction path, not just
+    the pure resolve_client_ip helper."""
+    captured: dict[str, str] = {}
+
+    async def handler(conn: Connection) -> None:
+        captured["ip"] = conn.client_ip
+
+    async with _running_server(handler) as server:
+        url = f"ws://127.0.0.1:{server.port}/socket"
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]):
+            pass
+        for _ in range(50):
+            if "ip" in captured:
+                break
+            await asyncio.sleep(0.01)
+
+    assert captured["ip"] in ("127.0.0.1", "::1")
+
+
+async def test_trusted_proxy_honours_cf_connecting_ip_header() -> None:
+    """With trust_proxy on and a loopback peer, CF-Connecting-IP is honoured."""
+    captured: dict[str, str] = {}
+
+    async def handler(conn: Connection) -> None:
+        captured["ip"] = conn.client_ip
+
+    async with _running_server(handler, trust_proxy=True) as server:
+        url = f"ws://127.0.0.1:{server.port}/socket"
+        async with websockets.connect(
+            url,
+            subprotocols=["mahjong-v1"],
+            additional_headers={"CF-Connecting-IP": "203.0.113.7"},
+        ):
+            pass
+        for _ in range(50):
+            if "ip" in captured:
+                break
+            await asyncio.sleep(0.01)
+
+    assert captured["ip"] == "203.0.113.7"

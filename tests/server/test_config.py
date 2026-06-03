@@ -22,6 +22,18 @@ def test_defaults_load_cleanly() -> None:
     assert unknown == []
 
 
+def test_trust_proxy_defaults_off() -> None:
+    cfg, _ = load_config_from_env(env={})
+    assert cfg.trust_proxy is False
+
+
+def test_trust_proxy_parses_truthy() -> None:
+    cfg, _ = load_config_from_env(env={"MAHJONG_TRUST_PROXY": "1"})
+    assert cfg.trust_proxy is True
+    cfg, _ = load_config_from_env(env={"MAHJONG_TRUST_PROXY": "true"})
+    assert cfg.trust_proxy is True
+
+
 def test_listen_addr_split() -> None:
     cfg, _ = load_config_from_env(env={"MAHJONG_LISTEN_ADDR": "0.0.0.0:9000"})
     assert cfg.listen_host == "0.0.0.0"

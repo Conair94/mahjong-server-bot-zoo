@@ -18,10 +18,10 @@ import sqlite3
 import time
 from types import ModuleType
 
-from mahjong.persistence.migrations import _0001_initial
+from mahjong.persistence.migrations import _0001_initial, _0002_invites
 
 # Ordered list of migration modules.  Append new migrations here.
-_MIGRATIONS: list[ModuleType] = [_0001_initial]
+_MIGRATIONS: list[ModuleType] = [_0001_initial, _0002_invites]
 
 _APPLIED_BY = "mahjong-server-0.0.0"
 

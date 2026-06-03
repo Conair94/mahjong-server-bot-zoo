@@ -134,14 +134,25 @@ function findFirst(arr, pred) {
  * hand would generate 14 buttons and dominate the layout); the in-hand
  * cursor render (next to the concealed row) is the per-tile UI.
  */
+// True when the prompt offers a real claim on another seat's discard —
+// i.e. a CLAIM_WINDOW prompt with at least one non-PASS option (PENG / CHI
+// / GANG / HU). PASS-only claim windows (no actual choice) don't count.
+// Drives the attention cue in §22.2; shared so the prompt-bar class and the
+// pane-header chip use one predicate.
+export function isClaimAvailable(prompt) {
+  if (!prompt || prompt.phase !== "CLAIM_WINDOW") return false;
+  return (prompt.legal_actions ?? []).some((a) => a.type !== "PASS");
+}
+
 export function renderPromptBar(prompt) {
   if (!prompt) return null;
   const legal = prompt.legal_actions ?? [];
   const plays = legal.filter((a) => a.type === "PLAY");
   const others = legal.filter((a) => a.type !== "PLAY");
+  const barClass = isClaimAvailable(prompt) ? "prompt-bar claim-active" : "prompt-bar";
 
   return html`
-    <div class="prompt-bar">
+    <div class=${barClass}>
       <span class="prompt-bar-label">Your turn —</span>
       ${others.map(
         (a) =>

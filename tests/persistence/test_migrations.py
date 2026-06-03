@@ -44,16 +44,19 @@ def fresh_db() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_apply_schema_version_is_1(fresh_db: sqlite3.Connection) -> None:
-    """Fixture 1a: After apply_migrations() on an empty DB, schema_version.version == 1."""
+def test_fresh_apply_schema_version_is_latest(fresh_db: sqlite3.Connection) -> None:
+    """Fixture 1a: After apply_migrations() on an empty DB, version is the latest.
+
+    Bump the expected number when adding a migration. 2 == _0001_initial +
+    _0002_invites (public-deployment.md § 24.2)."""
     row = fresh_db.execute("SELECT version FROM schema_version").fetchone()
     assert row is not None
-    assert row[0] == 1
+    assert row[0] == 2
 
 
 def test_fresh_apply_all_tables_exist(fresh_db: sqlite3.Connection) -> None:
     """Fixture 1b: Every table required by the spec exists after fresh apply."""
-    expected_tables = {"schema_version", "accounts", "sessions", "hand_index", "hand_participants"}
+    expected_tables = {"schema_version", "accounts", "sessions", "hand_index", "hand_participants", "invites"}
     rows = fresh_db.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()
@@ -89,12 +92,12 @@ def test_fresh_apply_all_indexes_exist(fresh_db: sqlite3.Connection) -> None:
 
 
 def test_idempotent_on_already_migrated_db() -> None:
-    """Fixture 2 (v1): Calling apply_migrations() on an already-at-v1 DB is a no-op."""
+    """Fixture 2: Calling apply_migrations() on an already-current DB is a no-op."""
     conn = _open_memory()
     apply_migrations(conn)  # first apply
     apply_migrations(conn)  # second apply — must not raise or double-insert
     row = conn.execute("SELECT version FROM schema_version").fetchone()
-    assert row[0] == 1
+    assert row[0] == 2
     count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
     assert count == 1, "schema_version must have exactly one row"
 

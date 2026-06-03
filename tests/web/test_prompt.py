@@ -203,3 +203,102 @@ async def test_illegal_action_shows_banner_without_closing_prompt(
 
     # The prompt bar is still rendered (player can re-submit).
     await expect(bar).to_be_visible()
+
+
+# --- §22.2: claim-available alert -----------------------------------------
+
+
+def _prompt_discard(prompt_id: str = "p_0_5_DISCARD") -> dict[str, Any]:
+    """A DISCARD (own-turn) prompt — not a claim, so no alert."""
+    return {
+        "kind": "PROMPT",
+        "seq": 4,
+        "table_id": 1,
+        "hand_index": 0,
+        "seat": 0,
+        "phase": "DISCARD",
+        "legal_actions": [{"type": "PLAY", "tile": "W5"}],
+        "default_action": {"type": "PLAY", "tile": "W5"},
+        "deadline_ms": int(time.time() * 1000) + 60_000,
+        "prompt_id": prompt_id,
+    }
+
+
+def _prompt_pass_only(prompt_id: str = "p_0_5_CLAIM_PASS") -> dict[str, Any]:
+    """A CLAIM_WINDOW prompt with PASS as the only option — no real choice,
+    so the alert must NOT fire."""
+    return {
+        "kind": "PROMPT",
+        "seq": 5,
+        "table_id": 1,
+        "hand_index": 0,
+        "seat": 0,
+        "phase": "CLAIM_WINDOW",
+        "legal_actions": [{"type": "PASS"}],
+        "default_action": {"type": "PASS"},
+        "deadline_ms": int(time.time() * 1000) + 20_000,
+        "prompt_id": prompt_id,
+    }
+
+
+async def test_claim_prompt_triggers_alert(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+
+    gp = page.locator("game-pane")
+    await expect(gp.locator(".prompt-bar.claim-active")).to_be_visible(timeout=5000)
+    await expect(gp.locator(".claim-chip")).to_be_visible()
+
+
+async def test_discard_prompt_has_no_alert(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_discard())
+
+    gp = page.locator("game-pane")
+    await expect(gp.locator(".prompt-bar")).to_be_visible(timeout=5000)
+    await expect(gp.locator(".prompt-bar.claim-active")).to_have_count(0)
+    await expect(gp.locator(".claim-chip")).to_have_count(0)
+
+
+async def test_pass_only_claim_has_no_alert(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_pass_only())
+
+    gp = page.locator("game-pane")
+    await expect(gp.locator(".prompt-bar")).to_be_visible(timeout=5000)
+    await expect(gp.locator(".prompt-bar.claim-active")).to_have_count(0)
+    await expect(gp.locator(".claim-chip")).to_have_count(0)
+
+
+async def test_alert_clears_on_prompt_change(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Alert is visible for a claim prompt, then a follow-up DISCARD prompt
+    replaces it and both cues disappear."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+
+    gp = page.locator("game-pane")
+    await expect(gp.locator(".claim-chip")).to_be_visible(timeout=5000)
+
+    await fake_wire_server.send(_prompt_discard())
+    await expect(gp.locator(".claim-chip")).to_have_count(0)
+    await expect(gp.locator(".prompt-bar.claim-active")).to_have_count(0)

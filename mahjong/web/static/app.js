@@ -21,27 +21,42 @@
 //   human at the same table got there first); treat as silent no-op.
 
 import { LitElement, html, css } from "lit";
-import { renderTable, renderPinwheel } from "/static/render.js";
+import { renderTable, renderPinwheel, renderHandEndSummary } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
-import { renderPromptBar, actionForKey, tileIndexForKeyCode } from "/static/prompt.js";
+import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
+import "/static/feedback.js";
 
 // --- ConnectionManager --------------------------------------------------
 
 const SUBPROTOCOL = "mahjong-v1";
+
+// Auto-reconnect tuning: exponential backoff, capped. The server sends HELLO
+// on (re)connect; the app re-authenticates with the stored session token via
+// RESUME, so a dropped socket (tunnel warm-up, Wi-Fi↔cellular handoff, sleep)
+// recovers without a manual reload.
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10000;
 
 class ConnectionManager extends EventTarget {
   constructor(url) {
     super();
     this.url = url;
     this.ws = null;
+    this._shouldReconnect = true; // false after a deliberate close()
+    this._reconnectDelay = RECONNECT_BASE_MS;
+    this._reconnectTimer = null;
   }
 
   connect() {
     this.ws = new WebSocket(this.url, SUBPROTOCOL);
-    this.ws.addEventListener("open", () => this.dispatchEvent(new Event("open")));
-    this.ws.addEventListener("close", (e) =>
-      this.dispatchEvent(new CustomEvent("close", { detail: { code: e.code, reason: e.reason } })),
-    );
+    this.ws.addEventListener("open", () => {
+      this._reconnectDelay = RECONNECT_BASE_MS; // reset backoff on a good connect
+      this.dispatchEvent(new Event("open"));
+    });
+    this.ws.addEventListener("close", (e) => {
+      this.dispatchEvent(new CustomEvent("close", { detail: { code: e.code, reason: e.reason } }));
+      this._scheduleReconnect();
+    });
     this.ws.addEventListener("error", () => this.dispatchEvent(new Event("error")));
     this.ws.addEventListener("message", (e) => {
       let msg;
@@ -55,6 +70,18 @@ class ConnectionManager extends EventTarget {
     });
   }
 
+  _scheduleReconnect() {
+    // Don't reconnect after a deliberate close, and never stack timers.
+    if (!this._shouldReconnect || this._reconnectTimer !== null) return;
+    const delay = this._reconnectDelay;
+    this.dispatchEvent(new CustomEvent("reconnecting", { detail: { delay } }));
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect();
+    }, delay);
+    this._reconnectDelay = Math.min(this._reconnectDelay * 2, RECONNECT_MAX_MS);
+  }
+
   send(message) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not open");
@@ -63,6 +90,12 @@ class ConnectionManager extends EventTarget {
   }
 
   close(code = 1000) {
+    // Deliberate teardown: stop auto-reconnecting and cancel any pending retry.
+    this._shouldReconnect = false;
+    if (this._reconnectTimer !== null) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     if (this.ws) this.ws.close(code);
   }
 }
@@ -260,6 +293,12 @@ class GamePane extends LitElement {
         vertical-align: baseline;
       }
       .tile.dragon, .tile.face-down { font-size: 2.2em; }
+      /* Discard pile is high-frequency background info — render it smaller
+       * than the hand so attention stays on the concealed tiles (Spec 22
+       * § 22.4). Dragons / face-down keep a slightly larger ratio. */
+      .discard-row .tile { font-size: 1.2em; }
+      .discard-row .tile.dragon,
+      .discard-row .tile.face-down { font-size: 1.45em; }
       .tile .rank { color: var(--fg); }
       .tile .suit-bamboo,
       .tile.suit-bamboo { color: var(--suit-bamboo); }
@@ -277,10 +316,15 @@ class GamePane extends LitElement {
        * for the local player's concealed hand: selection cursor,
        * just-drawn offset, and suit-group break. */
       .tile-mod { display: inline; }
+      /* Selection cue: a translucent accent-tint box rather than an
+       * underline. The underline didn't render reliably under the unicode
+       * mahjong glyphs (Spec 22 § 22.3); a background box reads under both
+       * ASCII and unicode and on both themes. color-mix keeps it derived
+       * from --accent so it follows theme swaps without a parallel var. */
       .tile-mod.selected {
-        text-decoration: underline;
-        text-decoration-color: var(--accent);
-        text-decoration-thickness: 0.15em;
+        background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+        border-radius: 0.15em;
+        padding: 0 0.1em;
         font-weight: 600;
       }
       .tile-mod.just-drawn { margin-left: 1.2em; }
@@ -341,6 +385,61 @@ class GamePane extends LitElement {
         border: none;
         padding: 0;
       }
+
+      /* --- Claim-available alert (§22.2). When a CLAIM_WINDOW prompt offers
+       * a real (non-PASS) option, the bar pulses and a chip pins to the pane
+       * header so the cue survives the player glancing at another tab.
+       * Sound is a future enhancement (see spec). */
+      .prompt-bar.claim-active {
+        animation: claim-pulse 1s ease-in-out infinite alternate;
+      }
+      @keyframes claim-pulse {
+        from { border-color: var(--accent); }
+        to   { border-color: var(--accent-red); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .prompt-bar.claim-active { animation: none; border-color: var(--accent-red); }
+      }
+      .claim-chip {
+        margin: 0.25rem 0 0;
+        color: var(--accent-red);
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        animation: chip-pulse 1s ease-in-out infinite alternate;
+      }
+      @keyframes chip-pulse {
+        from { opacity: 0.45; }
+        to   { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .claim-chip { animation: none; }
+      }
+
+      /* --- Hand-end summary (§22.9). Modular sections stacked vertically. */
+      .hand-end-summary {
+        margin: 0.5rem 0;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--accent);
+        border-left-width: 3px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .he-headline { font-size: 1.1em; }
+      .he-winner { color: var(--accent); font-weight: 600; }
+      .he-section-title { color: var(--fg-dim); margin-bottom: 0.15rem; }
+      .he-fan-row, .he-score-row {
+        display: flex;
+        justify-content: space-between;
+        max-width: 22rem;
+      }
+      .he-fan-total { border-top: 1px dashed var(--border); font-weight: 600; }
+      .he-fan-value, .he-score-delta { color: var(--accent); }
+      .he-score-row.he-winner .he-score-name,
+      .he-score-row.he-winner .he-score-delta { color: var(--accent); font-weight: 600; }
+      .he-hand-row { margin: 0.1rem 0; }
+      .he-hand-name { color: var(--fg-dim); margin-right: 0.4rem; }
+      .he-hand-melds { margin-left: 0.6rem; }
 
       /* --- Illegal-action banner (transient). The prompt stays open. */
       .illegal-banner {
@@ -489,10 +588,17 @@ class GamePane extends LitElement {
     const pinwheel = this.seatView
       ? renderPinwheel(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
       : null;
+    const handEndSummary = this.seatView?.terminal
+      ? renderHandEndSummary(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
+      : null;
 
+    const claimAvailable = isClaimAvailable(this.currentPrompt);
     return html`
       <div class="pane">
         ${paneHeader("Game pane", null, null)}
+        ${claimAvailable
+          ? html`<div class="claim-chip">[ CLAIM AVAILABLE ]</div>`
+          : ""}
         <div class="status ${this.status}">Connection: ${this.status}</div>
         ${tableContent !== null
           ? html`<div class="table-ascii pinwheel-wrap">
@@ -500,6 +606,8 @@ class GamePane extends LitElement {
               ${tableContent}
             </div>`
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
+
+        ${handEndSummary ?? ""}
 
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
@@ -605,6 +713,13 @@ class LobbyView extends LitElement {
     desiredHumans: { type: Number },
     lastRefreshTs: { type: Number, state: true },
     busy: { type: String, state: true }, // null | "joining" | "creating"
+    // §22.6 Part A — table creation options (collapsed by default).
+    showAdvanced: { state: true },
+    pacingPreset: { state: true },       // "fast" | "normal" | "slow" | "custom"
+    customMin: { state: true },
+    customMax: { state: true },
+    decideTimeout: { state: true },
+    timeoutsEnabled: { state: true },
   };
 
   static styles = css`
@@ -683,6 +798,35 @@ class LobbyView extends LitElement {
       color: var(--accent);
     }
     .pick-btn:hover:not(.selected) { color: var(--accent); }
+    /* §22.6 Part A — advanced table-creation options. */
+    .adv-options { margin: 0.4rem 0; }
+    .adv-toggle {
+      background: transparent;
+      border: none;
+      color: var(--fg-dim);
+      font-family: inherit;
+      font-size: inherit;
+      cursor: pointer;
+      padding: 0;
+    }
+    .adv-toggle:hover:not(:disabled) { color: var(--accent); }
+    .adv-body {
+      margin: 0.3rem 0 0 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .adv-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+    .adv-label { color: var(--fg-dim); }
+    .adv-radio { color: var(--fg); display: inline-flex; align-items: center; gap: 0.2rem; }
+    .adv-custom input,
+    .adv-row input[type="number"] {
+      width: 4rem;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      font-family: inherit;
+    }
     .lobby-actions {
       display: flex;
       gap: 0.75rem;
@@ -712,10 +856,33 @@ class LobbyView extends LitElement {
     this.desiredHumans = 1;
     this.lastRefreshTs = 0;
     this.busy = null;
+    this.showAdvanced = false;
+    this.pacingPreset = "normal";
+    this.customMin = 5.0;
+    this.customMax = 10.0;
+    this.decideTimeout = 60;
+    this.timeoutsEnabled = true;
   }
 
   _emit(name, detail) {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
+  }
+
+  // Build the CREATE_TABLE.options object from the advanced controls.
+  // Returns null when every control is at its default (keeps the wire
+  // message minimal and lets the server apply its own defaults).
+  _buildOptions() {
+    const atDefault =
+      this.pacingPreset === "normal" && this.decideTimeout === 60 && this.timeoutsEnabled;
+    if (atDefault) return null;
+    const options = {};
+    options.bot_pacing =
+      this.pacingPreset === "custom"
+        ? { min_s: Number(this.customMin), max_s: Number(this.customMax) }
+        : this.pacingPreset;
+    options.timeouts_enabled = this.timeoutsEnabled;
+    if (this.timeoutsEnabled) options.decide_timeout_seconds = Number(this.decideTimeout);
+    return options;
   }
 
   _onJoin(tableId, seat) {
@@ -727,7 +894,7 @@ class LobbyView extends LitElement {
   _onCreate() {
     if (this.busy) return;
     this.busy = "creating";
-    this._emit("lobby-create", { humans: this.desiredHumans });
+    this._emit("lobby-create", { humans: this.desiredHumans, options: this._buildOptions() });
   }
 
   _onRefresh() {
@@ -787,6 +954,85 @@ class LobbyView extends LitElement {
     `;
   }
 
+  _renderAdvancedOptions() {
+    const presets = ["fast", "normal", "slow", "custom"];
+    return html`
+      <div class="adv-options">
+        <button
+          class="adv-toggle"
+          ?disabled=${!!this.busy}
+          @click=${() => (this.showAdvanced = !this.showAdvanced)}
+        >
+          ${this.showAdvanced ? "▼" : "▶"} Options (advanced)
+        </button>
+        ${this.showAdvanced
+          ? html`
+              <div class="adv-body">
+                <div class="adv-row">
+                  <span class="adv-label">Bot pacing:</span>
+                  ${presets.map(
+                    (p) => html`
+                      <label class="adv-radio">
+                        <input
+                          type="radio"
+                          name="pacing"
+                          .checked=${this.pacingPreset === p}
+                          ?disabled=${!!this.busy}
+                          @change=${() => (this.pacingPreset = p)}
+                        />${p}
+                      </label>
+                    `,
+                  )}
+                  ${this.pacingPreset === "custom"
+                    ? html`<span class="adv-custom"
+                        ><input
+                          type="number"
+                          min="0"
+                          max="60"
+                          step="0.5"
+                          .value=${String(this.customMin)}
+                          @input=${(e) => (this.customMin = e.target.value)}
+                        />–<input
+                          type="number"
+                          min="0"
+                          max="60"
+                          step="0.5"
+                          .value=${String(this.customMax)}
+                          @input=${(e) => (this.customMax = e.target.value)}
+                        />s</span
+                      >`
+                    : ""}
+                </div>
+                <div class="adv-row">
+                  <span class="adv-label">Decide time:</span>
+                  <input
+                    type="number"
+                    min="5"
+                    max="600"
+                    step="5"
+                    .value=${String(this.decideTimeout)}
+                    ?disabled=${!this.timeoutsEnabled || !!this.busy}
+                    @input=${(e) => (this.decideTimeout = e.target.value)}
+                  />
+                  <span class="adv-label">seconds per discard prompt</span>
+                </div>
+                <div class="adv-row">
+                  <label class="adv-radio">
+                    <input
+                      type="checkbox"
+                      .checked=${this.timeoutsEnabled}
+                      ?disabled=${!!this.busy}
+                      @change=${(e) => (this.timeoutsEnabled = e.target.checked)}
+                    />Use time limits (uncheck → no deadline on this table)
+                  </label>
+                </div>
+              </div>
+            `
+          : ""}
+      </div>
+    `;
+  }
+
   _renderTable(t) {
     const seats = (t.seats ?? []).map((s) => ({
       ...s,
@@ -831,6 +1077,7 @@ class LobbyView extends LitElement {
           )}
           <span class="pick-label">+ ${4 - this.desiredHumans} canned-pass bot${4 - this.desiredHumans === 1 ? "" : "s"}</span>
         </div>
+        ${this._renderAdvancedOptions()}
         <div class="lobby-actions">
           <button
             class="lobby-btn"
@@ -1095,11 +1342,13 @@ class MahjongApp extends LitElement {
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
     _authState: { state: true },    // "idle"|"waiting"|"submitting"|"authed"|"error"
     _authError: { state: true },    // null | error string shown under the form
+    _authMode: { state: true },     // "login" | "register" (invite-gated signup)
     // Lobby vs. in-game view.
     _view: { state: true },         // "lobby" | "table"
     _lobbyTables: { state: true },  // array of TABLE_LIST.tables entries
     _lobbyHumans: { state: true },  // current composition pick (1..4)
     _lobbyError: { state: true },   // null | error string above the table list
+    _sessionToken: { state: true }, // drives <feedback-button> visibility
   };
 
   static styles = css`
@@ -1194,6 +1443,18 @@ class MahjongApp extends LitElement {
     }
     .auth-submit:disabled { opacity: 0.5; cursor: default; }
     .auth-hint { color: var(--fg-dim); font-size: 0.85em; }
+    .auth-toggle {
+      margin-top: 0.9rem;
+      color: var(--fg-dim);
+      font-size: 0.9em;
+    }
+    .auth-toggle-link {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--accent);
+      cursor: pointer;
+    }
+    .auth-toggle-link:hover { color: var(--fg); }
   `;
 
   constructor() {
@@ -1209,6 +1470,7 @@ class MahjongApp extends LitElement {
     this._authRequired = false;
     this._authState = "idle";
     this._authError = null;
+    this._authMode = "login";
     this._sessionToken = null; // stored in memory; RESUME is a v2 concern
     // Lobby state — see Step 8.7.e.
     this._desiredHumans = _readDesiredHumans(); // 1..4 from ?humans=N
@@ -1297,7 +1559,19 @@ class MahjongApp extends LitElement {
           const feats = Array.isArray(frame.features) ? frame.features : [];
           if (feats.includes("auth")) {
             this._authRequired = true;
-            this._authState = "waiting"; // triggers auth form render
+            if (this._sessionToken) {
+              // Reconnect path: we already hold a token — re-authenticate
+              // silently with RESUME instead of forcing the user to log in
+              // again. The AUTH_RESPONSE handler returns us to the lobby.
+              try {
+                this._conn.send({ kind: "RESUME", session_token: this._sessionToken });
+              } catch (err) {
+                console.warn("RESUME on reconnect failed:", err);
+                this._authState = "waiting";
+              }
+            } else {
+              this._authState = "waiting"; // triggers auth form render
+            }
           } else {
             // No auth required — go straight to lobby.
             this._enterLobby();
@@ -1317,6 +1591,34 @@ class MahjongApp extends LitElement {
             this._authState = "error";
             this._authError = "Invalid credentials — please try again.";
           }
+          return;
+        }
+
+        // --- Registration rejection (Spec 24 § 24.2) -----------------------
+        // Success arrives as AUTH_RESPONSE { ok: true } (auto-login, handled
+        // above); only the failure path is register-specific.
+        if (frame.kind === "ERROR" && frame.code === "register_rejected") {
+          this._authState = "error";
+          this._authError = frame.message || "Registration failed — please try again.";
+          return;
+        }
+
+        // --- Rate-limited login / register (Spec 24 § 24.3) ----------------
+        // Both sign-in and register share the auth form, so one handler covers
+        // both. Without this the form would hang in the "submitting" state.
+        if (frame.kind === "ERROR" && frame.code === "rate_limited") {
+          this._authState = "error";
+          this._authError = frame.message || "Too many attempts — please wait and try again.";
+          return;
+        }
+
+        // --- Feedback (Spec 23) --------------------------------------------
+        if (frame.kind === "FEEDBACK_ACK") {
+          this._feedbackResult(true);
+          return;
+        }
+        if (frame.kind === "ERROR" && frame.code === "feedback_error") {
+          this._feedbackResult(false, frame.message);
           return;
         }
 
@@ -1428,18 +1730,47 @@ class MahjongApp extends LitElement {
     const username = form.elements.username.value.trim();
     const password = form.elements.password.value;
     if (!username || !password) return;
-    // "submitting" disables the form while we wait for AUTH_RESPONSE.
+
+    const register = this._authMode === "register";
+    let msg;
+    if (register) {
+      const inviteCode = form.elements.invite_code.value.trim();
+      if (!inviteCode) {
+        this._authError = "An invite code is required to register.";
+        return;
+      }
+      const displayName = form.elements.display_name.value.trim();
+      // Field is "password" (plaintext) — transport security via TLS.
+      // public-deployment.md § 24.2; server reuses AUTH_RESPONSE on success.
+      msg = {
+        kind: "REGISTER",
+        username,
+        password,
+        display_name: displayName || username,
+        invite_code: inviteCode,
+      };
+    } else {
+      // wire-protocol.md § AUTH_REQUEST.
+      msg = { kind: "AUTH_REQUEST", username, password };
+    }
+
+    // "submitting" disables the form while we wait for the server's reply.
     this._authState = "submitting";
     this._authError = null;
     try {
-      // Field is "password" (plaintext) — transport security via TLS/Tailscale.
-      // wire-protocol.md § AUTH_REQUEST.
-      this._conn.send({ kind: "AUTH_REQUEST", username, password });
+      this._conn.send(msg);
     } catch (err) {
-      console.warn("AUTH_REQUEST send failed:", err);
+      console.warn("auth send failed:", err);
       this._authState = "waiting";
       this._authError = "Failed to send — is the server running?";
     }
+  }
+
+  _onToggleAuthMode(e) {
+    e.preventDefault();
+    this._authMode = this._authMode === "register" ? "login" : "register";
+    this._authState = "waiting";
+    this._authError = null;
   }
 
   // --- Table-discovery helpers (Step 8.5) ---------------------------------
@@ -1452,15 +1783,14 @@ class MahjongApp extends LitElement {
     }
   }
 
-  _doCreateTable(humans) {
+  _doCreateTable(humans, options = null) {
     // The lobby panel passes the chosen composition; falls back to the
     // URL-param default when called from auto-flows.
     const n = Number.isFinite(humans) ? humans : this._desiredHumans;
+    const msg = { kind: "CREATE_TABLE", seats: _seatsForHumanCount(n) };
+    if (options) msg.options = options; // §22.6 Part A; omit → server defaults
     try {
-      this._conn.send({
-        kind: "CREATE_TABLE",
-        seats: _seatsForHumanCount(n),
-      });
+      this._conn.send(msg);
     } catch (err) {
       console.warn("CREATE_TABLE send failed:", err);
     }
@@ -1508,12 +1838,12 @@ class MahjongApp extends LitElement {
   }
 
   _onLobbyCreate(e) {
-    const { humans } = e.detail;
+    const { humans, options } = e.detail;
     if (Number.isFinite(humans) && humans >= 1 && humans <= 4) {
       this._lobbyHumans = humans;
     }
     this._lobbyError = null;
-    this._doCreateTable(this._lobbyHumans);
+    this._doCreateTable(this._lobbyHumans, options ?? null);
   }
 
   _onLobbyRefresh() {
@@ -1544,9 +1874,12 @@ class MahjongApp extends LitElement {
 
   _renderAuthForm() {
     const submitting = this._authState === "submitting";
+    const register = this._authMode === "register";
     return html`
       <div class="auth-overlay">
-        <div class="auth-title">── Sign in ──</div>
+        <div class="auth-title">
+          ${register ? "── Create account ──" : "── Sign in ──"}
+        </div>
         ${this._authError
           ? html`<div class="auth-error">${this._authError}</div>`
           : ""}
@@ -1562,6 +1895,18 @@ class MahjongApp extends LitElement {
               autofocus
             />
           </div>
+          ${register
+            ? html`<div class="auth-form-row">
+                <label class="auth-label">Display name</label>
+                <input
+                  class="auth-input"
+                  type="text"
+                  name="display_name"
+                  ?disabled=${submitting}
+                  autocomplete="nickname"
+                />
+              </div>`
+            : ""}
           <div class="auth-form-row">
             <label class="auth-label">Password</label>
             <input
@@ -1569,20 +1914,41 @@ class MahjongApp extends LitElement {
               type="password"
               name="password"
               ?disabled=${submitting}
-              autocomplete="current-password"
+              autocomplete=${register ? "new-password" : "current-password"}
             />
           </div>
+          ${register
+            ? html`<div class="auth-form-row">
+                <label class="auth-label">Invite code</label>
+                <input
+                  class="auth-input"
+                  type="text"
+                  name="invite_code"
+                  placeholder="inv_…"
+                  ?disabled=${submitting}
+                />
+              </div>`
+            : ""}
           <div class="auth-actions">
             <button class="auth-submit" type="submit" ?disabled=${submitting}>
-              ${submitting ? "[ signing in… ]" : "[ Sign in ]"}
+              ${submitting
+                ? register
+                  ? "[ creating… ]"
+                  : "[ signing in… ]"
+                : register
+                  ? "[ Create account ]"
+                  : "[ Sign in ]"}
             </button>
-            ${submitting
-              ? ""
-              : html`<span class="auth-hint">
-                  (create accounts with <code>python -m mahjong account create</code>)
-                </span>`}
           </div>
         </form>
+        <div class="auth-toggle">
+          ${register
+            ? html`Have an account?
+                <a class="auth-toggle-link" href="#" @click=${this._onToggleAuthMode}>Sign in</a>`
+            : html`Need an account?
+                <a class="auth-toggle-link" href="#" @click=${this._onToggleAuthMode}>Register</a>
+                <span class="auth-hint">(an invite code is required)</span>`}
+        </div>
       </div>
     `;
   }
@@ -1636,7 +2002,26 @@ class MahjongApp extends LitElement {
         .tileStyle=${this.tileStyle}
         ?hidden=${showLobby || showAuth}
       ></table-page>
+      <feedback-button
+        .sessionToken=${this._sessionToken}
+        @feedback-submit=${this._onFeedbackSubmit}
+      ></feedback-button>
     `;
+  }
+
+  _onFeedbackSubmit(e) {
+    // Child <feedback-button> validated locally; relay over the WS connection.
+    const { type, text } = e.detail;
+    try {
+      this._conn.send({ kind: "FEEDBACK", type, text });
+    } catch {
+      this._feedbackResult(false, "Not connected. Please try again.");
+    }
+  }
+
+  _feedbackResult(ok, message) {
+    const btn = this.renderRoot.querySelector("feedback-button");
+    if (btn) btn.onResult(ok, message);
   }
 }
 

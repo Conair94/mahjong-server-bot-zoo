@@ -29,9 +29,12 @@ from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
 from mahjong.persistence.auth import (
     AuthResult,
+    RegisterError,
     handle_auth_request,
+    handle_register,
     handle_resume,
 )
+from mahjong.server.ratelimit import SlidingWindowLimiter
 from mahjong.server.registry import (
     ShuttingDown,
     TableHandle,
@@ -39,8 +42,10 @@ from mahjong.server.registry import (
     TableRegistry,
 )
 from mahjong.server.seats import SeatsParseError, parse_seats_from_wire
+from mahjong.server.table_options import TableOptionsError, parse_table_options
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table.manager import DecideTimeouts
+from mahjong.wire.feedback import SanitiseError, sanitise_report_text
 from mahjong.wire.server import Connection, WebSocketServer
 
 _logger = logging.getLogger(__name__)
@@ -48,6 +53,12 @@ _logger = logging.getLogger(__name__)
 SERVER_ID: str = "mahjong-server-web"
 FIRST_FRAME_TIMEOUT_S: float = 30.0  # generous: a human picks credentials
 ADMIN_FRAME_TIMEOUT_S: float = 30.0  # timeout for each pre-attach admin message
+
+# IP-keyed rate-limit budgets (public-deployment.md § 24.3). One-hour windows.
+_RATE_WINDOW_S: float = 3600.0
+_LOGIN_MAX_FAILURES_PER_HOUR: int = 10  # failed AUTH_REQUESTs per IP
+_REGISTER_MAX_PER_HOUR: int = 5  # REGISTER attempts per IP
+_FEEDBACK_MAX_PER_HOUR: int = 5  # FEEDBACK submissions per IP
 
 
 IdentityFactory = Callable[[Connection], HumanIdentity]
@@ -127,9 +138,11 @@ class MultiTableOrchestrator:
         bot_pacing_enabled: bool = False,
         bot_min_delay_s: float = 5.0,
         bot_max_delay_s: float = 10.0,
+        trust_proxy: bool = False,
     ) -> None:
         self._host = host
         self._port = port
+        self._trust_proxy = trust_proxy
         self._data_dir = data_dir
         self._ruleset = ruleset
         self._seed = seed
@@ -153,6 +166,18 @@ class MultiTableOrchestrator:
         self._auth_required = require_auth if require_auth is not None else persistence is not None
         self._auth_state = _AuthState()
 
+        # IP-keyed abuse limiters (public-deployment.md § 24.3). In-process; the
+        # window resets on restart, which is fine at home scale.
+        self._login_limiter = SlidingWindowLimiter(
+            max_events=_LOGIN_MAX_FAILURES_PER_HOUR, window_s=_RATE_WINDOW_S
+        )
+        self._register_limiter = SlidingWindowLimiter(
+            max_events=_REGISTER_MAX_PER_HOUR, window_s=_RATE_WINDOW_S
+        )
+        self._feedback_limiter = SlidingWindowLimiter(
+            max_events=_FEEDBACK_MAX_PER_HOUR, window_s=_RATE_WINDOW_S
+        )
+
         self._registry: TableRegistry = TableRegistry(persistence=persistence)
         self._ws_server: WebSocketServer | None = None
         self._hello_seq: int = 1
@@ -174,11 +199,13 @@ class MultiTableOrchestrator:
     async def start(self) -> None:
         if self._ws_server is not None:
             raise RuntimeError("MultiTableOrchestrator already started")
+        (self._data_dir / "reports").mkdir(parents=True, exist_ok=True)
         self._ws_server = WebSocketServer(
             host=self._host,
             port=self._port,
             handler=self._handler,
             static_dir=self._static_dir,
+            trust_proxy=self._trust_proxy,
         )
         await self._ws_server.start()
 
@@ -235,6 +262,9 @@ class MultiTableOrchestrator:
                 elif kind == "CLOSE_TABLE":
                     await self._handle_close_table(conn, msg)
 
+                elif kind == "FEEDBACK":
+                    await self._handle_feedback(conn, msg)
+
                 elif kind == "ATTACH":
                     table = await self._handle_attach(conn, msg)
                     if table is None:
@@ -283,18 +313,69 @@ class MultiTableOrchestrator:
             kind = msg.get("kind")
             result: AuthResult | None = None
             if kind == "AUTH_REQUEST":
+                # Rate-limit check BEFORE the argon2 verify: a throttled IP
+                # never costs the server a hash (public-deployment.md § 24.3).
+                if not self._login_limiter.would_allow(conn.client_ip):
+                    with contextlib.suppress(Exception):
+                        await conn.send(
+                            {
+                                "kind": "ERROR",
+                                "code": "rate_limited",
+                                "message": "Too many sign-in attempts — please wait and try again.",
+                            }
+                        )
+                    attempts += 1
+                    continue
                 result = await asyncio.get_running_loop().run_in_executor(
                     None,
                     self._run_auth_request,
                     str(msg.get("username") or ""),
                     str(msg.get("password") or ""),
                 )
+                # Only failed logins consume the budget — a user reconnecting
+                # with valid credentials is never penalised.
+                if not result.ok:
+                    self._login_limiter.record(conn.client_ip)
             elif kind == "RESUME":
                 result = await asyncio.get_running_loop().run_in_executor(
                     None,
                     self._run_resume,
                     str(msg.get("session_token") or ""),
                 )
+            elif kind == "REGISTER":
+                # Every register attempt counts toward the budget.
+                if not self._register_limiter.allow(conn.client_ip):
+                    with contextlib.suppress(Exception):
+                        await conn.send(
+                            {
+                                "kind": "ERROR",
+                                "code": "rate_limited",
+                                "message": "Too many registration attempts — please wait and try again.",
+                            }
+                        )
+                    attempts += 1
+                    continue
+                try:
+                    result = await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        self._run_register,
+                        msg,
+                    )
+                except RegisterError as exc:
+                    # Rejection: generic for invite problems, specific for a
+                    # taken username (public-deployment.md § 24.2). Counts
+                    # against the per-connection attempt budget like a failed
+                    # AUTH_REQUEST.
+                    with contextlib.suppress(Exception):
+                        await conn.send(
+                            {
+                                "kind": "ERROR",
+                                "code": "register_rejected",
+                                "message": exc.message,
+                            }
+                        )
+                    attempts += 1
+                    continue
             else:
                 with contextlib.suppress(Exception):
                     await conn.send({"kind": "ERROR", "code": "auth_required"})
@@ -344,6 +425,16 @@ class MultiTableOrchestrator:
     def _run_resume(self, token: str) -> AuthResult:
         assert self._persistence is not None
         return handle_resume(self._persistence._conn, token)
+
+    def _run_register(self, msg: dict[str, Any]) -> AuthResult:
+        assert self._persistence is not None
+        return handle_register(
+            self._persistence._conn,
+            username=str(msg.get("username") or ""),
+            password=str(msg.get("password") or ""),
+            display_name=str(msg.get("display_name") or ""),
+            invite_code=str(msg.get("invite_code") or ""),
+        )
 
     def _lookup_role(self, account_id: int) -> str:
         assert self._persistence is not None
@@ -395,6 +486,24 @@ class MultiTableOrchestrator:
                 await conn.send({"kind": "ERROR", "code": "framing", "message": str(exc)})
             return False
 
+        # Per-table creation options (§22.6 Part A) override the server
+        # defaults for this table only. Resolve against the server defaults.
+        default_timeouts = self._decide_timeouts or DecideTimeouts.uniform(
+            self._decide_timeout_seconds
+        )
+        try:
+            opts = parse_table_options(
+                msg.get("options"),
+                default_pacing_enabled=self._bot_pacing_enabled,
+                default_min_delay_s=self._bot_min_delay_s,
+                default_max_delay_s=self._bot_max_delay_s,
+                default_decide_timeouts=default_timeouts,
+            )
+        except TableOptionsError as exc:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "framing", "message": str(exc)})
+            return False
+
         try:
             table_id = self._registry.create_table_direct(
                 ruleset=self._ruleset,
@@ -402,15 +511,15 @@ class MultiTableOrchestrator:
                 server_info=self._server_info,
                 data_dir=self._data_dir,
                 decide_timeout_seconds=self._decide_timeout_seconds,
-                decide_timeouts=self._decide_timeouts,
+                decide_timeouts=opts.decide_timeouts,
                 hold_seconds=self._hold_seconds,
                 strike_limit=self._strike_limit,
                 max_hands=self._max_hands,
                 between_hand_pause_seconds=self._between_hand_pause_seconds,
                 seats=seats,
-                bot_pacing_enabled=self._bot_pacing_enabled,
-                bot_min_delay_s=self._bot_min_delay_s,
-                bot_max_delay_s=self._bot_max_delay_s,
+                bot_pacing_enabled=opts.bot_pacing_enabled,
+                bot_min_delay_s=opts.bot_min_delay_s,
+                bot_max_delay_s=opts.bot_max_delay_s,
             )
         except ShuttingDown:
             with contextlib.suppress(Exception):
@@ -450,6 +559,66 @@ class MultiTableOrchestrator:
             _logger.exception("close_table.failed", exc_info=exc)
             with contextlib.suppress(Exception):
                 await conn.send({"kind": "ERROR", "code": "internal_error"})
+
+    # --- feedback ---
+
+    async def _handle_feedback(self, conn: Connection, msg: dict[str, Any]) -> None:
+        """Handle FEEDBACK: sanitise, write to data_dir/reports/, send FEEDBACK_ACK."""
+        # Reinstated public-exposure limit (public-deployment.md § 24.4). Uses
+        # the `feedback_error` code so the existing feedback modal surfaces it.
+        if not self._feedback_limiter.allow(conn.client_ip):
+            with contextlib.suppress(Exception):
+                await conn.send(
+                    {
+                        "kind": "ERROR",
+                        "code": "feedback_error",
+                        "message": "Too many reports — please try again later.",
+                    }
+                )
+            return
+
+        report_type = msg.get("type")
+        if report_type not in ("bug", "feature"):
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": "invalid type"})
+            return
+
+        raw_text = msg.get("text")
+        if not isinstance(raw_text, str):
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": "text must be a string"})
+            return
+
+        try:
+            clean_text = sanitise_report_text(raw_text)
+        except SanitiseError as exc:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": str(exc)})
+            return
+
+        auth = self._auth_state.get(conn)
+        submitter = auth["display_name"] if auth else "anonymous"
+
+        reports_dir = self._data_dir / "reports"
+        await asyncio.get_running_loop().run_in_executor(
+            None, self._write_report, reports_dir, report_type, submitter, clean_text
+        )
+        with contextlib.suppress(Exception):
+            await conn.send({"kind": "FEEDBACK_ACK"})
+
+    @staticmethod
+    def _write_report(reports_dir: Path, report_type: str, submitter: str, text: str) -> None:
+        import datetime
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        stem = now.strftime("%Y%m%d_%H%M%S") + f"_{report_type}"
+        for attempt in range(10):
+            suffix = "" if attempt == 0 else f"_{attempt}"
+            path = reports_dir / f"{stem}{suffix}.txt"
+            if not path.exists():
+                break
+        header = f"type: {report_type}\nsubmitted: {now.isoformat(timespec='seconds')}\nsubmitter: {submitter}\n---\n"
+        path.write_text(header + text, encoding="utf-8")
 
     # --- attach / spectate ---
 

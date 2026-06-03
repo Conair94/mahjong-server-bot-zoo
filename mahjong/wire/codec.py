@@ -30,6 +30,7 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "AUTH_REQUEST",
         "AUTH_RESPONSE",
         "RESUME",
+        "REGISTER",
         "LIST_TABLES",
         "TABLE_LIST",
         "ATTACH",
@@ -47,6 +48,8 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "TABLE_CREATED",
         "CLOSE_TABLE",
         "START_HAND",
+        "FEEDBACK",
+        "FEEDBACK_ACK",
     }
 )
 
@@ -114,6 +117,14 @@ class AuthResponseFail(TypedDict):
 class Resume(TypedDict):
     kind: Literal["RESUME"]
     session_token: str
+
+
+class Register(TypedDict):
+    kind: Literal["REGISTER"]
+    username: str
+    password: str
+    display_name: str
+    invite_code: str
 
 
 class ListTables(TypedDict):
@@ -219,6 +230,10 @@ class CreateTable(TypedDict):
     kind: Literal["CREATE_TABLE"]
     ruleset: str
     seats: list[dict[str, Any]]
+    # Optional per-table creation knobs (§22.6 Part A): bot_pacing (preset
+    # name or {min_s,max_s}), decide_timeout_seconds, timeouts_enabled.
+    # Parsed by mahjong.server.table_options.parse_table_options.
+    options: NotRequired[dict[str, Any]]
 
 
 class TableCreated(TypedDict):
@@ -233,6 +248,16 @@ class CloseTable(TypedDict):
     force: NotRequired[bool]
 
 
+class Feedback(TypedDict):
+    kind: Literal["FEEDBACK"]
+    type: Literal["bug", "feature"]
+    text: str
+
+
+class FeedbackAck(TypedDict):
+    kind: Literal["FEEDBACK_ACK"]
+
+
 WireMessage = (
     HelloServer
     | HelloClient
@@ -242,6 +267,7 @@ WireMessage = (
     | AuthResponseOk
     | AuthResponseFail
     | Resume
+    | Register
     | ListTables
     | TableList
     | Attach
@@ -259,6 +285,8 @@ WireMessage = (
     | CreateTable
     | TableCreated
     | CloseTable
+    | Feedback
+    | FeedbackAck
 )
 
 

@@ -25,6 +25,9 @@ class ConfigError(ValueError):
 class ServerConfig:
     listen_host: str
     listen_port: int
+    # Trust the proxy's CF-Connecting-IP header for the real client IP. Off by
+    # default; the Cloudflare-Tunnel deploy turns it on (public-deployment.md § 24.1).
+    trust_proxy: bool
     data_dir: Path
     seat_hold_seconds: int
     heartbeat_interval_s: int
@@ -80,6 +83,7 @@ def _parse_listen_addr(name: str, raw: str) -> tuple[str, int]:
 _KNOWN_VARS: frozenset[str] = frozenset(
     {
         "MAHJONG_LISTEN_ADDR",
+        "MAHJONG_TRUST_PROXY",
         "MAHJONG_DATA_DIR",
         "MAHJONG_SEAT_HOLD_SECONDS",
         "MAHJONG_HEARTBEAT_INTERVAL_SECONDS",
@@ -137,6 +141,9 @@ def load_config_from_env(
     cfg = ServerConfig(
         listen_host=host,
         listen_port=port,
+        trust_proxy=_parse_bool(
+            "MAHJONG_TRUST_PROXY", e.get("MAHJONG_TRUST_PROXY", "0")
+        ),
         data_dir=data_dir,
         seat_hold_seconds=_parse_int(
             "MAHJONG_SEAT_HOLD_SECONDS",

@@ -17,12 +17,16 @@ enforcement must be ON on the connection (``open_db()`` guarantees this).
 from __future__ import annotations
 
 import dataclasses
+import re
 import secrets
 import sqlite3
 import time
 
 import argon2
 import argon2.exceptions
+
+from mahjong.persistence.accounts import insert_account
+from mahjong.persistence.invites import redeem_invite
 
 # ---------------------------------------------------------------------------
 # PasswordHasher — argon2id with spec parameters
@@ -317,4 +321,106 @@ def handle_resume(
         expires_at_ms=new_expiry,
         user_id=f"u_{account_id}",
         display_name=display_name,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invite-gated registration  (docs/specs/public-deployment.md § 24.2)
+# ---------------------------------------------------------------------------
+
+# Username: 3-32 chars, letters/digits/_/- only (same rule as the account CLI).
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Display-name allow-list: visible ASCII names, no control chars or HTML metas.
+_DISPLAY_DISALLOWED = re.compile(r"[^A-Za-z0-9 .,!?'\-]")
+_DISPLAY_MAX = 32
+
+# Invite failures share one generic message so the endpoint can't be used as an
+# oracle to distinguish "no such code" / "spent" / "expired" / "disabled".
+GENERIC_INVITE_MESSAGE = "invalid or used invite code"
+
+
+class RegisterError(Exception):
+    """Registration was rejected.  ``message`` is safe to show the user.
+
+    Raised (not returned) so the success path keeps the same ``AuthResult``
+    shape as ``handle_auth_request``; the orchestrator turns this into an
+    ``ERROR { code: "register_rejected" }`` frame.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _sanitise_display_name(raw: str, *, fallback: str) -> str:
+    """Strip control chars / HTML metas, collapse whitespace, cap length.
+
+    Falls back to *fallback* (the username) if nothing survives — the accounts
+    table requires a non-empty display_name.
+    """
+    cleaned = _DISPLAY_DISALLOWED.sub(" ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()[:_DISPLAY_MAX]
+    return cleaned if cleaned else fallback
+
+
+def handle_register(
+    db: sqlite3.Connection,
+    *,
+    username: str,
+    password: str,
+    display_name: str,
+    invite_code: str,
+    user_agent: str | None = None,
+    now_ms: int | None = None,
+) -> AuthResult:
+    """Invite-gated signup per docs/specs/public-deployment.md § 24.2.
+
+    On success creates a ``human``/``user`` account, consumes one invite use,
+    issues a session, and returns an ``AuthResult`` (auto-login).  On any
+    rejection raises ``RegisterError`` with a user-safe message.
+
+    The duplicate-username check, the invite redemption, and the account INSERT
+    run in a single transaction, so a rejected signup (duplicate username, or a
+    later failure) never consumes the invite.  The password is hashed *before*
+    the transaction so the ~250ms argon2 cost doesn't hold the write lock.
+    """
+    now = now_ms if now_ms is not None else _now_ms()
+
+    if not (3 <= len(username) <= 32) or _USERNAME_RE.match(username) is None:
+        raise RegisterError("username must be 3-32 characters: letters, digits, _ or -")
+    if len(password) < 8:
+        raise RegisterError("password must be at least 8 characters")
+
+    display = _sanitise_display_name(display_name, fallback=username)
+    pw_hash = PasswordHasher.hash(password)
+
+    with db:  # one transaction — dup-check + redeem + insert, all-or-nothing
+        existing = db.execute(
+            "SELECT 1 FROM accounts WHERE lower(username) = lower(?)",
+            (username,),
+        ).fetchone()
+        if existing is not None:
+            # Raised before redeem: the invite stays pristine (fixture 13).
+            raise RegisterError("username already taken")
+
+        if not redeem_invite(db, invite_code, now_ms=now):
+            raise RegisterError(GENERIC_INVITE_MESSAGE)
+
+        account_id = insert_account(
+            db,
+            username=username,
+            display_name=display,
+            kind="human",
+            role="user",
+            password_hash=pw_hash,
+            created_at_ms=now,
+        )
+        token = issue_session(db, account_id, user_agent=user_agent)
+
+    return AuthResult(
+        ok=True,
+        session_token=token,
+        expires_at_ms=now + SESSION_LIFETIME_MS,
+        user_id=f"u_{account_id}",
+        display_name=display,
     )

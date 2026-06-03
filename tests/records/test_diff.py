@@ -149,6 +149,103 @@ def test_diff_draw_tile_is_just_drawn_not_concealed_last() -> None:
         pass
 
 
+def test_diff_added_gang_emits_replacement_draw() -> None:
+    """BUGANG (added kong) from hand draws a gangshanghua replacement
+    (engine: ``_gang_added`` → ``internal_draw``). The differ must surface
+    that DRAW or the wire/record never reports the replacement tile and the
+    client hand desyncs, stalling the table (Spec 22 § 22.5, 2026-06-01)."""
+    s0 = _seed_state()
+    actor = s0["current_actor"]
+    sd = s0["seats"][actor]
+    sd["melds"].append(
+        {"type": "PENG", "tiles": ["W1", "W1", "W1"], "called_tile": "W1", "called_from_seat": (actor + 1) % 4}
+    )
+    if "W1" not in sd["concealed"]:
+        sd["concealed"][0] = "W1"
+    gang = {"type": "GANG", "tile": "W1", "kind": "ADDED"}
+    s1 = apply_action(s0, actor, gang)  # type: ignore[arg-type]
+
+    events = diff_to_events(s0, actor, gang, s1, ts=TS)  # type: ignore[arg-type]
+    decision = next(e for e in events if e["event"] == "CLAIM_DECISION")
+    assert decision["decision"] == "GANG"
+    draws = [e for e in events if e["event"] == "DRAW"]
+    assert draws, f"GANG/ADDED must emit a replacement DRAW; got {[e['event'] for e in events]}"
+    draw = draws[0]
+    assert draw["seat"] == actor
+    assert s1["last_drawn"] is not None and s1["last_drawn"]["seat"] == actor
+    assert draw["tile"] == s1["last_drawn"]["tile"]
+
+
+def test_diff_concealed_gang_emits_replacement_draw() -> None:
+    """An angang (concealed kong) also draws a replacement; same DRAW gap."""
+    s0 = _seed_state()
+    actor = s0["current_actor"]
+    sd = s0["seats"][actor]
+    sd["concealed"][:4] = ["B5", "B5", "B5", "B5"]
+    gang = {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}
+    s1 = apply_action(s0, actor, gang)  # type: ignore[arg-type]
+
+    events = diff_to_events(s0, actor, gang, s1, ts=TS)  # type: ignore[arg-type]
+    draws = [e for e in events if e["event"] == "DRAW"]
+    assert draws, f"GANG/CONCEALED must emit a replacement DRAW; got {[e['event'] for e in events]}"
+    assert draws[0]["seat"] == actor
+    assert draws[0]["tile"] == s1["last_drawn"]["tile"]
+
+
+def test_diff_exposed_gang_emits_replacement_draw() -> None:
+    """An exposed kong (claimed off a discard) draws a replacement too. Built
+    on a crafted state so the claim is deterministic."""
+    seats = [
+        {
+            "seat": 0,
+            "seat_wind": "F1",
+            "concealed": sorted(
+                ["T3", "T3", "T3"] + ["W2"] * 11, key=tile_sort_key
+            ),
+            "melds": [],
+            "discards": [],
+            "flowers": [],
+            "score": 0,
+        },
+        *(
+            {
+                "seat": i,
+                "seat_wind": f"F{i + 1}",
+                "concealed": ["W2"] * 13,
+                "melds": [],
+                "discards": ["T3"] if i == 1 else [],
+                "flowers": [],
+                "score": 0,
+            }
+            for i in (1, 2, 3)
+        ),
+    ]
+    s: dict[str, Any] = {
+        "ruleset": MCR_REF,
+        "round_wind": "F1",
+        "dealer_seat": 0,
+        "hand_index": 0,
+        "turn_index": 5,
+        "wall": {"remaining": ["B7", "B8", "B9"], "drawn_count": 100, "total": 144},
+        "seats": seats,
+        "last_discard": {"seat": 1, "tile": "T3"},
+        "last_drawn": None,
+        "pending_claims": [{"seat": 0, "type": "GANG"}],
+        "phase": "CLAIM_WINDOW",
+        "current_actor": 1,
+        "terminal": None,
+        "rng": {"seed": "0", "cursor": 0},
+    }
+    gang = {"type": "GANG", "tile": "T3", "kind": "EXPOSED"}
+    s1 = apply_action(s, 0, gang)  # type: ignore[arg-type]
+
+    events = diff_to_events(s, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
+    draws = [e for e in events if e["event"] == "DRAW"]
+    assert draws, f"GANG/EXPOSED must emit a replacement DRAW; got {[e['event'] for e in events]}"
+    assert draws[0]["seat"] == 0
+    assert draws[0]["tile"] == s1["last_drawn"]["tile"]
+
+
 def test_diff_pass_emits_claim_decision() -> None:
     s = _seed_state()
     steps = 0

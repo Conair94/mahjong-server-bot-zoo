@@ -16,6 +16,7 @@ import websockets
 from mahjong.engine.rulesets import MANIFEST
 from mahjong.persistence import Persistence
 from mahjong.persistence.auth import create_account
+from mahjong.persistence.invites import get_invite, mint_invite
 from mahjong.server.orchestrator import MultiTableOrchestrator
 
 pytestmark = pytest.mark.asyncio
@@ -156,6 +157,87 @@ async def test_resume_succeeds_with_returned_token(tmp_path: Path) -> None:
             assert resumed["kind"] == "AUTH_RESPONSE"
             assert resumed["ok"] is True
             assert resumed["session_token"] == token  # no rotation in v1
+    finally:
+        await orch.close()
+        p.close()
+
+
+# ---------------------------------------------------------------------------
+# REGISTER — invite-gated signup (public-deployment.md § 24.2)
+# ---------------------------------------------------------------------------
+
+
+async def test_register_with_valid_invite_auto_logs_in(tmp_path: Path) -> None:
+    """A valid invite + fresh creds → AUTH_RESPONSE with a session token, and
+    the invite is consumed. Registration converges on the same logged-in state
+    as AUTH_REQUEST, so the client needs no separate post-register login."""
+    (tmp_path / "records").mkdir(exist_ok=True)
+    p = Persistence(tmp_path / "db.sqlite", tmp_path)
+    admin = create_account(
+        p._conn,  # type: ignore[attr-defined]
+        username="rootadmin",
+        display_name="Root",
+        kind="human",
+        role="admin",
+        password="adminpw123",
+    )
+    code = mint_invite(p._conn, created_by=admin, created_at_ms=1)  # type: ignore[attr-defined]
+
+    orch = _orch(tmp_path, p)
+    await orch.start()
+    try:
+        url = f"ws://127.0.0.1:{orch.port}"
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
+            await ws.recv()  # HELLO
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "REGISTER",
+                        "username": "dave",
+                        "password": "davepw12345",
+                        "display_name": "Dave",
+                        "invite_code": code,
+                    }
+                )
+            )
+            resp = json.loads(cast(str, await ws.recv()))
+            assert resp["kind"] == "AUTH_RESPONSE"
+            assert resp["ok"] is True
+            assert resp["session_token"].startswith("s_")
+            assert resp["display_name"] == "Dave"
+
+        assert get_invite(p._conn, code).used_count == 1  # type: ignore[attr-defined]
+    finally:
+        await orch.close()
+        p.close()
+
+
+async def test_register_with_bad_invite_is_rejected(tmp_path: Path) -> None:
+    """An unknown invite code → ERROR (register_rejected), no auto-login,
+    generic message (no invite-code oracle)."""
+    (tmp_path / "records").mkdir(exist_ok=True)
+    p = Persistence(tmp_path / "db.sqlite", tmp_path)
+
+    orch = _orch(tmp_path, p)
+    await orch.start()
+    try:
+        url = f"ws://127.0.0.1:{orch.port}"
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
+            await ws.recv()  # HELLO
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "REGISTER",
+                        "username": "mallory",
+                        "password": "mallorypw123",
+                        "display_name": "Mallory",
+                        "invite_code": "inv_not_a_real_code",
+                    }
+                )
+            )
+            resp = json.loads(cast(str, await ws.recv()))
+            assert resp["kind"] == "ERROR"
+            assert resp["code"] == "register_rejected"
     finally:
         await orch.close()
         p.close()
