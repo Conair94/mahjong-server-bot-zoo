@@ -34,6 +34,7 @@ from mahjong.persistence.auth import (
     handle_register,
     handle_resume,
 )
+from mahjong.server.ratelimit import SlidingWindowLimiter
 from mahjong.server.registry import (
     ShuttingDown,
     TableHandle,
@@ -52,6 +53,12 @@ _logger = logging.getLogger(__name__)
 SERVER_ID: str = "mahjong-server-web"
 FIRST_FRAME_TIMEOUT_S: float = 30.0  # generous: a human picks credentials
 ADMIN_FRAME_TIMEOUT_S: float = 30.0  # timeout for each pre-attach admin message
+
+# IP-keyed rate-limit budgets (public-deployment.md § 24.3). One-hour windows.
+_RATE_WINDOW_S: float = 3600.0
+_LOGIN_MAX_FAILURES_PER_HOUR: int = 10  # failed AUTH_REQUESTs per IP
+_REGISTER_MAX_PER_HOUR: int = 5  # REGISTER attempts per IP
+_FEEDBACK_MAX_PER_HOUR: int = 5  # FEEDBACK submissions per IP
 
 
 IdentityFactory = Callable[[Connection], HumanIdentity]
@@ -158,6 +165,18 @@ class MultiTableOrchestrator:
         # Callers may force it on/off explicitly via require_auth.
         self._auth_required = require_auth if require_auth is not None else persistence is not None
         self._auth_state = _AuthState()
+
+        # IP-keyed abuse limiters (public-deployment.md § 24.3). In-process; the
+        # window resets on restart, which is fine at home scale.
+        self._login_limiter = SlidingWindowLimiter(
+            max_events=_LOGIN_MAX_FAILURES_PER_HOUR, window_s=_RATE_WINDOW_S
+        )
+        self._register_limiter = SlidingWindowLimiter(
+            max_events=_REGISTER_MAX_PER_HOUR, window_s=_RATE_WINDOW_S
+        )
+        self._feedback_limiter = SlidingWindowLimiter(
+            max_events=_FEEDBACK_MAX_PER_HOUR, window_s=_RATE_WINDOW_S
+        )
 
         self._registry: TableRegistry = TableRegistry(persistence=persistence)
         self._ws_server: WebSocketServer | None = None
@@ -294,12 +313,29 @@ class MultiTableOrchestrator:
             kind = msg.get("kind")
             result: AuthResult | None = None
             if kind == "AUTH_REQUEST":
+                # Rate-limit check BEFORE the argon2 verify: a throttled IP
+                # never costs the server a hash (public-deployment.md § 24.3).
+                if not self._login_limiter.would_allow(conn.client_ip):
+                    with contextlib.suppress(Exception):
+                        await conn.send(
+                            {
+                                "kind": "ERROR",
+                                "code": "rate_limited",
+                                "message": "Too many sign-in attempts — please wait and try again.",
+                            }
+                        )
+                    attempts += 1
+                    continue
                 result = await asyncio.get_running_loop().run_in_executor(
                     None,
                     self._run_auth_request,
                     str(msg.get("username") or ""),
                     str(msg.get("password") or ""),
                 )
+                # Only failed logins consume the budget — a user reconnecting
+                # with valid credentials is never penalised.
+                if not result.ok:
+                    self._login_limiter.record(conn.client_ip)
             elif kind == "RESUME":
                 result = await asyncio.get_running_loop().run_in_executor(
                     None,
@@ -307,6 +343,18 @@ class MultiTableOrchestrator:
                     str(msg.get("session_token") or ""),
                 )
             elif kind == "REGISTER":
+                # Every register attempt counts toward the budget.
+                if not self._register_limiter.allow(conn.client_ip):
+                    with contextlib.suppress(Exception):
+                        await conn.send(
+                            {
+                                "kind": "ERROR",
+                                "code": "rate_limited",
+                                "message": "Too many registration attempts — please wait and try again.",
+                            }
+                        )
+                    attempts += 1
+                    continue
                 try:
                     result = await asyncio.get_running_loop().run_in_executor(
                         None,
@@ -516,6 +564,19 @@ class MultiTableOrchestrator:
 
     async def _handle_feedback(self, conn: Connection, msg: dict[str, Any]) -> None:
         """Handle FEEDBACK: sanitise, write to data_dir/reports/, send FEEDBACK_ACK."""
+        # Reinstated public-exposure limit (public-deployment.md § 24.4). Uses
+        # the `feedback_error` code so the existing feedback modal surfaces it.
+        if not self._feedback_limiter.allow(conn.client_ip):
+            with contextlib.suppress(Exception):
+                await conn.send(
+                    {
+                        "kind": "ERROR",
+                        "code": "feedback_error",
+                        "message": "Too many reports — please try again later.",
+                    }
+                )
+            return
+
         report_type = msg.get("type")
         if report_type not in ("bug", "feature"):
             with contextlib.suppress(Exception):

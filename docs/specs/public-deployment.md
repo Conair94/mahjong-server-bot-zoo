@@ -283,7 +283,14 @@ attacker gains at most one fresh window per server restart, and restarts are rar
 | --- | --- | --- | --- |
 | `AUTH_REQUEST` **failures** | 10 / IP / hour | client IP | `ERROR { code: "rate_limited" }`, no argon2 verify run |
 | `REGISTER` attempts | 5 / IP / hour | client IP | `ERROR { code: "rate_limited" }` |
-| `FEEDBACK` (reinstate) | 5 / IP / hour | client IP | `ERROR { code: "rate_limited" }` (see §24.4) |
+| `FEEDBACK` (reinstate) | 5 / IP / hour | client IP | `ERROR { code: "feedback_error" }` (see §24.4) |
+
+**Implemented** in `mahjong/server/ratelimit.py` (`SlidingWindowLimiter`) + orchestrator
+wiring. The login path uses `would_allow()` (peek, no record) before the verify and
+`record()` only on failure; `REGISTER`/`FEEDBACK` use `allow()` (check-and-record). Login
+and register emit `rate_limited`; the web client handles that code on the shared auth form.
+**FEEDBACK emits `feedback_error`** (not `rate_limited`) so the existing feedback modal —
+which routes on `feedback_error` — surfaces the message without a new client branch.
 
 Only **failed** `AUTH_REQUEST`s count against the login budget — a user legitimately
 reconnecting many times (flaky mobile network) with a valid token/password isn't
@@ -304,12 +311,15 @@ They compose.
   keyed on client IP via the shared limiter (§24.3), 5/IP/hour. *(An authenticated but
   abusive user can still be disabled via the CLI.)*
 - **Connection cap per IP.** A `max_connections_per_ip` (default 20) guard in the accept
-  path prevents a single IP from exhausting the connection table. Cheap; additive.
-- **Message-size cap.** The `websockets` library's `max_size` (default 1 MiB) already
-  bounds frame size — confirm it's not raised. No oversized-payload memory blow-up.
+  path prevents a single IP from exhausting the connection table. **DEFERRED** — needs
+  per-IP live-connection tracking (increment on accept / decrement on disconnect), which is
+  more lifecycle surface than the rest of step 5; Cloudflare's edge also absorbs connection
+  floods. A clearly-scoped follow-up, not a blocker for the quick-tunnel deploy.
+- **Message-size cap.** Already enforced: `WebSocketServer` sets `max_size = 16 KiB`
+  (`DEFAULT_MAX_SIZE`), well under the library's 1 MiB default. No change needed — verified
+  not raised.
 
-These are small; they ride along with §24.3's limiter rather than warranting their own
-spec sections of design.
+These ride along with §24.3's limiter rather than warranting their own design sections.
 
 ---
 

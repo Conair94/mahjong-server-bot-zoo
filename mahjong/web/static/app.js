@@ -1559,6 +1559,15 @@ class MahjongApp extends LitElement {
           return;
         }
 
+        // --- Rate-limited login / register (Spec 24 § 24.3) ----------------
+        // Both sign-in and register share the auth form, so one handler covers
+        // both. Without this the form would hang in the "submitting" state.
+        if (frame.kind === "ERROR" && frame.code === "rate_limited") {
+          this._authState = "error";
+          this._authError = frame.message || "Too many attempts — please wait and try again.";
+          return;
+        }
+
         // --- Feedback (Spec 23) --------------------------------------------
         if (frame.kind === "FEEDBACK_ACK") {
           this._feedbackResult(true);
