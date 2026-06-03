@@ -3,7 +3,8 @@ import { LitElement, html } from "lit";
 // Admin control console (Spec 25). One WebSocket (`mahjong-admin-v1`) carries
 // commands + STATUS pushes + list replies. Panes are added incrementally; the
 // app ignores frame kinds and fields it doesn't recognise (additive evolution).
-const FUTURE_TABS = ["Tunnel", "Feedback", "Training"];
+// Reserved tabs that render a "coming soon" stub pane but are still selectable.
+const FUTURE_TABS = [];
 
 class AdminApp extends LitElement {
   createRenderRoot() { return this; }
@@ -15,6 +16,7 @@ class AdminApp extends LitElement {
     invites: { state: true },
     accounts: { state: true },
     logs: { state: true },
+    reports: { state: true },
   };
 
   constructor() {
@@ -25,6 +27,7 @@ class AdminApp extends LitElement {
     this.invites = [];
     this.accounts = [];
     this.logs = [];
+    this.reports = [];
     this._ws = null;
     this._reconnectMs = 500;
   }
@@ -53,6 +56,7 @@ class AdminApp extends LitElement {
       else if (msg.kind === "INVITE_LIST") this.invites = msg.invites ?? [];
       else if (msg.kind === "ACCOUNT_LIST") this.accounts = msg.accounts ?? [];
       else if (msg.kind === "LOG_BATCH") this._appendLogs(msg.lines ?? []);
+      else if (msg.kind === "FEEDBACK_LIST") this.reports = msg.reports ?? [];
       else if (msg.kind === "ERROR") this._flash(msg.message || msg.code);
     };
   }
@@ -73,6 +77,7 @@ class AdminApp extends LitElement {
     if (tab === "Invites") this._send("INVITES_LIST");
     if (tab === "Accounts") this._send("ACCOUNTS_LIST");
     if (tab === "Logs") { this.logs = []; this._sendMsg({ kind: "LOG_SUBSCRIBE" }); }
+    if (tab === "Feedback") this._send("FEEDBACK_LIST");
   }
 
   _appendLogs(lines) {
@@ -85,7 +90,7 @@ class AdminApp extends LitElement {
     const state = s.state ?? "UNKNOWN";
     const running = state === "RUNNING";
     const busy = state === "STARTING" || state === "STOPPING";
-    const tabs = ["Status", "Invites", "Accounts", "Logs", "Health", ...FUTURE_TABS];
+    const tabs = ["Status", "Invites", "Accounts", "Logs", "Health", "Tunnel", "Feedback", "Training", ...FUTURE_TABS];
     return html`
       <div class="wrap">
         <header class="bar">
@@ -121,7 +126,72 @@ class AdminApp extends LitElement {
     if (this.tab === "Accounts") return this._accountsPane();
     if (this.tab === "Logs") return this._logsPane();
     if (this.tab === "Health") return this._healthPane();
+    if (this.tab === "Tunnel") return this._tunnelPane();
+    if (this.tab === "Feedback") return this._feedbackPane();
+    if (this.tab === "Training") return this._trainingPane();
     return this._statusPane(s);
+  }
+
+  _trainingPane() {
+    // Reserved slot (Spec 25 § Non-goals): the bot-zoo training dashboard lands
+    // here once the RL harness is wired to the live server. No controls yet.
+    return html`<div class="panel">
+      <div class="empty">
+        <p><b>AI training</b> — reserved for the bot-zoo.</p>
+        <p>This pane will host training-run controls and live eval curves once the
+        RL harness is wired to the running server. Nothing to manage yet.</p>
+      </div>
+    </div>`;
+  }
+
+  _tunnelPane() {
+    const t = this.status?.tunnel ?? {};
+    const running = !!t.running;
+    return html`<div class="panel">
+      <div class="controls">
+        <button @click=${() => this._send("TUNNEL_START")} ?disabled=${running}>▲ Start tunnel</button>
+        <button class="danger" @click=${() => this._send("TUNNEL_STOP")} ?disabled=${!running}>■ Stop tunnel</button>
+      </div>
+      ${t.error
+        ? html`<div class="empty" style="color:var(--bad)">${this._tunnelError(t.error)}</div>`
+        : running && t.url
+        ? html`<div style="margin-top:8px">
+            <span style="color:var(--muted)">public URL</span>
+            &nbsp; <a class="url" href=${t.url} target="_blank" rel="noopener">${t.url}</a>
+            &nbsp; <button @click=${() => this._copy(t.url)}>copy</button>
+          </div>`
+        : html`<div class="empty">Tunnel stopped. Start it to expose the server over a public <code>trycloudflare.com</code> URL.</div>`}
+    </div>`;
+  }
+
+  _tunnelError(code) {
+    if (code === "cloudflared_not_found") return "cloudflared is not installed — install it to use quick tunnels.";
+    if (code === "tunnel_url_timeout") return "Timed out waiting for cloudflared to report a URL.";
+    if (code === "cloudflared_exited") return "cloudflared exited before reporting a URL.";
+    return `Tunnel error: ${code}`;
+  }
+
+  _copy(text) {
+    try { navigator.clipboard?.writeText(text); this._flash("URL copied"); } catch (e) {}
+  }
+
+  _feedbackPane() {
+    return html`<div class="panel">
+      <div class="controls">
+        <button @click=${() => this._send("FEEDBACK_LIST")}>⟳ Refresh</button>
+        <span style="color:var(--muted)">${this.reports.length} report${this.reports.length === 1 ? "" : "s"}</span>
+      </div>
+      ${this.reports.length === 0
+        ? html`<div class="empty">No feedback reports yet.</div>`
+        : html`<div class="reports">${this.reports.map((r) => html`<div class="report">
+            <div class="report-head">
+              <span class="tag ${r.type}">${r.type || "?"}</span>
+              <b>${r.submitter || "anonymous"}</b>
+              <span style="color:var(--muted)">${r.submitted || ""}</span>
+            </div>
+            <pre class="report-body">${r.text || ""}</pre>
+          </div>`)}</div>`}
+    </div>`;
   }
 
   _healthPane() {

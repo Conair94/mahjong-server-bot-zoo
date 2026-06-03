@@ -146,3 +146,75 @@ async def test_unknown_command_returns_error_frame() -> None:
     assert reply["kind"] == "ERROR"
     assert reply["code"] == "unknown_command"
     assert sup.calls == []
+
+
+# --- feedback ---
+
+
+async def test_feedback_list_returns_reports_from_inbox() -> None:
+    class _FakeInbox:
+        async def list_reports(self) -> list[dict]:
+            return [{"type": "bug", "submitter": "Alice", "text": "x", "filename": "a.txt"}]
+
+    sup = _FakeSupervisor(ServerState.STOPPED)
+    plane = ControlPlane(
+        supervisor=sup,  # type: ignore[arg-type]
+        metrics=_FakeMetrics(None),  # type: ignore[arg-type]
+        admin_status_fetch=_async_none,
+        server_listen_url="ws://0.0.0.0:8400",
+        feedback=_FakeInbox(),
+    )
+    reply = await plane.handle_command({"kind": "FEEDBACK_LIST"})
+    assert reply["kind"] == "FEEDBACK_LIST"
+    assert reply["reports"][0]["submitter"] == "Alice"
+
+
+async def test_feedback_list_without_inbox_replies_empty() -> None:
+    plane = _plane(supervisor=_FakeSupervisor(ServerState.STOPPED))
+    reply = await plane.handle_command({"kind": "FEEDBACK_LIST"})
+    assert reply == {"kind": "FEEDBACK_LIST", "reports": []}
+
+
+async def _async_none() -> dict | None:
+    return None
+
+
+# --- tunnel ---
+
+
+async def test_tunnel_commands_route_to_supervisor_and_status_reflects_it() -> None:
+    class _FakeTunnel:
+        def __init__(self) -> None:
+            self.running = False
+            self.calls: list[str] = []
+
+        async def start(self) -> dict:
+            self.calls.append("start")
+            self.running = True
+            return self.to_wire()
+
+        async def stop(self) -> None:
+            self.calls.append("stop")
+            self.running = False
+
+        def to_wire(self) -> dict:
+            return {"running": self.running, "url": "https://x.trycloudflare.com" if self.running else None, "error": None}
+
+    tun = _FakeTunnel()
+    sup = _FakeSupervisor(ServerState.RUNNING)
+    plane = ControlPlane(
+        supervisor=sup,  # type: ignore[arg-type]
+        metrics=_FakeMetrics(None),  # type: ignore[arg-type]
+        admin_status_fetch=_async_none,
+        server_listen_url="ws://0.0.0.0:8400",
+        tunnel=tun,
+    )
+
+    started = await plane.handle_command({"kind": "TUNNEL_START"})
+    assert started["kind"] == "STATUS"
+    assert started["tunnel"]["running"] is True
+    assert started["tunnel"]["url"] == "https://x.trycloudflare.com"
+
+    stopped = await plane.handle_command({"kind": "TUNNEL_STOP"})
+    assert stopped["tunnel"]["running"] is False
+    assert tun.calls == ["start", "stop"]

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from mahjong.control import static_root
+from mahjong.control.feedback import FeedbackInbox
 from mahjong.control.health import HealthMonitor
 from mahjong.control.logbuffer import LogRingBuffer
 from mahjong.control.metrics import MetricsSampler
@@ -34,6 +35,7 @@ from mahjong.control.plane import AdminStatusFetch, ControlPlane
 from mahjong.control.server import AdminWebServer
 from mahjong.control.services import AdminDataService
 from mahjong.control.supervisor import ServerSupervisor, make_http_readiness_probe
+from mahjong.control.tunnel import TunnelSupervisor, cloudflared_argv
 from mahjong.persistence import Persistence
 from mahjong.server.config import load_config_from_env
 
@@ -114,6 +116,15 @@ class ControlApp:
         self._persistence = Persistence(server_cfg.db_path, server_cfg.data_dir)
         data = AdminDataService(self._persistence)
         health = HealthMonitor(persistence=self._persistence, db_path=server_cfg.db_path)
+        feedback = FeedbackInbox(server_cfg.data_dir / "reports")
+
+        # Optional cloudflared quick tunnel pointing at the server's HTTP port
+        # (the same port serves the web client + WS). cloudflared need not be
+        # installed; TunnelSupervisor reports `cloudflared_not_found` if it isn't.
+        _, _, server_port = server_listen_addr.rpartition(":")
+        tunnel = TunnelSupervisor(
+            argv=cloudflared_argv(f"http://127.0.0.1:{server_port}")
+        )
 
         # The child is a `serve`, not a `control`; strip our MAHJONG_CTL_* vars so
         # it doesn't log them as unknown-config warnings (which would then show up
@@ -141,7 +152,10 @@ class ControlApp:
             data=data,
             log_buffer=self._log_buffer,
             health_monitor=health,
+            feedback=feedback,
+            tunnel=tunnel,
         )
+        self._tunnel = tunnel
         self._web = AdminWebServer(
             plane=self._plane,
             host=config.ctl_host,
@@ -191,6 +205,8 @@ class ControlApp:
 
     async def _shutdown(self) -> None:
         _logger.info("control.draining")
+        with contextlib.suppress(Exception):
+            await self._tunnel.stop()
         await self._supervisor.stop()
         await self._metrics.stop()
         await self._web.close()

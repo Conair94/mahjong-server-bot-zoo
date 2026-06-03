@@ -45,6 +45,49 @@ python -m mahjong account invite revoke inv_xxxxxxxxxxxxxxxx              # disa
 A player registers in the browser with the code (the "Register" toggle on the login form).
 Without a minted invite, nobody can sign up — that is the gate.
 
+All of the above (admin account aside) is also doable from the **admin console** GUI — see
+the next section. The CLI stays the scriptable, headless path; the console is the
+interactive one.
+
+---
+
+## Admin console (interactive operator GUI) — Spec 25
+
+For day-to-day operation from a laptop, the **control console** wraps the manual steps in
+a local web dashboard. It is a *separate* supervisor process that owns `serve` as a child
+(a process can't start itself), so launching the console is the one thing you do from a
+shell; everything else is a click.
+
+```bash
+# Launches the control plane and opens the dashboard (server not started yet —
+# start it with one click from the Server pane, or add --autostart-server):
+./scripts/mahjong-console                      # macOS/Linux; always opens the browser
+./scripts/mahjong-console --autostart-server   # one launch → server up + UI
+# equivalently, without the wrapper:
+python -m mahjong control --open --autostart-server
+```
+
+The console binds **loopback only** (`127.0.0.1:8500`) — that is the v1 security boundary;
+reach it from another machine over the same Tailscale/tunnel you already use, not by
+binding `0.0.0.0`. From the dashboard you can:
+
+- **Server** — start / stop / restart `serve`; live CPU, memory, uptime, and the table list.
+- **Invites / Accounts** — mint and revoke invites, create accounts, promote/disable — the
+  same operations as the CLI above, sharing the same persistence helpers.
+- **Tunnel** — start/stop a `cloudflared` **quick tunnel** (Phase A) and copy the public
+  `trycloudflare.com` URL, without dropping to a shell. If `cloudflared` isn't installed the
+  pane says so rather than failing silently. (Phase B's named tunnel is still run by systemd
+  — see below; the console manages the ephemeral quick tunnel only.)
+- **Logs** — live tail of the server child's stdout/stderr.
+- **Health** — `/admin/status` reachability, DB integrity, disk-free, WAL size.
+- **Feedback** — reads the in-app bug/feature reports players submit (`data_dir/reports/`).
+
+> **Console vs. systemd.** The console's subprocess supervisor is the right tool on the dev
+> box and for interactive sessions. In production on the Linux host, **systemd owns `serve`
+> and `cloudflared`** (units below) — don't run both supervisors against the same instance.
+> The console then *observes* a systemd-run server via `/admin/status` rather than
+> supervising it (a known v1→prod seam; see the admin-console spec's Open questions).
+
 ---
 
 ## Phase A — quick tunnel (free, ephemeral; the walking-skeleton deploy)

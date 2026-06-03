@@ -52,6 +52,8 @@ class _MetricsLike(Protocol):
 
 class _TunnelLike(Protocol):
     def to_wire(self) -> dict[str, Any]: ...
+    async def start(self) -> dict[str, Any]: ...
+    async def stop(self) -> None: ...
 
 
 class ControlPlane:
@@ -66,6 +68,7 @@ class ControlPlane:
         data: Any | None = None,
         log_buffer: Any | None = None,
         health_monitor: Any | None = None,
+        feedback: Any | None = None,
     ) -> None:
         self._supervisor = supervisor
         self._metrics = metrics
@@ -79,6 +82,8 @@ class ControlPlane:
         self._log_buffer = log_buffer
         # HealthMonitor (DB integrity + storage), optional.
         self._health_monitor = health_monitor
+        # FeedbackInbox (reads data_dir/reports/*.txt), optional.
+        self._feedback = feedback
 
     # --- log access (consumed by AdminWebServer's per-client LOG stream) ---
 
@@ -114,8 +119,20 @@ class ControlPlane:
         if kind == "SERVER_RESTART":
             await self._supervisor.restart()
             return await self.build_status()
+        if kind == "TUNNEL_START":
+            if self._tunnel is not None:
+                await self._tunnel.start()
+            return await self.build_status()
+        if kind == "TUNNEL_STOP":
+            if self._tunnel is not None:
+                await self._tunnel.stop()
+            return await self.build_status()
         if kind in _INVITE_COMMANDS or kind in _ACCOUNT_COMMANDS:
             return await self._handle_data_command(kind, msg)
+        if kind == "FEEDBACK_LIST":
+            if self._feedback is None:
+                return {"kind": "FEEDBACK_LIST", "reports": []}
+            return {"kind": "FEEDBACK_LIST", "reports": await self._feedback.list_reports()}
         return {
             "kind": "ERROR",
             "code": "unknown_command",
