@@ -1310,6 +1310,7 @@ class MahjongApp extends LitElement {
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
     _authState: { state: true },    // "idle"|"waiting"|"submitting"|"authed"|"error"
     _authError: { state: true },    // null | error string shown under the form
+    _authMode: { state: true },     // "login" | "register" (invite-gated signup)
     // Lobby vs. in-game view.
     _view: { state: true },         // "lobby" | "table"
     _lobbyTables: { state: true },  // array of TABLE_LIST.tables entries
@@ -1410,6 +1411,18 @@ class MahjongApp extends LitElement {
     }
     .auth-submit:disabled { opacity: 0.5; cursor: default; }
     .auth-hint { color: var(--fg-dim); font-size: 0.85em; }
+    .auth-toggle {
+      margin-top: 0.9rem;
+      color: var(--fg-dim);
+      font-size: 0.9em;
+    }
+    .auth-toggle-link {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--accent);
+      cursor: pointer;
+    }
+    .auth-toggle-link:hover { color: var(--fg); }
   `;
 
   constructor() {
@@ -1425,6 +1438,7 @@ class MahjongApp extends LitElement {
     this._authRequired = false;
     this._authState = "idle";
     this._authError = null;
+    this._authMode = "login";
     this._sessionToken = null; // stored in memory; RESUME is a v2 concern
     // Lobby state — see Step 8.7.e.
     this._desiredHumans = _readDesiredHumans(); // 1..4 from ?humans=N
@@ -1533,6 +1547,15 @@ class MahjongApp extends LitElement {
             this._authState = "error";
             this._authError = "Invalid credentials — please try again.";
           }
+          return;
+        }
+
+        // --- Registration rejection (Spec 24 § 24.2) -----------------------
+        // Success arrives as AUTH_RESPONSE { ok: true } (auto-login, handled
+        // above); only the failure path is register-specific.
+        if (frame.kind === "ERROR" && frame.code === "register_rejected") {
+          this._authState = "error";
+          this._authError = frame.message || "Registration failed — please try again.";
           return;
         }
 
@@ -1654,18 +1677,47 @@ class MahjongApp extends LitElement {
     const username = form.elements.username.value.trim();
     const password = form.elements.password.value;
     if (!username || !password) return;
-    // "submitting" disables the form while we wait for AUTH_RESPONSE.
+
+    const register = this._authMode === "register";
+    let msg;
+    if (register) {
+      const inviteCode = form.elements.invite_code.value.trim();
+      if (!inviteCode) {
+        this._authError = "An invite code is required to register.";
+        return;
+      }
+      const displayName = form.elements.display_name.value.trim();
+      // Field is "password" (plaintext) — transport security via TLS.
+      // public-deployment.md § 24.2; server reuses AUTH_RESPONSE on success.
+      msg = {
+        kind: "REGISTER",
+        username,
+        password,
+        display_name: displayName || username,
+        invite_code: inviteCode,
+      };
+    } else {
+      // wire-protocol.md § AUTH_REQUEST.
+      msg = { kind: "AUTH_REQUEST", username, password };
+    }
+
+    // "submitting" disables the form while we wait for the server's reply.
     this._authState = "submitting";
     this._authError = null;
     try {
-      // Field is "password" (plaintext) — transport security via TLS/Tailscale.
-      // wire-protocol.md § AUTH_REQUEST.
-      this._conn.send({ kind: "AUTH_REQUEST", username, password });
+      this._conn.send(msg);
     } catch (err) {
-      console.warn("AUTH_REQUEST send failed:", err);
+      console.warn("auth send failed:", err);
       this._authState = "waiting";
       this._authError = "Failed to send — is the server running?";
     }
+  }
+
+  _onToggleAuthMode(e) {
+    e.preventDefault();
+    this._authMode = this._authMode === "register" ? "login" : "register";
+    this._authState = "waiting";
+    this._authError = null;
   }
 
   // --- Table-discovery helpers (Step 8.5) ---------------------------------
@@ -1769,9 +1821,12 @@ class MahjongApp extends LitElement {
 
   _renderAuthForm() {
     const submitting = this._authState === "submitting";
+    const register = this._authMode === "register";
     return html`
       <div class="auth-overlay">
-        <div class="auth-title">── Sign in ──</div>
+        <div class="auth-title">
+          ${register ? "── Create account ──" : "── Sign in ──"}
+        </div>
         ${this._authError
           ? html`<div class="auth-error">${this._authError}</div>`
           : ""}
@@ -1787,6 +1842,18 @@ class MahjongApp extends LitElement {
               autofocus
             />
           </div>
+          ${register
+            ? html`<div class="auth-form-row">
+                <label class="auth-label">Display name</label>
+                <input
+                  class="auth-input"
+                  type="text"
+                  name="display_name"
+                  ?disabled=${submitting}
+                  autocomplete="nickname"
+                />
+              </div>`
+            : ""}
           <div class="auth-form-row">
             <label class="auth-label">Password</label>
             <input
@@ -1794,20 +1861,41 @@ class MahjongApp extends LitElement {
               type="password"
               name="password"
               ?disabled=${submitting}
-              autocomplete="current-password"
+              autocomplete=${register ? "new-password" : "current-password"}
             />
           </div>
+          ${register
+            ? html`<div class="auth-form-row">
+                <label class="auth-label">Invite code</label>
+                <input
+                  class="auth-input"
+                  type="text"
+                  name="invite_code"
+                  placeholder="inv_…"
+                  ?disabled=${submitting}
+                />
+              </div>`
+            : ""}
           <div class="auth-actions">
             <button class="auth-submit" type="submit" ?disabled=${submitting}>
-              ${submitting ? "[ signing in… ]" : "[ Sign in ]"}
+              ${submitting
+                ? register
+                  ? "[ creating… ]"
+                  : "[ signing in… ]"
+                : register
+                  ? "[ Create account ]"
+                  : "[ Sign in ]"}
             </button>
-            ${submitting
-              ? ""
-              : html`<span class="auth-hint">
-                  (create accounts with <code>python -m mahjong account create</code>)
-                </span>`}
           </div>
         </form>
+        <div class="auth-toggle">
+          ${register
+            ? html`Have an account?
+                <a class="auth-toggle-link" href="#" @click=${this._onToggleAuthMode}>Sign in</a>`
+            : html`Need an account?
+                <a class="auth-toggle-link" href="#" @click=${this._onToggleAuthMode}>Register</a>
+                <span class="auth-hint">(an invite code is required)</span>`}
+        </div>
       </div>
     `;
   }
