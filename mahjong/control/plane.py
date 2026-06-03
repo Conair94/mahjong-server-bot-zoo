@@ -24,6 +24,11 @@ _logger = logging.getLogger(__name__)
 
 AdminStatusFetch = Callable[[], Awaitable["dict[str, Any] | None"]]
 
+_INVITE_COMMANDS = frozenset({"INVITES_LIST", "INVITE_CREATE", "INVITE_REVOKE"})
+_ACCOUNT_COMMANDS = frozenset(
+    {"ACCOUNTS_LIST", "ACCOUNT_CREATE", "ACCOUNT_SET_DISABLED", "ACCOUNT_SET_ROLE"}
+)
+
 
 class _SupervisorLike(Protocol):
     # Read-only properties so the real ServerSupervisor (which exposes these as
@@ -58,12 +63,16 @@ class ControlPlane:
         admin_status_fetch: AdminStatusFetch,
         server_listen_url: str,
         tunnel: _TunnelLike | None = None,
+        data: Any | None = None,
     ) -> None:
         self._supervisor = supervisor
         self._metrics = metrics
         self._admin_status_fetch = admin_status_fetch
         self._server_listen_url = server_listen_url
         self._tunnel = tunnel
+        # AdminDataService (invites/accounts).  Optional so socket-only tests can
+        # omit it; commands that need it reply with ERROR when it's absent.
+        self._data = data
 
     # --- command dispatch ---
 
@@ -83,11 +92,55 @@ class ControlPlane:
         if kind == "SERVER_RESTART":
             await self._supervisor.restart()
             return await self.build_status()
+        if kind in _INVITE_COMMANDS or kind in _ACCOUNT_COMMANDS:
+            return await self._handle_data_command(kind, msg)
         return {
             "kind": "ERROR",
             "code": "unknown_command",
             "message": f"unknown command: {kind!r}",
         }
+
+    async def _handle_data_command(
+        self, kind: str, msg: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Invite/account commands.  Each replies with a refreshed list frame."""
+        if self._data is None:
+            return {"kind": "ERROR", "code": "data_unavailable"}
+        try:
+            if kind == "INVITES_LIST":
+                return {"kind": "INVITE_LIST", "invites": await self._data.list_invites()}
+            if kind == "INVITE_CREATE":
+                invites = await self._data.create_invite(
+                    max_uses=int(msg.get("max_uses", 1)),
+                    expires_days=int(msg.get("expires_days", 7)),
+                )
+                return {"kind": "INVITE_LIST", "invites": invites}
+            if kind == "INVITE_REVOKE":
+                invites = await self._data.revoke_invite(str(msg.get("code", "")))
+                return {"kind": "INVITE_LIST", "invites": invites}
+            if kind == "ACCOUNTS_LIST":
+                return {"kind": "ACCOUNT_LIST", "accounts": await self._data.list_accounts()}
+            if kind == "ACCOUNT_CREATE":
+                accounts = await self._data.create_account(
+                    username=str(msg.get("username", "")),
+                    display_name=str(msg.get("display", "")),
+                    password=str(msg.get("password", "")),
+                    admin=bool(msg.get("admin", False)),
+                )
+                return {"kind": "ACCOUNT_LIST", "accounts": accounts}
+            if kind == "ACCOUNT_SET_DISABLED":
+                accounts = await self._data.set_account_disabled(
+                    int(msg.get("account_id", -1)), bool(msg.get("disabled", False))
+                )
+                return {"kind": "ACCOUNT_LIST", "accounts": accounts}
+            if kind == "ACCOUNT_SET_ROLE":
+                accounts = await self._data.set_account_role(
+                    int(msg.get("account_id", -1)), str(msg.get("role", "user"))
+                )
+                return {"kind": "ACCOUNT_LIST", "accounts": accounts}
+        except Exception as exc:  # surface DB/validation errors without dropping the socket
+            return {"kind": "ERROR", "code": "data_error", "message": str(exc)}
+        return {"kind": "ERROR", "code": "unknown_command"}
 
     # --- status aggregation ---
 

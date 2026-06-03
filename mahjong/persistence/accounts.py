@@ -117,6 +117,33 @@ def set_account_disabled(
     )
 
 
+def set_account_role(
+    conn: sqlite3.Connection,
+    account_id: int,
+    role: str,
+) -> None:
+    """Set the ``role`` ('user' | 'admin') for *account_id*. Does NOT commit."""
+    if role not in ("user", "admin"):
+        raise ValueError(f"invalid role: {role!r}")
+    conn.execute(
+        "UPDATE accounts SET role = ? WHERE account_id = ?",
+        (role, account_id),
+    )
+
+
+def list_accounts(conn: sqlite3.Connection) -> list[Account]:
+    """All accounts ordered by id.  Read-only; backs the admin console + CLI."""
+    rows = conn.execute(
+        """
+        SELECT account_id, username, display_name, kind, role, password_hash,
+               disabled, created_at_ms, last_login_ms
+        FROM accounts
+        ORDER BY account_id
+        """
+    ).fetchall()
+    return [_row_to_account(r) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Session helpers
 # ---------------------------------------------------------------------------

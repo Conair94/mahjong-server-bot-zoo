@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from mahjong.persistence import accounts as _accounts
 from mahjong.persistence import hands as _hands
+from mahjong.persistence import invites as _invites
 from mahjong.persistence import rebuild as _rebuild
 from mahjong.persistence.db import open_db
 from mahjong.persistence.migrations import apply_migrations
@@ -27,6 +28,7 @@ from mahjong.persistence.models import (
     Account,
     HandRow,
     IntegrityReport,
+    InviteRow,
     Participant,
     RebuildReport,
     SessionRow,
@@ -39,6 +41,7 @@ __all__ = [
     "Account",
     "HandRow",
     "IntegrityReport",
+    "InviteRow",
     "Participant",
     "Persistence",
     "RebuildReport",
@@ -127,6 +130,39 @@ class Persistence:
     def set_account_disabled(self, account_id: int, disabled: bool) -> None:
         with self._conn:
             _accounts.set_account_disabled(self._conn, account_id, disabled)
+
+    def set_account_role(self, account_id: int, role: str) -> None:
+        with self._conn:
+            _accounts.set_account_role(self._conn, account_id, role)
+
+    def list_accounts(self) -> list[Account]:
+        return _accounts.list_accounts(self._conn)
+
+    # ------------------------------------------------------------------
+    # Invite helpers  (consumed by public-deployment.md + admin console)
+    # ------------------------------------------------------------------
+
+    def list_invites(self) -> list[InviteRow]:
+        return _invites.list_invites(self._conn)
+
+    def mint_invite(
+        self,
+        *,
+        created_by: int,
+        max_uses: int = 1,
+        expires_at_ms: int | None = None,
+    ) -> str:
+        return _invites.mint_invite(
+            self._conn,
+            created_by=created_by,
+            created_at_ms=int(time.time() * 1000),
+            max_uses=max_uses,
+            expires_at_ms=expires_at_ms,
+        )
+
+    def revoke_invite(self, code: str) -> None:
+        with self._conn:
+            _invites.set_invite_disabled(self._conn, code, True)
 
     # ------------------------------------------------------------------
     # Session helpers  (consumed by auth.md)

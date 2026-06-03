@@ -31,7 +31,10 @@ from mahjong.control.logbuffer import LogRingBuffer
 from mahjong.control.metrics import MetricsSampler
 from mahjong.control.plane import AdminStatusFetch, ControlPlane
 from mahjong.control.server import AdminWebServer
+from mahjong.control.services import AdminDataService
 from mahjong.control.supervisor import ServerSupervisor, make_http_readiness_probe
+from mahjong.persistence import Persistence
+from mahjong.server.config import load_config_from_env
 
 _logger = logging.getLogger(__name__)
 
@@ -103,6 +106,13 @@ class ControlApp:
         token = secrets.token_urlsafe(32)
         status_url = _loopback_status_url(server_listen_addr)
 
+        # Open the server's DB for invite/account ops (WAL → safe alongside the
+        # running serve child). Long-lived; closed on shutdown.
+        server_cfg, _unknown = load_config_from_env(server_env)
+        server_cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        self._persistence = Persistence(server_cfg.db_path, server_cfg.data_dir)
+        data = AdminDataService(self._persistence)
+
         self._log_buffer = LogRingBuffer(maxlen=config.log_buffer_lines)
         self._supervisor = ServerSupervisor(
             argv=[sys.executable, "-m", "mahjong", "serve"],
@@ -120,6 +130,7 @@ class ControlApp:
             metrics=self._metrics,
             admin_status_fetch=make_admin_status_fetch(status_url, token),
             server_listen_url=f"ws://{server_listen_addr}",
+            data=data,
         )
         self._web = AdminWebServer(
             plane=self._plane,
@@ -173,6 +184,8 @@ class ControlApp:
         await self._supervisor.stop()
         await self._metrics.stop()
         await self._web.close()
+        with contextlib.suppress(Exception):
+            self._persistence.close()
 
 
 __all__ = ["ControlApp", "ControlConfig", "make_admin_status_fetch"]
