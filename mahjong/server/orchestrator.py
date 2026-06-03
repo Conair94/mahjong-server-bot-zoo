@@ -639,7 +639,7 @@ class MultiTableOrchestrator:
     def _write_report(reports_dir: Path, report_type: str, submitter: str, text: str) -> None:
         import datetime
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         stem = now.strftime("%Y%m%d_%H%M%S") + f"_{report_type}"
         for attempt in range(10):
             suffix = "" if attempt == 0 else f"_{attempt}"
