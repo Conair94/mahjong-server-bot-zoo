@@ -7,7 +7,7 @@ CREATE_TABLE.options field.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from playwright.async_api import Page
@@ -74,3 +74,49 @@ async def test_timeouts_disabled_omits_decide_timeout(
     )
     assert opts["timeouts_enabled"] is False
     assert "decide_timeout_seconds" not in opts
+
+
+async def test_default_is_untimed(page: Page, fake_wire_server: FakeWireServer) -> None:
+    """A freshly-mounted lobby (no state override) defaults to NO turn timer, so
+    new tables wait for humans indefinitely unless the creator opts in."""
+    await page.goto(fake_wire_server.url)
+    await page.wait_for_load_state("domcontentloaded")
+    result = await page.evaluate(
+        """async () => {
+          await import('/static/app.js');
+          await customElements.whenDefined('lobby-view');
+          const el = document.createElement('lobby-view');
+          document.body.appendChild(el);
+          await el.updateComplete;
+          return { enabled: el.timeoutsEnabled, opts: el._buildOptions() };
+        }"""
+    )
+    assert result["enabled"] is False
+    # The default build therefore carries timeouts_enabled:false (not null).
+    assert result["opts"] is not None
+    assert result["opts"]["timeouts_enabled"] is False
+
+
+async def test_timer_toggle_is_surfaced_not_buried(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """The turn-timer checkbox must be visible in the create form WITHOUT
+    expanding the collapsed 'advanced' section (the bug: it was buried)."""
+    await page.goto(fake_wire_server.url)
+    await page.wait_for_load_state("domcontentloaded")
+    found = await page.evaluate(
+        """async () => {
+          await import('/static/app.js');
+          await customElements.whenDefined('lobby-view');
+          const el = document.createElement('lobby-view');
+          document.body.appendChild(el);
+          await el.updateComplete;
+          // showAdvanced is false by default; the timer-toggle lives outside adv-body.
+          const toggle = el.renderRoot.querySelector('.timer-toggle');
+          const insideAdvanced = !!(toggle && toggle.closest('.adv-body'));
+          return { present: !!toggle, insideAdvanced, advancedOpen: el.showAdvanced };
+        }"""
+    )
+    assert found["present"] is True
+    assert found["advancedOpen"] is False  # advanced stays collapsed
+    assert found["insideAdvanced"] is False  # yet the toggle is still shown

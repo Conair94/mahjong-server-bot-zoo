@@ -309,6 +309,14 @@ class MultiTableOrchestrator:
         if table is not None:
             try:
                 async for msg in conn:
+                    # FEEDBACK is a connection-level concern (it writes to
+                    # data_dir/reports), not a table action.  Intercept it here so
+                    # the in-game feedback button still works once attached —
+                    # otherwise the table session replies ERROR unknown_kind and
+                    # the client's feedback modal hangs waiting for an ACK.
+                    if msg.get("kind") == "FEEDBACK":
+                        await self._handle_feedback(conn, msg)
+                        continue
                     await table.handle_inbound(conn, msg)
             finally:
                 await table.on_socket_dropped(conn)
