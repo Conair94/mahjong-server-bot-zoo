@@ -63,6 +63,30 @@ _CONTENT_TYPES: dict[str, str] = {
 
 _logger = logging.getLogger(__name__)
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+_UNKNOWN_IP = "unknown"
+
+
+def resolve_client_ip(
+    *,
+    peer_host: str | None,
+    forwarded_for: str | None,
+    trust_proxy: bool,
+) -> str:
+    """Resolve the real client IP for rate-limiting (public-deployment.md § 24.1).
+
+    Trust the proxy's ``CF-Connecting-IP`` header **only** when ``trust_proxy``
+    is on AND the TCP peer is loopback — i.e. the request actually came through
+    the local ``cloudflared``. A direct (non-tunnel) connection from a remote
+    peer can't set this header to anything we'll honour, and it can't even reach
+    a loopback-bound listener; the loopback-peer check is what makes the header
+    unspoofable. With ``trust_proxy`` off we always return the peer, preserving
+    the local/LAN/Tailscale and test behaviour.
+    """
+    if trust_proxy and peer_host in _LOOPBACK_HOSTS and forwarded_for:
+        return forwarded_for.strip()
+    return peer_host or _UNKNOWN_IP
+
 
 class Connection:
     """One accepted WebSocket, decoded as wire-protocol messages.
@@ -71,9 +95,18 @@ class Connection:
     iterator to consume inbound frames; call `send()` to push outbound.
     """
 
-    def __init__(self, connection_id: int, ws: ServerConnection) -> None:
+    def __init__(
+        self,
+        connection_id: int,
+        ws: ServerConnection,
+        *,
+        client_ip: str = _UNKNOWN_IP,
+    ) -> None:
         self.connection_id = connection_id
         self._ws = ws
+        # Real client IP (proxy-aware; see resolve_client_ip). Consumed by the
+        # rate limiter; loopback/"unknown" for direct local connections.
+        self.client_ip = client_ip
 
     @property
     def subprotocol(self) -> str:
@@ -142,11 +175,13 @@ class WebSocketServer:
         static_dir: Path | None = None,
         max_size: int = DEFAULT_MAX_SIZE,
         subprotocol: str = SUBPROTOCOL,
+        trust_proxy: bool = False,
     ) -> None:
         self._host = host
         self._port = port
         self._handler = handler
         self._health_handler = health_handler
+        self._trust_proxy = trust_proxy
         # Resolve eagerly so the traversal check in `_serve_static` can compare
         # against a canonical path.
         self._static_dir: Path | None = static_dir.resolve() if static_dir else None
@@ -249,6 +284,21 @@ class WebSocketServer:
         headers["Content-Length"] = str(len(body))
         return Response(200, "OK", headers, body)
 
+    def _resolve_peer_ip(self, ws: ServerConnection) -> str:
+        """Extract the real client IP from the handshake (proxy-aware)."""
+        peer = ws.remote_address
+        peer_host = peer[0] if peer else None
+        forwarded: str | None = None
+        request = getattr(ws, "request", None)
+        if request is not None:
+            # Header lookup is case-insensitive; Cloudflare sends CF-Connecting-IP.
+            forwarded = request.headers.get("CF-Connecting-IP")
+        return resolve_client_ip(
+            peer_host=peer_host,
+            forwarded_for=forwarded,
+            trust_proxy=self._trust_proxy,
+        )
+
     async def _ws_handler(self, ws: ServerConnection) -> None:
         # Defense-in-depth: the library should have rejected mismatches via
         # `_select_subprotocol`, but if it didn't, close immediately.
@@ -257,7 +307,9 @@ class WebSocketServer:
             return
         conn_id = self._next_conn_id
         self._next_conn_id += 1
-        conn = Connection(conn_id, ws)
+        conn = Connection(
+            conn_id, ws, client_ip=self._resolve_peer_ip(ws)
+        )
         try:
             await self._handler(conn)
         except ConnectionClosed:
@@ -286,4 +338,5 @@ __all__ = [
     "ConnectionHandler",
     "HealthHandler",
     "WebSocketServer",
+    "resolve_client_ip",
 ]

@@ -131,9 +131,11 @@ class MultiTableOrchestrator:
         bot_pacing_enabled: bool = False,
         bot_min_delay_s: float = 5.0,
         bot_max_delay_s: float = 10.0,
+        trust_proxy: bool = False,
     ) -> None:
         self._host = host
         self._port = port
+        self._trust_proxy = trust_proxy
         self._data_dir = data_dir
         self._ruleset = ruleset
         self._seed = seed
@@ -184,6 +186,7 @@ class MultiTableOrchestrator:
             port=self._port,
             handler=self._handler,
             static_dir=self._static_dir,
+            trust_proxy=self._trust_proxy,
         )
         await self._ws_server.start()
 
