@@ -66,14 +66,9 @@ gameplay-fix commit for scope. Sweep it up here if you want a clean `ruff check`
 The last two sessions shipped features verified by tests/headless harnesses but not
 all exercised end-to-end. None are known-broken; they are **owed confirmations**.
 
-- **B1a. Live Cloudflare tunnel.** The `TunnelSupervisor` was tested only against a
-  missing binary and a fake binary — never a real `cloudflared` spawn. **cloudflared
-  IS installed** (`2026.3.0`), so this is now doable:
-  1. `./scripts/mahjong-console --autostart-server`
-  2. In the dashboard → **Tunnel** pane → **Start tunnel**; confirm a
-     `*.trycloudflare.com` URL appears and the **copy** button works.
-  3. Open that URL from a device **off your home network** (phone on cellular) and
-     load the login page. Then **Stop tunnel** and confirm it tears down.
+- **B1a. Live Cloudflare tunnel. ✓ CONFIRMED (2026-06-03).** Verified working in live
+  play by the operator — the `*.trycloudflare.com` URL spawns, is reachable off-network,
+  and tears down. No further action.
   Files: [mahjong/control/tunnel.py](../mahjong/control/tunnel.py),
   Tunnel pane in [mahjong/control/static/admin.js](../mahjong/control/static/admin.js).
 
@@ -90,9 +85,9 @@ all exercised end-to-end. None are known-broken; they are **owed confirmations**
   [tests/server/test_feedback_in_game.py](../tests/server/test_feedback_in_game.py);
   this is just the real-play confirmation.
 
-- **B1d. Admin console pane pixels.** Data paths for Invites/Accounts/Logs/Health/
-  Tunnel/Feedback/Training are verified over the live WS, but their *rendering* was
-  never eyeballed. Open each pane once and sanity-check the layout.
+- **B1d. Admin console pane pixels. ✓ CONFIRMED (2026-06-03).** Operator eyeballed the
+  panes (Invites/Accounts/Logs/Health/Tunnel/Feedback/Training) — layout looks good.
+  No further action.
 
 ### B2. Layer 8.8 — deferred lifecycle hardening
 Step 8.5 shipped a "pragmatic cut" of [server-lifecycle.md](specs/server-lifecycle.md);
