@@ -143,6 +143,7 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         bot_pacing_enabled=cfg.bot_pacing_enabled,
         bot_min_delay_s=cfg.bot_min_delay_s,
         bot_max_delay_s=cfg.bot_max_delay_s,
+        admin_token=cfg.admin_token,
     )
     await orch.start()
     _logger.info(

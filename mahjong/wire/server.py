@@ -44,6 +44,10 @@ SUBPROTOCOL: str = "mahjong-v1"
 DEFAULT_MAX_SIZE: int = 16 * 1024  # 16 KiB, per wire-protocol §Rate limiting.
 
 HealthHandler = Callable[[], "tuple[int, bytes]"]
+# Receives the request's Authorization header value (or None) and returns
+# (status, body).  The token check lives in the handler, not the transport
+# (admin-console.md § 1); the transport stays dumb.
+AdminStatusHandler = Callable[["str | None"], "tuple[int, bytes]"]
 ConnectionHandler = Callable[["Connection"], Awaitable[None]]
 
 # Static-asset content-type map. Extensions not in this map are served as
@@ -172,6 +176,7 @@ class WebSocketServer:
         *,
         handler: ConnectionHandler,
         health_handler: HealthHandler | None = None,
+        admin_status_handler: AdminStatusHandler | None = None,
         static_dir: Path | None = None,
         max_size: int = DEFAULT_MAX_SIZE,
         subprotocol: str = SUBPROTOCOL,
@@ -181,6 +186,7 @@ class WebSocketServer:
         self._port = port
         self._handler = handler
         self._health_handler = health_handler
+        self._admin_status_handler = admin_status_handler
         self._trust_proxy = trust_proxy
         # Resolve eagerly so the traversal check in `_serve_static` can compare
         # against a canonical path.
@@ -244,6 +250,14 @@ class WebSocketServer:
             if self._health_handler is None:
                 return connection.respond(503, "service unhealthy or unconfigured\n")
             status, body = self._health_handler()
+            return connection.respond(status, body.decode("utf-8", errors="replace"))
+        if path == "/admin/status":
+            # Absent handler → route not mounted (404), so a hand-started server
+            # exposes no admin surface at all (admin-console.md § 1).
+            if self._admin_status_handler is None:
+                return connection.respond(404, "not found\n")
+            authorization = request.headers.get("Authorization")
+            status, body = self._admin_status_handler(authorization)
             return connection.respond(status, body.decode("utf-8", errors="replace"))
         # Static assets served at `/` and `/static/<path>` when a static dir
         # is configured. A WS upgrade attempt carries a `Sec-WebSocket-Protocol`
@@ -334,6 +348,7 @@ def _flatten_subprotocols(header_values: list[str]) -> list[str]:
 __all__ = [
     "DEFAULT_MAX_SIZE",
     "SUBPROTOCOL",
+    "AdminStatusHandler",
     "Connection",
     "ConnectionHandler",
     "HealthHandler",

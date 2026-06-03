@@ -37,6 +37,7 @@ async def _running_server(
     handler: Any,
     *,
     health_handler: Any = None,
+    admin_status_handler: Any = None,
     static_dir: Any = None,
     max_size: int = 16 * 1024,
     trust_proxy: bool = False,
@@ -47,6 +48,7 @@ async def _running_server(
         port=0,
         handler=handler,
         health_handler=health_handler,
+        admin_status_handler=admin_status_handler,
         static_dir=static_dir,
         max_size=max_size,
         trust_proxy=trust_proxy,
@@ -250,17 +252,59 @@ async def test_health_default_returns_503_when_no_handler() -> None:
         assert status == 503
 
 
-def _fetch(url: str) -> tuple[bytes, int]:
+def _fetch(url: str, headers: dict[str, str] | None = None) -> tuple[bytes, int]:
     """Synchronous urlopen helper. Returns (body, status). Treats HTTPError as
-    a real response (we want to see 503s)."""
+    a real response (we want to see 401/404/503s)."""
     import urllib.error
     import urllib.request
 
+    req = urllib.request.Request(url, headers=headers or {})
     try:
-        with urllib.request.urlopen(url, timeout=2.0) as resp:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
             return resp.read(), resp.status
     except urllib.error.HTTPError as exc:
         return exc.read(), exc.code
+
+
+# --- /admin/status hook (Spec 25 § 1) ---
+
+
+async def test_admin_status_handler_receives_authorization_header() -> None:
+    """GET /admin/status invokes the hook with the request's Authorization header
+    value and returns its (status, body)."""
+    seen: dict[str, Any] = {}
+
+    def admin_status_handler(authorization: str | None) -> tuple[int, bytes]:
+        seen["auth"] = authorization
+        return 200, b'{"uptime_s": 1}'
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(
+        ws_handler, admin_status_handler=admin_status_handler
+    ) as server:
+        url = f"http://127.0.0.1:{server.port}/admin/status"
+        loop = asyncio.get_running_loop()
+        body, status = await loop.run_in_executor(
+            None, _fetch, url, {"Authorization": "Bearer abc"}
+        )
+        assert status == 200
+        assert body == b'{"uptime_s": 1}'
+        assert seen["auth"] == "Bearer abc"
+
+
+async def test_admin_status_absent_returns_404() -> None:
+    """Without a handler, /admin/status is not mounted at all (route absent)."""
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler) as server:
+        url = f"http://127.0.0.1:{server.port}/admin/status"
+        loop = asyncio.get_running_loop()
+        _body, status = await loop.run_in_executor(None, _fetch, url)
+        assert status == 404
 
 
 # --- lifecycle ---
