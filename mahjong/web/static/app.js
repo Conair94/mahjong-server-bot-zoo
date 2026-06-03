@@ -861,7 +861,9 @@ class LobbyView extends LitElement {
     this.customMin = 5.0;
     this.customMax = 10.0;
     this.decideTimeout = 60;
-    this.timeoutsEnabled = true;
+    // Untimed by default: casual home play should wait for a human as long as
+    // they like.  The creator opts into a turn timer via the prominent toggle.
+    this.timeoutsEnabled = false;
   }
 
   _emit(name, detail) {
@@ -1014,17 +1016,8 @@ class LobbyView extends LitElement {
                     ?disabled=${!this.timeoutsEnabled || !!this.busy}
                     @input=${(e) => (this.decideTimeout = e.target.value)}
                   />
-                  <span class="adv-label">seconds per discard prompt</span>
-                </div>
-                <div class="adv-row">
-                  <label class="adv-radio">
-                    <input
-                      type="checkbox"
-                      .checked=${this.timeoutsEnabled}
-                      ?disabled=${!!this.busy}
-                      @change=${(e) => (this.timeoutsEnabled = e.target.checked)}
-                    />Use time limits (uncheck → no deadline on this table)
-                  </label>
+                  <span class="adv-label">seconds per discard prompt
+                    ${this.timeoutsEnabled ? "" : "(turn timer is off)"}</span>
                 </div>
               </div>
             `
@@ -1076,6 +1069,22 @@ class LobbyView extends LitElement {
             `,
           )}
           <span class="pick-label">+ ${4 - this.desiredHumans} canned-pass bot${4 - this.desiredHumans === 1 ? "" : "s"}</span>
+        </div>
+        <div class="pick-row">
+          <label class="timer-toggle">
+            <input
+              type="checkbox"
+              .checked=${this.timeoutsEnabled}
+              ?disabled=${!!this.busy}
+              @change=${(e) => (this.timeoutsEnabled = e.target.checked)}
+            />
+            Turn timer
+          </label>
+          <span class="pick-label">
+            ${this.timeoutsEnabled
+              ? html`on — ${this.decideTimeout}s per turn (tune in Options)`
+              : "off — players take as long as they like"}
+          </span>
         </div>
         ${this._renderAdvancedOptions()}
         <div class="lobby-actions">
@@ -1675,6 +1684,18 @@ class MahjongApp extends LitElement {
             clearTimeout(this._lobbyPollHandle);
             this._lobbyPollHandle = null;
           }
+        } else if (frame.kind === "HAND_END" && frame.terminal && pane.seatView) {
+          // The server sends end-of-hand as its own frame whose `terminal`
+          // payload is the record HAND_END event minus its wrapper fields
+          // (incl. the `event` discriminator). Re-add `event: "HAND_END"` so the
+          // reducer routes it to applyHandEnd, which sets seatView.terminal and
+          // the §22.9 summary (scores + fan + revealed hands) renders.
+          const next = applyEvent(
+            pane.seatView,
+            { event: "HAND_END", ...frame.terminal },
+            pane.ownSeat,
+          );
+          pane.setSnapshot(next, pane.ownSeat);
         } else if (frame.kind === "PROMPT") {
           pane.setPrompt(frame);
         } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {

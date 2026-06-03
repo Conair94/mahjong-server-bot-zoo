@@ -48,6 +48,10 @@ class ServerConfig:
     bot_max_delay_s: float
     server_version: str
     server_id: str
+    # Shared secret gating GET /admin/status (admin-console.md § 1). None → the
+    # route is not mounted, so a hand-started server has no admin surface. The
+    # control console injects a fresh token when it spawns `serve`.
+    admin_token: str | None
     # Pragmatic-cut omissions vs spec: health_listen_addr, bot_manifest_dir.
 
     @property
@@ -101,6 +105,7 @@ _KNOWN_VARS: frozenset[str] = frozenset(
         "MAHJONG_BOT_PACING",
         "MAHJONG_BOT_MIN_DELAY_S",
         "MAHJONG_BOT_MAX_DELAY_S",
+        "MAHJONG_ADMIN_TOKEN",
     }
 )
 
@@ -202,6 +207,7 @@ def load_config_from_env(
         ),
         server_version="0.1.0",
         server_id="mahjong-server-0.1.0",
+        admin_token=(e.get("MAHJONG_ADMIN_TOKEN") or None),
     )
     if cfg.bot_min_delay_s < 0 or cfg.bot_max_delay_s < cfg.bot_min_delay_s:
         raise ConfigError(

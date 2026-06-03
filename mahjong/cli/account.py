@@ -82,19 +82,16 @@ def _cmd_create(args: argparse.Namespace) -> int:
 def _cmd_list(args: argparse.Namespace) -> int:
     p = _open_persistence()
     try:
-        rows = p._conn.execute(
-            "SELECT account_id, username, display_name, kind, role, disabled "
-            "FROM accounts ORDER BY account_id"
-        ).fetchall()
+        rows = p.list_accounts()
         if not rows:
             print("(no accounts)")
             return 0
         print(f"{'id':>4}  {'username':<20} {'kind':<6} {'role':<6} {'disabled':<8} display")
-        for r in rows:
+        for a in rows:
             print(
-                f"{r['account_id']:>4}  {r['username']:<20} "
-                f"{r['kind']:<6} {r['role']:<6} "
-                f"{('yes' if r['disabled'] else 'no'):<8} {r['display_name']}"
+                f"{a.account_id:>4}  {a.username:<20} "
+                f"{a.kind:<6} {a.role:<6} "
+                f"{('yes' if a.disabled else 'no'):<8} {a.display_name}"
             )
         return 0
     finally:
@@ -143,20 +140,17 @@ def _cmd_invite_create(args: argparse.Namespace) -> int:
 def _cmd_invite_list(args: argparse.Namespace) -> int:
     p = _open_persistence()
     try:
-        rows = p._conn.execute(
-            "SELECT code, created_by, expires_at_ms, max_uses, used_count, disabled "
-            "FROM invites ORDER BY created_at_ms DESC"
-        ).fetchall()
+        rows = p.list_invites()
         if not rows:
             print("(no invites)")
             return 0
         print(f"{'code':<24} {'uses':<8} {'expires':<22} {'disabled':<8} by")
-        for r in rows:
-            uses = f"{r['used_count']}/{r['max_uses']}"
-            expires = "never" if r["expires_at_ms"] is None else _iso(r["expires_at_ms"])
+        for iv in rows:
+            uses = f"{iv.used_count}/{iv.max_uses}"
+            expires = "never" if iv.expires_at_ms is None else _iso(iv.expires_at_ms)
             print(
-                f"{r['code']:<24} {uses:<8} {expires:<22} "
-                f"{('yes' if r['disabled'] else 'no'):<8} {r['created_by']}"
+                f"{iv.code:<24} {uses:<8} {expires:<22} "
+                f"{('yes' if iv.disabled else 'no'):<8} {iv.created_by}"
             )
         return 0
     finally:

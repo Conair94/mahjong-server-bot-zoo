@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Launch the mahjong admin control console (Spec 25 § Bootstrapping).
+#
+# This is the one thing you start from a terminal. Everything else — including
+# starting/stopping the game server — happens from the web dashboard it opens.
+#
+#   ./scripts/mahjong-console                    # console only
+#   ./scripts/mahjong-console --autostart-server # one launch → server up + UI
+#
+# Any extra args are passed through to `python -m mahjong control`.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="$HERE/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+
+cd "$HERE"
+exec "$PY" -m mahjong control --open "$@"

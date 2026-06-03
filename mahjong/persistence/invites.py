@@ -82,6 +82,30 @@ def get_invite(conn: sqlite3.Connection, code: str) -> InviteRow | None:
     )
 
 
+def list_invites(conn: sqlite3.Connection) -> list[InviteRow]:
+    """All invites, newest first.  Read-only; backs the admin console + CLI."""
+    rows = conn.execute(
+        """
+        SELECT code, created_by, created_at_ms, expires_at_ms,
+               max_uses, used_count, disabled
+        FROM invites
+        ORDER BY created_at_ms DESC
+        """
+    ).fetchall()
+    return [
+        InviteRow(
+            code=r["code"],
+            created_by=r["created_by"],
+            created_at_ms=r["created_at_ms"],
+            expires_at_ms=r["expires_at_ms"],
+            max_uses=r["max_uses"],
+            used_count=r["used_count"],
+            disabled=bool(r["disabled"]),
+        )
+        for r in rows
+    ]
+
+
 def redeem_invite(conn: sqlite3.Connection, code: str, *, now_ms: int) -> bool:
     """Atomically claim one use of *code* iff it is redeemable.
 
@@ -123,6 +147,7 @@ def set_invite_disabled(
 __all__ = [
     "INVITE_PREFIX",
     "get_invite",
+    "list_invites",
     "mint_invite",
     "redeem_invite",
     "set_invite_disabled",

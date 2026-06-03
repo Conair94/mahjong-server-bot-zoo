@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from mahjong.persistence.auth import (
     handle_register,
     handle_resume,
 )
+from mahjong.server.admin_status import make_admin_status_handler
 from mahjong.server.ratelimit import SlidingWindowLimiter
 from mahjong.server.registry import (
     ShuttingDown,
@@ -46,7 +48,7 @@ from mahjong.server.table_options import TableOptionsError, parse_table_options
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table.manager import DecideTimeouts
 from mahjong.wire.feedback import SanitiseError, sanitise_report_text
-from mahjong.wire.server import Connection, WebSocketServer
+from mahjong.wire.server import AdminStatusHandler, Connection, WebSocketServer
 
 _logger = logging.getLogger(__name__)
 
@@ -139,10 +141,14 @@ class MultiTableOrchestrator:
         bot_min_delay_s: float = 5.0,
         bot_max_delay_s: float = 10.0,
         trust_proxy: bool = False,
+        admin_token: str | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._trust_proxy = trust_proxy
+        self._admin_token = admin_token
+        # Set at start(); monotonic so uptime is immune to wall-clock changes.
+        self._started_at_monotonic: float | None = None
         self._data_dir = data_dir
         self._ruleset = ruleset
         self._seed = seed
@@ -200,14 +206,29 @@ class MultiTableOrchestrator:
         if self._ws_server is not None:
             raise RuntimeError("MultiTableOrchestrator already started")
         (self._data_dir / "reports").mkdir(parents=True, exist_ok=True)
+        self._started_at_monotonic = time.monotonic()
         self._ws_server = WebSocketServer(
             host=self._host,
             port=self._port,
             handler=self._handler,
+            admin_status_handler=self._build_admin_status_handler(),
             static_dir=self._static_dir,
             trust_proxy=self._trust_proxy,
         )
         await self._ws_server.start()
+
+    def _build_admin_status_handler(self) -> AdminStatusHandler | None:
+        """The token-gated /admin/status handler, or None when no token is set
+        (route stays unmounted — admin-console.md § 1)."""
+        if not self._admin_token:
+            return None
+        assert self._started_at_monotonic is not None
+        return make_admin_status_handler(
+            token=self._admin_token,
+            registry=self._registry,
+            started_at_monotonic=self._started_at_monotonic,
+            listen_addr=f"{self._host}:{self.port}",
+        )
 
     async def close(self) -> None:
         # Close all tables gracefully
@@ -288,6 +309,14 @@ class MultiTableOrchestrator:
         if table is not None:
             try:
                 async for msg in conn:
+                    # FEEDBACK is a connection-level concern (it writes to
+                    # data_dir/reports), not a table action.  Intercept it here so
+                    # the in-game feedback button still works once attached —
+                    # otherwise the table session replies ERROR unknown_kind and
+                    # the client's feedback modal hangs waiting for an ACK.
+                    if msg.get("kind") == "FEEDBACK":
+                        await self._handle_feedback(conn, msg)
+                        continue
                     await table.handle_inbound(conn, msg)
             finally:
                 await table.on_socket_dropped(conn)
