@@ -31,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
         from mahjong.cli.serve import main as serve_main
 
         return serve_main(args)
+    if sub == "control":
+        from mahjong.cli.control import main as control_main
+
+        return control_main(args)
     print(f"unknown subcommand: {sub!r}", file=sys.stderr)
     _usage()
     return 1
@@ -43,3 +47,4 @@ def _usage() -> None:
     print("  selfplay     headless N-hand self-play between bots", file=sys.stderr)
     print("  account      account management (create | list)", file=sys.stderr)
     print("  serve        run the WebSocket mahjong server", file=sys.stderr)
+    print("  control      run the admin control console (supervises serve)", file=sys.stderr)

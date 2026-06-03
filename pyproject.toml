@@ -20,6 +20,9 @@ dependencies = [
     # Password hashing for auth (Layer 8.2). argon2id is the OWASP-current
     # standard; argon2-cffi wraps the reference C implementation.
     "argon2-cffi>=23.1",
+    # Process metrics (CPU%, RSS) for the admin control console (Spec 25 §2).
+    # Cross-platform; reads the supervised `serve` child by PID.
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +83,11 @@ strict = true
 [[tool.mypy.overrides]]
 module = "mahjong.table.*"
 strict = true
+
+# psutil ships no type stubs; its surface here is tiny (Process, memory_info).
+[[tool.mypy.overrides]]
+module = "psutil.*"
+ignore_missing_imports = true
 
 # --- Ruff ---
 
