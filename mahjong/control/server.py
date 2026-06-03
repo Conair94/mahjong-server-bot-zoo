@@ -58,6 +58,9 @@ class AdminWebServer:
         self._status_interval_s = status_interval_s
         self._server: Server | None = None
         self._clients: set[ServerConnection] = set()
+        # Per-client log cursor: present iff the client sent LOG_SUBSCRIBE. The
+        # broadcast loop ships new lines past each cursor (live tail).
+        self._log_cursors: dict[ServerConnection, int] = {}
         self._broadcast_task: asyncio.Task[None] | None = None
 
     @property
@@ -137,6 +140,9 @@ class AdminWebServer:
                 except json.JSONDecodeError:
                     await self._send(ws, {"kind": "ERROR", "code": "bad_json"})
                     continue
+                if msg.get("kind") == "LOG_SUBSCRIBE":
+                    await self._log_subscribe(ws, msg)
+                    continue
                 reply = await self._plane.handle_command(msg)
                 await self._send(ws, reply)
                 # A command may have changed server state; nudge everyone.
@@ -146,13 +152,34 @@ class AdminWebServer:
             _logger.debug("admin.ws_handler_closed", exc_info=True)
         finally:
             self._clients.discard(ws)
+            self._log_cursors.pop(ws, None)
+
+    async def _log_subscribe(self, ws: ServerConnection, msg: dict[str, Any]) -> None:
+        """Send the backlog and mark *ws* for live log streaming."""
+        from_line = msg.get("from_line")
+        if from_line is None:
+            lines, cursor = self._plane.log_recent()
+        else:
+            lines, cursor = self._plane.log_since(int(from_line))
+        self._log_cursors[ws] = cursor
+        await self._send(ws, {"kind": "LOG_BATCH", "lines": lines, "cursor": cursor})
 
     async def _broadcast_loop(self) -> None:
         while True:
             await asyncio.sleep(self._status_interval_s)
-            if self._clients:
-                with contextlib.suppress(Exception):
-                    await self._broadcast(await self._plane.build_status())
+            if not self._clients:
+                continue
+            with contextlib.suppress(Exception):
+                await self._broadcast(await self._plane.build_status())
+            await self._pump_logs()
+
+    async def _pump_logs(self) -> None:
+        """Ship new log lines to each subscribed client, advancing its cursor."""
+        for ws, cursor in list(self._log_cursors.items()):
+            lines, new_cursor = self._plane.log_since(cursor)
+            if lines:
+                self._log_cursors[ws] = new_cursor
+                await self._send(ws, {"kind": "LOG_BATCH", "lines": lines, "cursor": new_cursor})
 
     async def _broadcast(self, frame: dict[str, Any]) -> None:
         for ws in list(self._clients):

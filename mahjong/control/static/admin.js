@@ -3,7 +3,7 @@ import { LitElement, html } from "lit";
 // Admin control console (Spec 25). One WebSocket (`mahjong-admin-v1`) carries
 // commands + STATUS pushes + list replies. Panes are added incrementally; the
 // app ignores frame kinds and fields it doesn't recognise (additive evolution).
-const FUTURE_TABS = ["Logs", "Tunnel", "Feedback", "Health", "Training"];
+const FUTURE_TABS = ["Tunnel", "Feedback", "Training"];
 
 class AdminApp extends LitElement {
   createRenderRoot() { return this; }
@@ -14,6 +14,7 @@ class AdminApp extends LitElement {
     tab: { state: true },
     invites: { state: true },
     accounts: { state: true },
+    logs: { state: true },
   };
 
   constructor() {
@@ -23,6 +24,7 @@ class AdminApp extends LitElement {
     this.tab = "Status";
     this.invites = [];
     this.accounts = [];
+    this.logs = [];
     this._ws = null;
     this._reconnectMs = 500;
   }
@@ -50,6 +52,7 @@ class AdminApp extends LitElement {
       if (msg.kind === "STATUS") this.status = msg;
       else if (msg.kind === "INVITE_LIST") this.invites = msg.invites ?? [];
       else if (msg.kind === "ACCOUNT_LIST") this.accounts = msg.accounts ?? [];
+      else if (msg.kind === "LOG_BATCH") this._appendLogs(msg.lines ?? []);
       else if (msg.kind === "ERROR") this._flash(msg.message || msg.code);
     };
   }
@@ -69,6 +72,12 @@ class AdminApp extends LitElement {
     this.tab = tab;
     if (tab === "Invites") this._send("INVITES_LIST");
     if (tab === "Accounts") this._send("ACCOUNTS_LIST");
+    if (tab === "Logs") { this.logs = []; this._sendMsg({ kind: "LOG_SUBSCRIBE" }); }
+  }
+
+  _appendLogs(lines) {
+    // Keep a bounded client-side window so the DOM doesn't grow unbounded.
+    this.logs = [...this.logs, ...lines].slice(-1000);
   }
 
   render() {
@@ -76,7 +85,7 @@ class AdminApp extends LitElement {
     const state = s.state ?? "UNKNOWN";
     const running = state === "RUNNING";
     const busy = state === "STARTING" || state === "STOPPING";
-    const tabs = ["Status", "Invites", "Accounts", ...FUTURE_TABS];
+    const tabs = ["Status", "Invites", "Accounts", "Logs", "Health", ...FUTURE_TABS];
     return html`
       <div class="wrap">
         <header class="bar">
@@ -110,7 +119,37 @@ class AdminApp extends LitElement {
   _pane(s) {
     if (this.tab === "Invites") return this._invitesPane();
     if (this.tab === "Accounts") return this._accountsPane();
+    if (this.tab === "Logs") return this._logsPane();
+    if (this.tab === "Health") return this._healthPane();
     return this._statusPane(s);
+  }
+
+  _healthPane() {
+    const h = this.status?.health ?? {};
+    const dot = (ok) => (ok ? html`<span style="color:var(--ok)">● ok</span>` : html`<span style="color:var(--bad)">● problem</span>`);
+    return html`<div class="panel">
+      <table>
+        <tbody>
+          <tr><th>server reachable</th><td>${dot(h.admin_status_ok)}</td></tr>
+          <tr><th>DB integrity</th><td>${h.db_integrity_ok == null ? "—" : dot(h.db_integrity_ok)}</td></tr>
+          <tr><th>disk free</th><td>${this._gb(h.disk_free_bytes)}</td></tr>
+          <tr><th>WAL size</th><td>${this._mb(h.wal_bytes)}</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  _gb(b) { return b == null ? "—" : `${(b / 1073741824).toFixed(1)} GB`; }
+
+  _logsPane() {
+    const text = this.logs
+      .map((l) => `${l.stream === "stderr" ? "! " : "  "}${l.text}`)
+      .join("\n");
+    return html`<div class="panel">
+      ${this.logs.length === 0
+        ? html`<div class="empty">Waiting for server output… (start the server to see logs)</div>`
+        : html`<pre class="logs">${text}</pre>`}
+    </div>`;
   }
 
   _metrics(s) {

@@ -64,6 +64,8 @@ class ControlPlane:
         server_listen_url: str,
         tunnel: _TunnelLike | None = None,
         data: Any | None = None,
+        log_buffer: Any | None = None,
+        health_monitor: Any | None = None,
     ) -> None:
         self._supervisor = supervisor
         self._metrics = metrics
@@ -73,6 +75,26 @@ class ControlPlane:
         # AdminDataService (invites/accounts).  Optional so socket-only tests can
         # omit it; commands that need it reply with ERROR when it's absent.
         self._data = data
+        # LogRingBuffer of the supervised server's output (optional).
+        self._log_buffer = log_buffer
+        # HealthMonitor (DB integrity + storage), optional.
+        self._health_monitor = health_monitor
+
+    # --- log access (consumed by AdminWebServer's per-client LOG stream) ---
+
+    def log_recent(self, limit: int = 200) -> tuple[list[dict[str, Any]], int]:
+        """Backlog: the last *limit* retained lines + the current cursor."""
+        if self._log_buffer is None:
+            return [], 0
+        lines = self._log_buffer.recent(limit=limit)
+        return [ln.to_wire() for ln in lines], self._log_buffer.last_line
+
+    def log_since(self, cursor: int) -> tuple[list[dict[str, Any]], int]:
+        """New lines with ``line > cursor`` + the advanced cursor."""
+        if self._log_buffer is None:
+            return [], cursor
+        lines = self._log_buffer.since(cursor)
+        return [ln.to_wire() for ln in lines], self._log_buffer.last_line
 
     # --- command dispatch ---
 
@@ -175,11 +197,17 @@ class ControlPlane:
             "running": False,
             "url": None,
         }
+        health: dict[str, Any] = {"admin_status_ok": admin is not None}
+        if self._health_monitor is not None:
+            try:
+                health.update(await self._health_monitor.snapshot())
+            except Exception:
+                _logger.debug("control.health_snapshot_failed", exc_info=True)
         return {
             "kind": "STATUS",
             "server": server,
             "tunnel": tunnel,
-            "health": {"admin_status_ok": admin is not None},
+            "health": health,
         }
 
     def _uptime_s(self) -> int | None:

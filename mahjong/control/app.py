@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from mahjong.control import static_root
+from mahjong.control.health import HealthMonitor
 from mahjong.control.logbuffer import LogRingBuffer
 from mahjong.control.metrics import MetricsSampler
 from mahjong.control.plane import AdminStatusFetch, ControlPlane
@@ -112,11 +113,18 @@ class ControlApp:
         server_cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self._persistence = Persistence(server_cfg.db_path, server_cfg.data_dir)
         data = AdminDataService(self._persistence)
+        health = HealthMonitor(persistence=self._persistence, db_path=server_cfg.db_path)
 
+        # The child is a `serve`, not a `control`; strip our MAHJONG_CTL_* vars so
+        # it doesn't log them as unknown-config warnings (which would then show up
+        # in the console's own Logs pane).
+        child_env = {
+            k: v for k, v in server_env.items() if not k.startswith("MAHJONG_CTL_")
+        }
         self._log_buffer = LogRingBuffer(maxlen=config.log_buffer_lines)
         self._supervisor = ServerSupervisor(
             argv=[sys.executable, "-m", "mahjong", "serve"],
-            env={**server_env, "MAHJONG_ADMIN_TOKEN": token},
+            env={**child_env, "MAHJONG_ADMIN_TOKEN": token},
             readiness_probe=make_http_readiness_probe(status_url, token),
             startup_timeout_s=config.startup_timeout_s,
             on_log=self._on_log,
@@ -131,6 +139,8 @@ class ControlApp:
             admin_status_fetch=make_admin_status_fetch(status_url, token),
             server_listen_url=f"ws://{server_listen_addr}",
             data=data,
+            log_buffer=self._log_buffer,
+            health_monitor=health,
         )
         self._web = AdminWebServer(
             plane=self._plane,
