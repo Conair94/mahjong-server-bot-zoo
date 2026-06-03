@@ -34,6 +34,10 @@ from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
 from mahjong.server.config import ServerConfig, load_config_from_env
 from mahjong.server.orchestrator import MultiTableOrchestrator
+from mahjong.server.periodic import (
+    periodic_session_cleanup,
+    periodic_wal_checkpoint,
+)
 from mahjong.table.manager import DecideTimeouts
 from mahjong.web import static_root
 
@@ -147,6 +151,18 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         shutdown_timeout_s=float(cfg.shutdown_timeout_s),
     )
     await orch.start()
+
+    # Long-lived housekeeping tasks (cancelled at drain). server-lifecycle.md
+    # § Periodic tasks.
+    periodic_tasks = [
+        asyncio.create_task(periodic_session_cleanup(persistence)),
+        asyncio.create_task(
+            periodic_wal_checkpoint(
+                persistence, interval_s=float(cfg.wal_checkpoint_interval_s)
+            )
+        ),
+    ]
+
     _logger.info(
         "server.ready listen=%s data_dir=%s",
         f"{cfg.listen_host}:{orch.port}",
@@ -183,12 +199,22 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         _logger.info("server.draining")
         # Pragmatic drain: refuse new tables, close all live tables, close DB.
         await orch.registry.drain_all()
+        # Stop housekeeping before touching the DB at shutdown.
+        for task in periodic_tasks:
+            task.cancel()
+        for task in periodic_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         try:
             await asyncio.wait_for(
                 orch.close(), timeout=float(cfg.shutdown_timeout_s)
             )
         except TimeoutError:
             _logger.error("shutdown.timeout shutdown_timeout_s=%d", cfg.shutdown_timeout_s)
+        # Drain step 7: collapse the WAL so a clean restart finds an empty WAL
+        # (server-lifecycle.md § Graceful shutdown, fixture 15).
+        with contextlib.suppress(Exception):
+            persistence.wal_checkpoint(mode="TRUNCATE")
         persistence.close()
         _logger.info("server.exited")
     return 0
