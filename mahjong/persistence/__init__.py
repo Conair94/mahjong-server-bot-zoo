@@ -75,6 +75,14 @@ class Persistence:
         """Close the underlying SQLite connection."""
         self._conn.close()
 
+    def ping(self) -> None:
+        """Liveness probe: run ``SELECT 1``.  Raises if the DB is unresponsive
+        or closed.  Consumed by the ``/health`` endpoint (server-lifecycle.md
+        § Health endpoint).  Sub-millisecond under WAL at our scale, so no
+        wall-clock deadline is enforced here — a raise is the unhealthy signal.
+        """
+        self._conn.execute("SELECT 1").fetchone()
+
     def __enter__(self) -> Persistence:
         return self
 

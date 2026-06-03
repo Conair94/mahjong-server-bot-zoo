@@ -750,6 +750,9 @@ class TableRegistry:
         self._next_id: int = 1
         self._accepting_new: bool = True
         self._persistence = persistence
+        # Monotonic timestamp set when drain begins; read by /health to report
+        # drain_remaining_s.  None until drain_all() is called.
+        self.drain_started_monotonic: float | None = None
 
     @property
     def accepting_new(self) -> bool:
@@ -858,6 +861,7 @@ class TableRegistry:
         Full graceful-drain logic (wait + timeout + cancel) lands in Step 8.5.
         """
         self._accepting_new = False
+        self.drain_started_monotonic = time.monotonic()
         _logger.info("registry.drain_started")
 
 

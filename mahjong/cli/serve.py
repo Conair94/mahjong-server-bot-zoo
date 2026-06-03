@@ -144,6 +144,7 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         bot_min_delay_s=cfg.bot_min_delay_s,
         bot_max_delay_s=cfg.bot_max_delay_s,
         admin_token=cfg.admin_token,
+        shutdown_timeout_s=float(cfg.shutdown_timeout_s),
     )
     await orch.start()
     _logger.info(
