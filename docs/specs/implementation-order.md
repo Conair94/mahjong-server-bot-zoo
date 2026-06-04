@@ -675,11 +675,13 @@ This step ships the deferred items grouped by subsystem. No new spec is needed �
 **Sub-steps:**
 
 - **8.8.a — `/health` endpoint.** HTTP `GET /health` riding on the WebSocket listener (or separate via `MAHJONG_HEALTH_LISTEN_ADDR`). Returns 200 normal, 503 during drain, 500 on DB stall. server-lifecycle.md fixtures 9, 10, 11.
-- **8.8.b — Drain-timeout escalation.** After `MAHJONG_DRAIN_TIMEOUT_SECONDS` (default 30s) the lifecycle layer cancels remaining hand tasks and force-closes connections. server-lifecycle.md fixture 14.
+- **8.8.b — Drain-timeout escalation.** After `MAHJONG_SHUTDOWN_TIMEOUT_SECONDS` (default 30s) the lifecycle layer cancels remaining hand tasks and force-closes connections. server-lifecycle.md fixture 14.
 - **8.8.c — WAL checkpoint hooks.** Checkpoint on drain end (fixture 15); periodic background checkpoint every `MAHJONG_WAL_CHECKPOINT_SECONDS` (default 300s, fixture 20).
 - **8.8.d — Periodic session cleanup.** Background task expiring `sessions` rows whose `expires_at_ms < now()`; runs every `MAHJONG_SESSION_CLEANUP_SECONDS` (default 60s). server-lifecycle.md fixture 19.
 - **8.8.e — Structured JSON logging.** `MAHJONG_LOG_FORMAT=json` formatter emitting one JSON object per log record; no secret material in fields (the existing log calls already use structured `extra=` kwargs — this only adds the formatter). server-lifecycle.md fixture 21.
 - **8.8.f — SIGKILL-recovery standalone fixture.** Already exercised indirectly by the S3 exit fixture; this sub-step extracts the in-progress→ABORTED reconciliation into its own focused test. server-lifecycle.md fixture 16.
+
+**Status (2026-06-03): COMPLETE.** 8.8.a (commit `c5c6deb`), 8.8.c/8.8.d (`1b3d79d`) landed first; 8.8.b, 8.8.e, 8.8.f landed this session. Graceful drain is now two-phase: `drain_all` refuses new tables + signals each table to finish its current hand (interruptible between-hand pause); `await_tables_drained(timeout)` waits, then the lifecycle layer escalates via `close` (cancel) with a 5s buffer. JSON logging is the default (`MAHJONG_LOG_FORMAT=json`, console for dev). Crash recovery (`_mark_in_progress_aborted`) leaves NULL score-deltas (never-scored), distinct from the runtime ABORTED path's explicit zeros.
 
 **Gate:** every server-lifecycle.md fixture (1–22) is green, with the multi-table fixture 17 still owned by Step 8.4 and 22 still owned by Step 8.6. Step 8.7's introduction of `START_HAND` does not change any lifecycle behavior here.
 
