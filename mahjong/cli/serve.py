@@ -12,9 +12,9 @@ Pragmatic-cut subset of the full spec for the friends-and-family deploy:
 - Drains gracefully on SIGTERM / SIGINT: stops accepting, closes the registry
   (cancels each table's hand task), closes the DB.
 
-Deferred (vs. full spec): ``/health`` endpoint, drain-timeout escalation,
-periodic WAL checkpoint task, structured JSON logging.  These can land
-additively when first needed.
+Deferred (vs. full spec): drain-timeout escalation.  ``/health`` (8.8.a),
+periodic WAL checkpoint + session cleanup (8.8.c/d), and structured JSON
+logging (8.8.e) have landed.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from mahjong.engine.rulesets import MANIFEST
 from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
 from mahjong.server.config import ServerConfig, load_config_from_env
+from mahjong.server.logconfig import make_formatter
 from mahjong.server.orchestrator import MultiTableOrchestrator
 from mahjong.server.periodic import (
     periodic_session_cleanup,
@@ -43,19 +44,24 @@ from mahjong.web import static_root
 
 _logger = logging.getLogger("mahjong.serve")
 
+# Extra grace after the drain timeout for the escalation (cancel) step to flush
+# best-effort FOOTERs before the process exits (server-lifecycle.md § Drain
+# timeout escalation step 3 — "wait another 5 seconds for cleanup").
+DRAIN_ESCALATION_BUFFER_S = 5.0
+
 
 def _setup_logging(cfg: ServerConfig) -> None:
-    """Plain ``%(levelname)s %(name)s %(message)s`` for the pragmatic cut.
-
-    JSON logging is in the spec but is additive; the structured event names
-    map cleanly to a JSON formatter later.
+    """Configure root logging per ``MAHJONG_LOG_FORMAT`` (server-lifecycle.md
+    § Logging).  ``json`` (default) emits one JSON object per line to stdout for
+    journald / log shippers; ``console`` is a plain line for dev.
     """
     level = getattr(logging, cfg.log_level.upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        stream=sys.stdout,
-    )
+    handler = logging.StreamHandler(stream=sys.stdout)
+    handler.setFormatter(make_formatter(cfg.log_format))
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(level)
 
 
 def _ruleset_ref(cfg: ServerConfig) -> RuleSetRef:
@@ -197,20 +203,38 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         await stop_event.wait()
     finally:
         _logger.info("server.draining")
-        # Pragmatic drain: refuse new tables, close all live tables, close DB.
+        # Two-phase graceful drain (server-lifecycle.md § Graceful shutdown).
+        # Phase 1: refuse new tables + signal each table to finish its current
+        # hand and stop.
         await orch.registry.drain_all()
+        # Phase 2 (graceful wait): give in-flight hands up to shutdown_timeout_s
+        # to reach their FOOTER naturally.  A hung bot never resolves, so this
+        # is where a stuck table blocks until the timeout.
+        pending = await orch.registry.await_tables_drained(
+            timeout_s=float(cfg.shutdown_timeout_s)
+        )
+        if pending:
+            _logger.error(
+                "shutdown.timeout",
+                extra={
+                    "pending_tables": pending,
+                    "shutdown_timeout_s": cfg.shutdown_timeout_s,
+                },
+            )
         # Stop housekeeping before touching the DB at shutdown.
         for task in periodic_tasks:
             task.cancel()
         for task in periodic_tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        # Phase 3 (escalation): cancel any still-running hand tasks and tear down
+        # the listener, with a 5s cleanup buffer.  Unfinalised hands keep their
+        # NULL terminals and are reconciled to ABORTED on next startup
+        # (server-lifecycle.md § Drain timeout escalation).
         try:
-            await asyncio.wait_for(
-                orch.close(), timeout=float(cfg.shutdown_timeout_s)
-            )
+            await asyncio.wait_for(orch.close(), timeout=DRAIN_ESCALATION_BUFFER_S)
         except TimeoutError:
-            _logger.error("shutdown.timeout shutdown_timeout_s=%d", cfg.shutdown_timeout_s)
+            _logger.error("shutdown.force_close_timeout")
         # Drain step 7: collapse the WAL so a clean restart finds an empty WAL
         # (server-lifecycle.md § Graceful shutdown, fixture 15).
         with contextlib.suppress(Exception):

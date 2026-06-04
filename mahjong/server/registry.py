@@ -269,6 +269,12 @@ class TableHandle:
         self._hand_task: asyncio.Task[None] | None = None
         self._match_done: asyncio.Event = asyncio.Event()
         self._start_hand_lock: asyncio.Lock = asyncio.Lock()
+        # Graceful-drain signal (server-lifecycle.md § Graceful shutdown step 3):
+        # ``request_stop`` sets it; the hand loop finishes the *current* hand,
+        # then breaks instead of starting another.  An Event (not a bool) so the
+        # between-hand pause can wait on it interruptibly — a SIGTERM during the
+        # pause stops us immediately rather than after the full pause.
+        self._stop_event: asyncio.Event = asyncio.Event()
 
     # --- public read-only properties ---
 
@@ -599,8 +605,19 @@ class TableHandle:
                 next_hand_index = self._hand_index + 1
                 if self._max_hands is not None and next_hand_index >= self._max_hands:
                     break
-
-                await asyncio.sleep(self._between_hand_pause_seconds)
+                # Graceful drain: finish the hand we just completed, then stop —
+                # the stop may already be requested, or fire during the
+                # between-hand pause, which we wait on interruptibly so a SIGTERM
+                # never starts a fresh hand.
+                if self._stop_event.is_set():
+                    break
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),
+                        timeout=self._between_hand_pause_seconds,
+                    )
+                if self._stop_event.is_set():
+                    break
 
                 self._dealer_seat = (self._dealer_seat + 1) % 4
                 self._hand_index = next_hand_index
@@ -718,6 +735,23 @@ class TableHandle:
                 "persistence.finalize_hand_failed",
                 extra={"hand_id": hand_id, "table_id": self._table_id},
             )
+
+    # --- drain ---
+
+    @property
+    def hand_task(self) -> asyncio.Task[None] | None:
+        """The background hand-loop task, if a hand has been started."""
+        return self._hand_task
+
+    def request_stop(self) -> None:
+        """Graceful-drain signal: finish the current hand, then stop the loop.
+
+        Idempotent.  Does *not* cancel — the in-flight hand runs to its FOOTER.
+        The lifecycle layer escalates to ``close`` (cancel) if the loop hasn't
+        exited within the drain timeout (server-lifecycle.md § Drain timeout
+        escalation).
+        """
+        self._stop_event.set()
 
     # --- close ---
 
@@ -853,16 +887,34 @@ class TableRegistry:
     # --- drain ---
 
     async def drain_all(self) -> None:
-        """Shutdown path: refuse new CREATE_TABLE; wait for all hands to finish.
+        """Phase 1 of graceful shutdown (server-lifecycle.md § Graceful shutdown).
 
-        This sets ``_accepting_new = False`` immediately.  Open hands are *not*
-        cancelled here — ``drain_all`` is called at the start of a graceful
-        shutdown, and the lifecycle layer waits on each table's match_done.
-        Full graceful-drain logic (wait + timeout + cancel) lands in Step 8.5.
+        Refuse new ``CREATE_TABLE`` (``_accepting_new = False``) and signal every
+        live table to finish its *current* hand and stop.  Open hands are *not*
+        cancelled here — that is the escalation step, owned by the lifecycle
+        layer via ``await_tables_drained`` + ``close``.
         """
         self._accepting_new = False
         self.drain_started_monotonic = time.monotonic()
-        _logger.info("registry.drain_started")
+        for handle in self._tables.values():
+            handle.request_stop()
+        _logger.info("registry.drain_started", extra={"tables": len(self._tables)})
+
+    async def await_tables_drained(self, timeout_s: float) -> list[str]:
+        """Phase 2: wait up to ``timeout_s`` for every table's hand loop to exit
+        naturally.  Returns the table_ids whose hand task is *still running* at
+        the deadline (the escalation set).  Does not cancel — the caller does
+        that via ``close`` after logging ``shutdown.timeout``.
+        """
+        pending = {
+            tid: h.hand_task
+            for tid, h in self._tables.items()
+            if h.hand_task is not None and not h.hand_task.done()
+        }
+        if not pending:
+            return []
+        await asyncio.wait(pending.values(), timeout=timeout_s)
+        return [tid for tid, task in pending.items() if not task.done()]
 
 
 __all__ = [

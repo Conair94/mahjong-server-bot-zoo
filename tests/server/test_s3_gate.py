@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -33,6 +34,23 @@ from mahjong.persistence import Persistence
 pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# server-lifecycle.md fixture 21: a log line must never carry secret material.
+_SECRET_RE = re.compile(r"password|token|hash:\s*[a-zA-Z0-9]{8,}")
+
+
+def _assert_stdout_is_json_logs(stdout: bytes) -> None:
+    """server-lifecycle.md fixture 21 — structured logging.
+
+    Every stdout line emitted across startup → one hand → shutdown must be a
+    valid JSON object with ``ts``/``level``/``event`` and no secret material.
+    """
+    lines = [ln for ln in stdout.decode().splitlines() if ln.strip()]
+    assert lines, "server emitted no stdout log lines"
+    for line in lines:
+        payload = json.loads(line)  # valid JSON or raises
+        assert {"ts", "level", "event"} <= payload.keys(), line
+        assert not _SECRET_RE.search(line), f"secret material in log line: {line}"
 
 
 def _free_port() -> int:
@@ -111,6 +129,9 @@ async def test_s3_gate_account_play_drain_query(tmp_path: Path) -> None:
         "MAHJONG_LISTEN_ADDR": f"127.0.0.1:{port}",
         "MAHJONG_SHUTDOWN_TIMEOUT_SECONDS": "10",
         "MAHJONG_LOG_LEVEL": "INFO",
+        # Disable humanized bot pacing so the hand finishes fast — this is a
+        # lifecycle integration test, not a pacing test.
+        "MAHJONG_BOT_PACING": "0",
         "PYTHONUNBUFFERED": "1",
     }
 
@@ -166,16 +187,18 @@ async def test_s3_gate_account_play_drain_query(tmp_path: Path) -> None:
         # 4. SIGTERM the server; await clean exit.
         server_proc.send_signal(signal.SIGTERM)
         try:
-            _stdout, stderr = server_proc.communicate(timeout=20)
+            stdout, stderr = server_proc.communicate(timeout=20)
         except subprocess.TimeoutExpired as exc:
             server_proc.kill()
-            _stdout, stderr = server_proc.communicate(timeout=5)
+            stdout, stderr = server_proc.communicate(timeout=5)
             raise AssertionError(
                 f"server did not exit within 20s of SIGTERM\nstderr:\n{stderr}"
             ) from exc
         assert server_proc.returncode == 0, (
             f"server exited {server_proc.returncode}\nstderr:\n{stderr}"
         )
+        # Fixture 21: the whole startup→hand→shutdown run logged structured JSON.
+        _assert_stdout_is_json_logs(stdout)
     finally:
         if server_proc.poll() is None:
             server_proc.kill()
