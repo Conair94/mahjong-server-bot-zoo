@@ -6,8 +6,10 @@ Spec: docs/specs/state-schema.md § Action grammar, docs/specs/engine-api.md.
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 from mahjong.engine import pymj
+from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.tiles import tile_sort_key
 from mahjong.engine.types import Action, GameState, Meld
 
@@ -47,7 +49,10 @@ def claim_actions(state: GameState, seat: int) -> list[Action]:
         actions.extend(_chi_actions(concealed, discarded))
 
     # HU on discard: (concealed + discarded) yields a fan-bearing decomposition.
-    if _claim_hu_legal(concealed, melds, discarded, seat_data["seat_wind"], state["round_wind"]):
+    config = resolve_config(state["ruleset"])
+    if _claim_hu_legal(
+        concealed, melds, discarded, seat_data["seat_wind"], state["round_wind"], config
+    ):
         actions.append({"type": "HU"})
 
     return actions
@@ -79,8 +84,9 @@ def _claim_hu_legal(
     win_tile: str,
     seat_wind: str,
     round_wind: str,
+    config: dict[str, Any],
 ) -> bool:
-    """True iff (concealed + win_tile) is a fan-bearing winning hand."""
+    """True iff (concealed + win_tile) clears the ruleset's fan cliff."""
     if len(concealed) % 3 != 1:
         # After adding win_tile we want len ≡ 2 (mod 3); concealed must be ≡ 1.
         return False
@@ -91,7 +97,7 @@ def _claim_hu_legal(
         win_type="DISCARD",
         seat_wind=seat_wind,
         round_wind=round_wind,
-        ruleset_config={},
+        ruleset_config=config,
     )
     return bool(fans)
 

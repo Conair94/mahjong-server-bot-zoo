@@ -25,18 +25,21 @@ This session was a **design brainstorm**, not implementation. It refreshed the A
 
 ## Next session — in the order you asked for
 
-### Phase 1: "the internals" + basic fixes (Build order step 0)
+### Phase 1: "the internals" + basic fixes (Build order step 0) — ✅ DONE (branch `feat/layer9-scoring-config`)
 
-The **configurable scoring core**. This is a core rule-engine change → **test-first** (CLAUDE.md), and "reward shape is a tested contract" → pin `(hand, ruleset) → (legal?, score_delta)` before anything consumes it.
+The **configurable scoring core**, spec'd as [Spec 26](specs/scoring-config.md) and implemented test-first.
 
-Concrete tasks with current ground-truth pointers:
+**Premise correction (the kind to watch for):** this section originally said the engine "ignores `fan_cliff`" and pointed at `_find_min_winning_tile`. Both were wrong against the code — the 8-fan cliff *was* enforced (hard-coded `MCR_FAN_CLIFF = 8` in `pymj.calculate_fan`, gating both legality paths), and the function is `_pick_self_draw_win_tile`. So the work was *parameterization*, not new enforcement, and `mcr-2006` stayed byte-identical (its goldens never relied on a sub-8 win because one was impossible).
 
-- **Enforce `fan_cliff`.** [`transition/hu.py`](../mahjong/engine/transition/hu.py) currently passes `ruleset_config={}` (hu.py:63, :120) and `_find_min_winning_tile` (hu.py:100) accepts any ≥1-fan decomposition. Thread the *resolved* ruleset config in; make legality require `fan_total ≥ fan_cliff`.
-- **Conversion from config.** `_score_delta` (hu.py:127) hard-codes the official `+8 / +24` formula. Drive it from a `conversion` block in the ruleset.
-- **New ruleset** `mahjong/engine/rulesets/mcr-house-3fan.json` (fan_cliff 3, conversion table, `false_mahjong`, `dealer_repeat_on_win`) + a `MANIFEST.json` entry with its `canonical_hash`.
-- **False mahjong:** the HU-below-floor path ends the hand and applies the zero-sum penalty payout.
-- **Renchan:** dealer rotation is hard-coded `(dealer+1)%4` in **two** spots — [registry.py:605](../mahjong/server/registry.py#L605) and `web/server.py:322`. Make it config-driven (dealer repeats on win); consider centralizing the next-dealer decision so the two loops don't drift.
-- **Determinism:** enforcing `fan_cliff` on `mcr-2006` changes engine behavior → re-freeze determinism goldens *with justification*. First check whether any existing golden actually relies on a sub-8-fan win; if not, nothing changes.
+What landed:
+
+- **Cliff from config.** `pymj.calculate_fan` reads `ruleset_config["fan_cliff"]` (default 8). The three call-sites (legality/discard, legality/claim, transition/hu) thread the *resolved* config via the new memoized `rulesets.resolve_config`.
+- **Conversion from config.** New `mahjong/engine/scoring.py` (`score_delta`, `lookup_x`): `mcr-official` additive (default — reproduces the old `+8/+24`) vs. `house-table` tier-lookup. `hu.py` calls it; the old `_score_delta` is gone.
+- **New ruleset** `mcr-house-3fan.json` (fan_cliff 3, house conversion, `dealer_repeat_on_win`, declared-but-unenforced `false_mahjong`) + frozen `MANIFEST` entry.
+- **Renchan** centralized in `mahjong/table/rotation.py::next_dealer`, wired into both [registry.py](../mahjong/server/registry.py) and `web/server.py` (replacing the two hard-coded `(dealer+1)%4` spots).
+- **Determinism:** `mcr-2006.json` untouched → all goldens green, no re-freeze. 974 tests pass; mypy clean (engine+table strict); new fixtures in `tests/engine/test_scoring.py`, `test_scoring_config.py`, `tests/table/test_rotation.py`.
+
+**Deferred (confirmed this session):** false-mahjong *penalty* payout. It's unreachable through our legality + `apply_action` gate, so it would be dead code; it becomes a real training signal only against the Botzone judge. The ruleset declares the rule (`false_mahjong.enforced=false`) so the config is honest.
 
 ### Phase 2: MVP offense bot (v0) — after Phase 1
 

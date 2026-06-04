@@ -17,6 +17,8 @@ changed the config quietly invalidate every prior record.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -73,3 +75,26 @@ def load_ruleset(ref: dict[str, Any]) -> dict[str, Any]:
         )
 
     return config
+
+
+@cache
+def _config_by_id(rid: str) -> dict[str, Any]:
+    """Memoized file-read + hash-verify for a ruleset id. Configs are immutable
+    per process (determinism.md), so this caches the cost away from the
+    per-decision hot path."""
+    return load_ruleset({"id": rid})
+
+
+def resolve_config(ref: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve a `RuleSetRef` to its config for the engine hot path (memoized).
+
+    Legality and the HU transition call this per decision to read `fan_cliff`
+    and `conversion`; memoizing keeps the file-read + `canonical_hash` off the
+    critical path. The returned dict is shared and **read-only** — callers must
+    not mutate it (the engine only reads scoring fields).
+
+    Unlike `load_ruleset`, this keys solely on `id`; within a process an id maps
+    to exactly one config, so the ref's `config_hash`/`version` (used for record
+    self-description and validated at `initial_state`) are not re-checked here.
+    """
+    return _config_by_id(ref["id"])
