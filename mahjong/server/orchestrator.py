@@ -36,6 +36,7 @@ from mahjong.persistence.auth import (
     handle_resume,
 )
 from mahjong.server.admin_status import make_admin_status_handler
+from mahjong.server.health import HealthHandler, make_health_handler
 from mahjong.server.ratelimit import SlidingWindowLimiter
 from mahjong.server.registry import (
     ShuttingDown,
@@ -142,11 +143,13 @@ class MultiTableOrchestrator:
         bot_max_delay_s: float = 10.0,
         trust_proxy: bool = False,
         admin_token: str | None = None,
+        shutdown_timeout_s: float = 30.0,
     ) -> None:
         self._host = host
         self._port = port
         self._trust_proxy = trust_proxy
         self._admin_token = admin_token
+        self._shutdown_timeout_s = shutdown_timeout_s
         # Set at start(); monotonic so uptime is immune to wall-clock changes.
         self._started_at_monotonic: float | None = None
         self._data_dir = data_dir
@@ -211,11 +214,26 @@ class MultiTableOrchestrator:
             host=self._host,
             port=self._port,
             handler=self._handler,
+            health_handler=self._build_health_handler(),
             admin_status_handler=self._build_admin_status_handler(),
             static_dir=self._static_dir,
             trust_proxy=self._trust_proxy,
         )
         await self._ws_server.start()
+
+    def _build_health_handler(self) -> HealthHandler | None:
+        """The unauthenticated /health handler, or None when no persistence is
+        configured (test orchestrators without a DB leave the route at 503)."""
+        if self._persistence is None:
+            return None
+        assert self._started_at_monotonic is not None
+        return make_health_handler(
+            registry=self._registry,
+            persistence=self._persistence,
+            started_at_monotonic=self._started_at_monotonic,
+            server_id=str(self._server_info.get("server_id", SERVER_ID)),
+            shutdown_timeout_s=self._shutdown_timeout_s,
+        )
 
     def _build_admin_status_handler(self) -> AdminStatusHandler | None:
         """The token-gated /admin/status handler, or None when no token is set

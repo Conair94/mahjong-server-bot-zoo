@@ -50,6 +50,11 @@ __all__ = [
     "open_db",
 ]
 
+# Valid SQLite WAL-checkpoint modes (PRAGMA wal_checkpoint argument).
+_WAL_CHECKPOINT_MODES: frozenset[str] = frozenset(
+    {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}
+)
+
 
 class Persistence:
     """High-level persistence façade.
@@ -74,6 +79,29 @@ class Persistence:
     def close(self) -> None:
         """Close the underlying SQLite connection."""
         self._conn.close()
+
+    def ping(self) -> None:
+        """Liveness probe: run ``SELECT 1``.  Raises if the DB is unresponsive
+        or closed.  Consumed by the ``/health`` endpoint (server-lifecycle.md
+        § Health endpoint).  Sub-millisecond under WAL at our scale, so no
+        wall-clock deadline is enforced here — a raise is the unhealthy signal.
+        """
+        self._conn.execute("SELECT 1").fetchone()
+
+    def wal_checkpoint(self, *, mode: str = "PASSIVE") -> int:
+        """Run ``PRAGMA wal_checkpoint(<mode>)``; return pages checkpointed.
+
+        ``PASSIVE`` (periodic) runs without blocking writers; ``TRUNCATE``
+        (shutdown drain) collapses the WAL fully so a clean restart finds an
+        empty WAL.  See server-lifecycle.md § Periodic tasks / Graceful
+        shutdown.
+        """
+        if mode not in _WAL_CHECKPOINT_MODES:
+            raise ValueError(f"unknown wal_checkpoint mode: {mode!r}")
+        # PRAGMA args can't be bound parameters; mode is validated above.
+        row = self._conn.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+        # row = (busy, wal_log_pages, pages_checkpointed)
+        return int(row[2]) if row else 0
 
     def __enter__(self) -> Persistence:
         return self
