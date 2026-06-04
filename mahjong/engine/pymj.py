@@ -63,10 +63,12 @@ def calculate_fan(
     ruleset_config: dict[str, Any],
     flower_count: int = 0,
 ) -> list[FanEntry]:
-    """Returns yaku list for a winning hand, or [] if below the 8-fan cliff.
+    """Returns yaku list for a winning hand, or [] if below the fan cliff.
 
-    `ruleset_config` is currently unused (PyMahjongGB pins MCR 2006); accepted
-    for future home-rule overlays (server-plan S5).
+    The cliff comes from `ruleset_config["fan_cliff"]`, defaulting to
+    `MCR_FAN_CLIFF` (8) when absent — so existing callers passing a bare ref or
+    `{}` keep the official floor, while a house ruleset can lower it. This is
+    the single seam where the floor is enforced (scoring-config.md).
     """
     pack = _melds_to_pack(melds)
     hand_tuple = tuple(hand)
@@ -101,7 +103,8 @@ def calculate_fan(
         value = fan_point * cnt
         fans.append({"name": name_en, "value": value})
         total += value
-    if total < MCR_FAN_CLIFF:
+    cliff = ruleset_config.get("fan_cliff", MCR_FAN_CLIFF)
+    if total < cliff:
         return []
     return fans
 

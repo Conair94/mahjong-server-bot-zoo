@@ -9,15 +9,19 @@ Two cases:
     decomposition (deterministic when multiple choices work).
   - CLAIM_WINDOW phase: HU on a discard. Win tile is `last_discard.tile`.
 
-Scoring is MCR canonical:
-  - self-draw: each of the three non-winners pays (fan_total + 8).
-  - discard:   discarder pays (fan_total + 24), other non-winners pay 8 each.
-  Zero-sum by construction.
+Scoring is driven by the resolved ruleset's `conversion` block via
+`scoring.score_delta` (scoring-config.md). With no block (mcr-2006) this is the
+canonical MCR formula: self-draw → each non-winner pays (fan_total + 8);
+discard → discarder pays (fan_total + 24), other non-winners pay 8 each. The
+house ruleset substitutes its tier-lookup conversion. Zero-sum either way.
 """
 
 from __future__ import annotations
 
-from mahjong.engine import pymj
+from typing import Any
+
+from mahjong.engine import pymj, scoring
+from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.tiles import tile_sort_key
 from mahjong.engine.transition import clone_state
 from mahjong.engine.types import FanEntry, GameState, Meld, Terminal
@@ -25,6 +29,7 @@ from mahjong.engine.types import FanEntry, GameState, Meld, Terminal
 
 def apply_hu(state: GameState, seat: int) -> GameState:
     new = clone_state(state)
+    config = resolve_config(new["ruleset"])
     seat_data = new["seats"][seat]
     melds = list(seat_data["melds"])
     if new["phase"] == "CLAIM_WINDOW":
@@ -46,6 +51,7 @@ def apply_hu(state: GameState, seat: int) -> GameState:
             melds,
             seat_data["seat_wind"],
             new["round_wind"],
+            config,
             hint=hint,
         )
         deal_in_seat = None
@@ -60,11 +66,17 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         win_type=win_type,  # type: ignore[arg-type]
         seat_wind=seat_data["seat_wind"],
         round_wind=new["round_wind"],
-        ruleset_config={},
+        ruleset_config=config,
     )
     fan_total = sum(f["value"] for f in fans)
 
-    score_delta = _score_delta(seat, fan_total, win_type, deal_in_seat)
+    score_delta = scoring.score_delta(
+        seat,
+        fan_total,
+        win_type,
+        deal_in_seat,
+        conversion=config.get("conversion"),  # type: ignore[arg-type]
+    )
     for i in range(4):
         new["seats"][i]["score"] += score_delta[i]
 
@@ -91,6 +103,7 @@ def _pick_self_draw_win_tile(
     melds: list[Meld],
     seat_wind: str,
     round_wind: str,
+    config: dict[str, Any],
     *,
     hint: str | None = None,
 ) -> str:
@@ -117,31 +130,11 @@ def _pick_self_draw_win_tile(
             win_type="SELF_DRAW",
             seat_wind=seat_wind,
             round_wind=round_wind,
-            ruleset_config={},
+            ruleset_config=config,
         )
         if fans:
             return tile
     raise AssertionError("self-draw HU legal but no win tile decomposes — engine/legality drift")
-
-
-def _score_delta(winner: int, fan_total: int, win_type: str, deal_in_seat: int | None) -> list[int]:
-    delta = [0, 0, 0, 0]
-    if win_type == "SELF_DRAW":
-        for i in range(4):
-            if i == winner:
-                continue
-            delta[i] = -(fan_total + 8)
-            delta[winner] += fan_total + 8
-    else:  # DISCARD
-        assert deal_in_seat is not None
-        delta[deal_in_seat] = -(fan_total + 24)
-        delta[winner] += fan_total + 24
-        for i in range(4):
-            if i in (winner, deal_in_seat):
-                continue
-            delta[i] = -8
-            delta[winner] += 8
-    return delta
 
 
 # Suppress unused-import lint on FanEntry — the type is part of this module's

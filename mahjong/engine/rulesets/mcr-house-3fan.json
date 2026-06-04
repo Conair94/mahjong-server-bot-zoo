@@ -1,0 +1,19 @@
+{
+  "id": "mcr-house-3fan",
+  "version": 1,
+  "description": "House MCR variant: 3-fan floor with a convex fan->points conversion that incentivizes high-scoring and concealed (self-draw) hands.",
+  "fan_cliff": 3,
+  "wall_size": 144,
+  "hand_size": 13,
+  "seats": 4,
+  "flowers_replace_at_deal": true,
+  "yaku_engine": "PyMahjongGB",
+  "dealer_repeat_on_win": true,
+  "conversion": {
+    "scheme": "house-table",
+    "tiers": [[1, 2], [2, 4], [3, 8], [6, 16], [9, 32], [15, 64], [23, 80], [43, 160], [63, 240], [87, 360], [88, 500]],
+    "self_draw": {"each_mult": 2},
+    "discard": {"dealer_in_mult": 2, "other_mult": 1}
+  },
+  "false_mahjong": {"enforced": false, "penalty_each": 240}
+}

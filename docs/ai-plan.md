@@ -58,7 +58,7 @@ The plan above is written against Botzone's 8-fan rules, but this server also ho
 
 **The deferred study.** Comparing how a 3-fan vs 8-fan floor changes optimal play is a genuinely under-explored angle (published mahjong AI is almost all Riichi or *official* MCR). But it's only meaningful once the bots are strong enough that their divergence reflects the game, not two differently-broken bots — so it's a v2+ deliverable. Build the hooks now (configurable scorer, floor in the observation, eval that records the ruleset per match); defer the paper.
 
-**Engine status.** `mcr-2006.json` already declares `"fan_cliff": 8`, but the engine **ignores it** — `transition/hu.py` accepts any fan-bearing (≥1) win and hard-codes the official conversion. Wiring the floor into `HU` legality and driving the conversion from ruleset config is the first foundation step (see *Build order*).
+**Engine status (corrected, landed).** An earlier draft of this plan claimed "the engine ignores `fan_cliff`." That was wrong on inspection — the 8-fan cliff *was* already enforced, just hard-coded: `pymj.calculate_fan` gated wins on a module constant `MCR_FAN_CLIFF = 8`, and that gate is what made sub-floor `HU` illegal in both legality paths. So the foundation step was *parameterization*, not new enforcement. As of [Spec 26](specs/scoring-config.md) it's done: the cliff is read from `ruleset.fan_cliff` (default 8), the conversion from a `ruleset.conversion` block (`mcr-official` additive default vs. `house-table`), via the shared `scoring.score_delta` scorer. `mcr-2006.json` is byte-unchanged (its goldens and config_hash held), and `mcr-house-3fan.json` ships the 3-fan floor + convex payout + renchan. False-mahjong is declared-but-unenforced (unreachable through our legality gate; it becomes a real signal only at Botzone-training time). See *Build order* step 0.
 
 ## Existing libraries we depend on
 
@@ -277,7 +277,7 @@ Botzone 2026 registration closes **2026-06-09**, three weeks from today. Realist
 
 Reordered from the component order so the first deliverable is an end-to-end *playable* slice (tracer bullet), not a deep perception stack with no bot around it. Each step ships a feature:
 
-0. **Configurable scoring core** — enforce the ruleset `fan_cliff`, drive the conversion from ruleset config, add false-mahjong and renchan. Foundation for *both* live house-rules play and the training reward (one shared scorer → no training/serving skew). Test-first (core rule-engine change). Ships the 3-fan house ruleset.
+0. **Configurable scoring core** — *(landed; [Spec 26](specs/scoring-config.md).)* drive the `fan_cliff` and the fan→points conversion from ruleset config (the cliff was already enforced, just hard-coded — see *Engine status*), via one shared `scoring.score_delta` so live house-rules play and the training reward can't skew. Config-driven renchan (`next_dealer`). Ships `mcr-house-3fan` (3-fan floor + convex payout). False-mahjong is declared-but-deferred (unreachable through our legality gate). Test-first.
 1. **MVP offense bot (v0)** + a real decision adapter replacing `CannedAdapter`-PASS → the server becomes solo-playable; debuts at the 3-fan floor. Needs (0) but only Stage A of the belief module.
 2. **Belief-state module, Stage A** (tile-location hard accounting) → ships as the always-on "tiles out" overlay.
 3. **Hand-shape forecaster** (component 2) → ships as the "opponent hand analyzer" overlay (inference → restricted; see below).

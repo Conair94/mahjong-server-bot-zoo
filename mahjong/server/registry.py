@@ -31,6 +31,7 @@ from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
 from mahjong.adapters.paced import PacedAdapter
 from mahjong.engine import initial_state
+from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.persistence import Participant, Persistence
@@ -39,6 +40,7 @@ from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS, SeatState
 from mahjong.table import manager as mgr
 from mahjong.table.manager import DecideTimeouts
+from mahjong.table.rotation import next_dealer
 
 _logger = logging.getLogger(__name__)
 
@@ -619,7 +621,11 @@ class TableHandle:
                 if self._stop_event.is_set():
                     break
 
-                self._dealer_seat = (self._dealer_seat + 1) % 4
+                self._dealer_seat = next_dealer(
+                    self._dealer_seat,
+                    final_state["terminal"] if final_state is not None else None,
+                    resolve_config(self._ruleset),
+                )
                 self._hand_index = next_hand_index
                 self._initial_state = initial_state(
                     self._ruleset,

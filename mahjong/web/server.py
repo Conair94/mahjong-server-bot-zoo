@@ -44,11 +44,13 @@ from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
 from mahjong.engine import initial_state
+from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table import manager as mgr
+from mahjong.table.rotation import next_dealer
 from mahjong.wire.server import Connection, WebSocketServer
 
 _logger = logging.getLogger(__name__)
@@ -295,7 +297,7 @@ class WebOrchestrator:
                     cast(SeatAdapter, self._canned_adapters[3]),
                 ]
 
-                await mgr.run_hand(
+                final_state = await mgr.run_hand(
                     adapters=adapters,
                     ruleset=self._ruleset,
                     seed=hand_seed,
@@ -317,9 +319,11 @@ class WebOrchestrator:
                 # Between-hand pause — gives clients time to show a result screen.
                 await asyncio.sleep(self._between_hand_pause_seconds)
 
-                # Rotate dealer (simple sequential rotation for now; MCR dealer-
-                # repeats-on-win rule is a follow-up when scoring is tracked).
-                self._dealer_seat = (self._dealer_seat + 1) % 4
+                # Rotate dealer — config-driven renchan: the dealer repeats on a
+                # win iff the ruleset sets dealer_repeat_on_win (scoring-config.md).
+                self._dealer_seat = next_dealer(
+                    self._dealer_seat, final_state["terminal"], resolve_config(self._ruleset)
+                )
                 self._hand_index = next_hand_index
 
                 # Recompute initial state for the new hand.  The snapshot_provider

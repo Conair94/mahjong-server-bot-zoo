@@ -6,8 +6,10 @@ Spec: docs/specs/state-schema.md § Action grammar, docs/specs/engine-api.md.
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 from mahjong.engine import pymj
+from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.types import Action, GameState, Meld
 
 
@@ -42,17 +44,18 @@ def discard_actions(state: GameState, seat: int) -> list[Action]:
         if counts.get(tile, 0) >= 1:
             actions.append({"type": "GANG", "tile": tile, "kind": "ADDED"})
 
-    if _self_draw_hu_legal(concealed, melds, seat_data["seat_wind"], state["round_wind"]):
+    config = resolve_config(state["ruleset"])
+    if _self_draw_hu_legal(concealed, melds, seat_data["seat_wind"], state["round_wind"], config):
         actions.append({"type": "HU"})
 
     return actions
 
 
 def _self_draw_hu_legal(
-    concealed: list[str], melds: list[Meld], seat_wind: str, round_wind: str
+    concealed: list[str], melds: list[Meld], seat_wind: str, round_wind: str, config: dict[str, Any]
 ) -> bool:
     """True iff some tile in `concealed` can be treated as the just-drawn
-    win tile to yield a calculate_fan result above the MCR cliff."""
+    win tile to yield a calculate_fan result above the ruleset's fan cliff."""
     if len(concealed) % 3 != 2:
         return False
     tried: set[str] = set()
@@ -69,7 +72,7 @@ def _self_draw_hu_legal(
             win_type="SELF_DRAW",
             seat_wind=seat_wind,
             round_wind=round_wind,
-            ruleset_config={},
+            ruleset_config=config,
         )
         if fans:
             return True
