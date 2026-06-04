@@ -2,6 +2,25 @@
 
 ## Run history
 
+### 2026-06-04 — Sessions 0b2add49, a7d6a30d, 2c7d38d8, e1dd45f1 (+ readme refresh)
+- Scanned ~5 sessions (2026-06-03), all in mahjong-server-bot-zoo. Themes: Spec 25 admin console steps 9-12, three live-play bug fixes, var/ hygiene, 8.8 lifecycle (health/WAL/session-cleanup/drain/JSON-log/SIGKILL-recovery), README refresh.
+- Candidate counts: UPDATE: 1, CONTRADICT: 0, FILL_GAP: 4, NOISE: ~6
+- Candidates surfaced to caller (pending accept/decline):
+  - UPDATE: `project-layer8-status` — 8.8 lifecycle hardening now COMPLETE (PR #6, fixtures 14/15/16/19/20/21). Stale file still says "8.8 deferred."
+  - FILL_GAP: `feedback-var-runtime-not-tracked` — var/ runtime data (DB/WAL/records JSONL) must never be committed; gitignored 2026-06-03; stage only intended files when var/ churns.
+  - FILL_GAP: `feedback-two-phase-router-handle-everywhere` — message handlers registered in only the lobby loop silently break in the in-game (post-ATTACH) loop; new client→server kinds need wiring in BOTH phases. Root cause of in-game FEEDBACK hang.
+  - FILL_GAP: `feedback-wire-then-render-seam` — render path + reducer can exist & be unit-tested while the wire→UI dispatch branch is missing; unit-testing the renderer in isolation hides the gap. Root cause of missing HAND_END summary.
+  - FILL_GAP: `feedback-fetch-before-trusting-local-git` — fetch origin before reasoning about merged/unmerged branches; stale local clone caused a wrong "3 unmerged branches" picture twice.
+- Discarded as NOISE:
+  - Admin console control/data-plane architecture, tunnel/feedback/training panes — already fully captured in project_admin_console.md.
+  - The 3 gameplay-fix root causes themselves — captured in project_admin_console.md branch-status note.
+  - WAL TRUNCATE-collapses-on-drain, session-cleanup spec double-count deviation — per-fixture detail, derivable from periodic.py/spec.
+  - Crash-recovery NULL-vs-zero score-delta nuance — pinned in the 8.8.f test + impl-order doc; derivable.
+  - find_in_progress_hands returns empty participants — derivable from code.
+  - Memory consolidation reminders, stray-background-process cleanup — ephemeral session housekeeping.
+
+
+
 ### 2026-05-21 — Sessions 95f2c9b9, 7b9d8b26
 - Scanned 2 sessions (2026-05-21), both in mahjong-server-bot-zoo.
 - Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 3, NOISE: 2
