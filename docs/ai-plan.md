@@ -26,9 +26,39 @@ The relevant facts:
 - **Bots are stateless.** Each interaction, the judge sends the *complete game history* and the bot must reconstruct state. There is no persistent in-process memory between turns. The belief-state components below are therefore recomputed from history each turn; design them to be cheap to rebuild, not to be incrementally maintained.
 - **Time budget: ~1 second per interaction** (C++ reference; Python may get more — verify). This caps search depth for any MCTS-style component.
 - **Action grammar.** Inputs are typed requests (`0` setup, `1` deal, `2` draw, `3` other-player action). Outputs are one of `PASS`, `PLAY`, `PENG`, `CHI`, `GANG`, `BUGANG`, `HU`. Action priority: Mahjong > Pung/Kong > Chow.
-- **8-fan minimum to win.** Declaring `HU` under 8 fan triggers a -30 penalty. This is the cliff that forces nonlinear EV calculations in component 4.
+- **Fan minimum to win is ruleset-configurable.** On Botzone it's **8 fan** — declaring `HU` under 8 triggers a -30 penalty. Our house ruleset uses **3 fan** (see *Rulesets* below). Either way it is *the cliff* that forces nonlinear EV calculations in component 4; only the height of the cliff changes.
 
 **Convention to know:** the stateless-protocol design is common in competitive AI platforms because it sandboxes bots (kill and restart freely) and prevents bots from hoarding compute across turns. The cost is on us: every turn re-pays the cost of belief-state reconstruction.
+
+## Rulesets: configurable fan floor and scoring
+
+The plan above is written against Botzone's 8-fan rules, but this server also hosts a **house variant**, and the AI work has to support both. They're versioned rulesets (the engine already carries `GameState.ruleset` → `mahjong/engine/rulesets/*.json`):
+
+| Ruleset | Fan floor | Scoring | Use |
+| --- | --- | --- | --- |
+| `mcr-2006` | 8 | Official MCR (fan + base; −30 for sub-floor `HU`) | Botzone submission; official-rules bots |
+| `mcr-house-3fan` | 3 | House conversion (below) | Home play; the variant friends actually play |
+
+**The fan floor is part of the observation, not a fixed constant.** Encoding it in the state lets a single *conditioned* policy span both rule-sets (a **contextual policy** — one network told which floor it's playing under) and keeps open an eventual three-arm comparison: specialist-3, specialist-8, and one conditioned model. Concretely, the observation encoder lifts `fan_cliff` (and the conversion params) out of the resolved ruleset into the feature vector — a net can't consume a `config_hash`.
+
+**House fan→points conversion (this is the reward function for house bots).** Look up `X` by fan tier, then pay out zero-sum:
+
+- **Discard win:** the dealer-in pays `2X`, each other loser pays `X` → winner receives **`4X`**.
+- **Self-draw:** all three losers pay `2X` → winner receives **`6X`** (self-draw is always 1.5× a discard win — a deliberate lever rewarding concealed/tsumo play; *not* official MCR, where the two cross over near 8 fan).
+
+| Fan | 1 | 2 | 3 | 4–6 | 7–9 | 10–15 | 16–23 | 24–43 | 44–63 | 64–87 | 88 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| X | 2 | 4 | 8 | 16 | 32 | 64 | 80 | 160 | 240 | 360 | 500 |
+
+`X` roughly **doubles per tier through 15 fan** — a convex payoff that makes pushing for bigger hands meaningfully +EV where official near-linear scoring would not. The break in doubling at 16–23 (80, not ~128) is intentional, to keep top-end values from running away. The 1- and 2-fan entries are unreachable under the 3-fan floor (kept as floor-independent reference). **False mahjong** (declaring `HU` below the floor) ends the *hand* and pays a penalty ≈ half a limit hand, zero-sum to the other three. **Dealer bonus is renchan** — the dealer deals again on a win (no flat point bonus); a house "game" is in theory four complete dealer rotations, though in practice it's an open points ladder.
+
+**Per-hand vs session structure — and why renchan doesn't touch the bot.** The conversion table is a *per-hand* rule: it's the reward the bot optimizes, and it lives in the engine's terminal/scoring transition. Renchan, prevailing-wind advancement, and game-end are *session structure*: they live in the orchestration layer (`registry.py` / `web/server.py`), outside the engine transition. **A Botzone game is a single hand**, so the bot is fundamentally a per-hand agent — it reads its seat wind each hand and never models the session. Renchan, multi-hand sessions, and leaderboards therefore add *zero* complexity to the bot; they're a server concern built independently.
+
+**A standards-skew consequence.** "Use PyMahjongGB, the same scorer the judge runs, to avoid **training/serving skew**" holds for the *official* ruleset. The house variant has **no official judge** — so the configurable floor + conversion must be a single scoring module shared by *both* the live server and the training reward. Build it once in the engine, parameterized by ruleset; if the server scores a hand one way and the reward another, the bot is optimal for the wrong objective. PyMahjongGB still does the per-yaku fan breakdown (the hard part); the floor check and conversion are a thin, tested layer on top.
+
+**The deferred study.** Comparing how a 3-fan vs 8-fan floor changes optimal play is a genuinely under-explored angle (published mahjong AI is almost all Riichi or *official* MCR). But it's only meaningful once the bots are strong enough that their divergence reflects the game, not two differently-broken bots — so it's a v2+ deliverable. Build the hooks now (configurable scorer, floor in the observation, eval that records the ruleset per match); defer the paper.
+
+**Engine status.** `mcr-2006.json` already declares `"fan_cliff": 8`, but the engine **ignores it** — `transition/hu.py` accepts any fan-bearing (≥1) win and hard-codes the official conversion. Wiring the floor into `HU` legality and driving the conversion from ruleset config is the first foundation step (see *Build order*).
 
 ## Existing libraries we depend on
 
@@ -51,27 +81,32 @@ Per the project's standards-first preference, we use the official Botzone/PKU ec
 
 Each component is a standalone module with a clean input/output contract. Each is testable in isolation, reusable across bot architectures, and useful as an analysis overlay for human players. Build in the order listed — each step's output is the next step's input.
 
-### 1. Tile-distribution tracker (belief state foundation)
+### 1. Belief-state module: tile-location tracker (two stages)
 
-**Input:** game history (all visible events: discards, calls, draws, dora, etc.) for the requesting player's perspective.
-**Output:** for every tile type, a probability distribution over its location: in the wall, in opponent A's concealed hand, in B's, in C's. Marginals over these are what other components actually consume.
+The belief-state foundation. It has **two stages** that produce the *same* output shape — per tile type, a distribution over its location (wall / opp A / B / C) — from two tiers of evidence. (This merges what were originally two components, a "distribution tracker" and an "opponent-need-aware draw distribution"; they were the same posterior computed from different evidence, and keeping them separate invited a double-counting bug — see the now-folded Component 5 below.)
 
-Starts from uniform over unseen tiles, updates on every observed event. This is essentially Bayesian filtering with a very simple state space; no learning required for v1.
+**Input:** game history (all visible events) for the requesting player's perspective; Stage B additionally consumes component (2).
+**Output:** per tile type, P(location). The **wall marginal** — P(tile is in the wall) — is what component (4) consumes in place of raw unseen-tile counts.
 
-**Why this first:** every downstream EV calculation depends on "what's the probability tile X is in the wall vs. an opponent's hand?" The naive answer (uniform over unseen tiles) is wrong as soon as opponents reveal information through their discards.
+**Stage A — hard accounting.** Every visible tile (discards, calls, your own hand, flowers) is removed from the unseen pool; the wall marginal is uniform over what remains. Exact, learning-free, trivial. *It tracks independent marginals, not a consistent joint* — a correct joint posterior would have to respect each opponent's known concealed-tile count (a constrained combinatorial object) which v1 deliberately does not compute. Stage A is what ships as the always-on "tiles out" overlay: it reveals only already-visible tiles.
 
-**Verification artifacts** (required before component 2 starts):
+**Stage B — archetype reweighting.** Soft inference: once component (2) believes opponent A is flushing bamboo, bamboos skew toward A's concealed hand and *away from the wall*, so your P(draw bamboo) drops below the naive count. This is the highest-leverage refinement — a multiplicative correction on every downstream EV. Because Stage B is *inference about hidden hands*, its overlay is restricted (see *Overlay gating* in the build order) and must never be shown live in competitive play.
 
-- Unit tests pinning posterior updates for each event type (discard, call, draw, dora reveal). Each test: given a small recorded prefix, the resulting marginals match a checked-in expected vector.
-- Determinism test: a recorded full-game prefix produces a byte-reproducible marginals trace across runs.
-- Sanity test: in the absence of any informative events, marginals stay uniform over unseen tiles.
+**Why this first:** every downstream EV depends on "P(tile X is in the wall vs. an opponent's hand)." The naive uniform-over-unseen answer is wrong the moment opponents leak information through discards.
+
+**Verification artifacts** (Stage A required before component 2 starts; Stage B after component 2 exists):
+
+- Stage A: unit tests pinning the unseen-pool update for each event type (discard, call, draw, flower reveal) against a checked-in expected vector; a sanity test that with no informative events the marginals stay uniform; a determinism test (recorded prefix → byte-reproducible marginals trace).
+- Stage B **reduction-to-naive (the seam test):** with component (2) returning uniform (no information), Stage B's output must reduce *exactly* to Stage A. Catches a combiner that adds bias even in the no-information limit.
+- Stage B synthetic flush fixture: a hand-built scenario where opponent A flushes one suit; P(that suit in wall) must drop relative to the naive estimate by a hand-traced magnitude within tolerance.
+- Stage B downstream impact: re-running the component-(4) fixtures with Stage B plugged in must *change* the EV estimates; "plugged in but EV unchanged" means broken wiring.
 
 ### 2. Opponent hand-shape forecaster
 
 **Input:** per opponent — their discards, calls, seat/round wind, and the tile-distribution tracker's current state.
 **Output:** per opponent — a probability distribution over MCR hand archetypes (All Pungs, Mixed One Suit, Pure One Suit, Seven Pairs, Thirteen Orphans, Knitted Straight, Mixed Shifted Chows, Honors and Knitted Tiles, etc.), and per archetype the set of tiles that would complete or progress it.
 
-V1: hand-crafted heuristics. A player who discards three honors early and no characters is probably not going for a character flush; a player who discards 1m and 9m early is signalling middle-tile shapes. Encode these as scoring rules.
+V1: hand-crafted heuristics. The discriminating signal for a flush is *which suit a player stops discarding* (or never discards), not which they shed: a player who keeps every character while discarding bamboos and dots is signalling a **character flush**, and honors get shed early by almost everyone so honor discards are nearly neutral. A player who discards 1m and 9m early is signalling middle-tile shapes. Encode these as scoring rules — and treat this example as a cautionary one: the obvious-sounding rule ("discards honors and no characters → *not* a character flush") is exactly **backwards** (keeping characters while shedding everything else is evidence *for* it), which is why the calibration test below is load-bearing rather than ceremonial.
 
 V2: supervised classifier trained on the MCR database. Label = the archetype the opponent actually completed (or was closest to at hand end); features = the observable game state at each decision point.
 
@@ -104,7 +139,7 @@ Defense is *underweighted* by beginner bots and beginner humans alike. A bot tha
 
 **Convention to know:** *ukeire* is the Japanese mahjong term for "the set of tiles that would improve your hand toward tenpai (one-away-from-winning)." Standard ukeire counts these tiles. **Payout-weighted ukeire** weights each by its expected value.
 
-**Input:** your hand + (1) distribution tracker + (3) deal-in risk.
+**Input:** your hand + (1) belief-state module (its wall marginal, incl. Stage B) + (3) deal-in risk.
 **Output:** for each legal discard, an estimate of the expected score from that discard onward.
 
 This component is by far the hardest in the plan. The honest framing:
@@ -115,11 +150,11 @@ Every realistic implementation of (4) is an **approximation** of this object. Th
 
 1. **Depth-limited expectimax.** Search k turns ahead, evaluate leaves with a heuristic (or a learned value function from (6)). k=1 reduces to standard ukeire counting and is what beginner bots do. k=2–3 captures real lookahead but eats into the 1-second budget fast (branching factor ≈ 34 possible draws × possible opponent actions).
 2. **Candidate-archetype pruning.** Don't expand into every reachable hand — only the top-K archetypes you (an internal forecaster, applied to yourself) plausibly build toward. Orders-of-magnitude reduction in branching. Standard trick.
-3. **Independent-draws assumption.** Treat each future draw as i.i.d. from the wall distribution. Wrong in principle (the wall is a permutation), small error in practice, huge simplification. Component (5) keeps the wall distribution itself accurate.
+3. **Independent-draws assumption.** Treat each future draw as i.i.d. from the wall distribution. Wrong in principle (the wall is a permutation), small error in practice, huge simplification. Component (1)'s Stage B keeps the wall distribution itself accurate.
 4. **Equivalence-class memoization.** Many hand states are equivalent under suit relabeling. Canonicalize before caching; the same expensive subcomputation becomes a hit.
-5. **Discrete-fan integration.** **MCR scoring is highly nonlinear** — 8-fan minimum, individual yaku jump discontinuously. EV calculations that average over an *expected fan* scalar badly underestimate hands with a small probability of a big-fan combination. Integrate over the discrete distribution of final fan values, not a point estimate.
+5. **Discrete-fan integration.** **MCR scoring is highly nonlinear** — the configured fan floor (8 on Botzone, 3 house), individual yaku jump discontinuously. EV calculations that average over an *expected fan* scalar badly underestimate hands with a small probability of a big-fan combination. Integrate over the discrete distribution of final fan values, not a point estimate.
 
-**v1 implementation explicitly uses:** k=1 lookahead (myopic), top-K archetype pruning from a self-applied forecaster, i.i.d. draws under (5), no learned value function. This is a strong baseline — much better than greedy — but it is *deliberately myopic*, and we should expect it to leave real money on the table. The fix isn't to deepen the search by hand: it's to train architectures v2/v3 (imitation, self-play) and v6 (value head), which absorb the deep lookahead into a learned function.
+**v1 implementation explicitly uses:** k=1 lookahead (myopic), top-K archetype pruning from a self-applied forecaster, i.i.d. draws under (1)'s Stage B, no learned value function. This is a strong baseline — much better than greedy — but it is *deliberately myopic*, and we should expect it to leave real money on the table. The fix isn't to deepen the search by hand: it's to train architectures v2/v3 (imitation, self-play) and v6 (value head), which absorb the deep lookahead into a learned function.
 
 **Convention to know:** replacing explicit search with a learned `V(belief_state) → expected score` is **value function approximation**. It's the bridge between "the exact solution is intractable" and "we can still play well." AlphaZero's value head is the same idea; we are doing the mahjong version. The hand-rolled v1 EV calculator and the learned v6 value head are pointing at the *same* mathematical object — the optimal value function of the POMDP — by different routes.
 
@@ -130,20 +165,9 @@ Every realistic implementation of (4) is an **approximation** of this object. Th
 - Discrete-fan integration test: synthetic positions with a small probability of a big-fan completion. The EV calculation must reflect the discrete distribution, not the mean fan — verified by comparing computed EV to a brute-force-integrated reference on a tiny state space.
 - Determinism: same seed + same opponents + same hand → same discard chosen. Refactors that change this hash are flagged.
 
-### 5. Opponent-need-aware draw distribution
+### 5. Opponent-need-aware draw distribution — *merged into Component 1 (Stage B)*
 
-The compounding effect. The naive P(draw tile X next turn) treats all unseen tiles as uniformly in the wall. Once (2) says opponent A is heavily flushing bamboo, bamboos are *more* likely to be in A's hand than in the wall — so your P(draw bamboo) is *lower* than the naive count suggests.
-
-**Input:** (1) and (2).
-**Output:** P(this tile is in the wall) per tile type, which is what (4) should actually use in place of raw unseen counts.
-
-This is highest-leverage because it's a multiplicative improvement on every other EV in the system.
-
-**Verification artifacts:**
-
-- Reduction-to-naive test: with forecaster (2) returning uniform (no information), the output of (5) reduces exactly to raw unseen-tile counting. Catches the case where the combiner accidentally adds bias even in the no-information limit.
-- Synthetic flush fixture: a hand-constructed scenario where opponent A is heavily flushing one suit. P(tile of that suit is in wall) must decrease relative to the naive estimate; the magnitude must match a hand-traced expected adjustment within tolerance.
-- Downstream impact test: re-run the component-4 v1 fixture set with (5) plugged in. EV estimates must change; "(5) plugged in but EV unchanged" means the wiring is broken.
+Originally a standalone component. It produced the same output shape as Component 1 — P(tile in wall) per type — from the same posterior, just folding in Component 2's archetype beliefs. To avoid a double-counting bug across two modules that own the same distribution, it is now **Stage B of Component 1** (above), where its verification artifacts (reduction-to-naive, synthetic flush fixture, downstream-impact check) also live. The numbering is kept so existing references to "(5)" still resolve.
 
 ### 6. Learned value head
 
@@ -179,9 +203,17 @@ The working agreement is in [../CLAUDE.md](../CLAUDE.md). RL-specific guardrails
 
 Each architecture is shippable; build the next only after the previous is working and beats its predecessor in head-to-head play on the held-out opponent set (see Verification above).
 
+### v0: minimal offense bot (the MVP)
+
+The first milestone, and the one that makes the server usable by a single human (three v0 instances fill a table). Deliberately *below* v1: **offense only, uniform wall (Stage A belief only — no opponent modeling, no defense), k=1 myopic** — sensible moves toward a winning hand. The one subtlety that keeps it honest: under MCR you must make a *legal* (≥ floor) hand, not merely a complete one, so v0 is **fan-aware, not just shanten-aware** — it minimizes shanten *toward fan-feasible archetypes*, not toward any 14-tile completion.
+
+**It debuts at the 3-fan house floor, and that choice is load-bearing, not cosmetic.** At 3 fan a mostly-shanten-driven bot with a light fan-feasibility filter is already competent (many natural hands clear 3); at the 8-fan floor the same simple architecture would be incompetent (clearing 8 demands deliberate archetype targeting). Starting at 3-fan is what lets the MVP *stay* simple — forcing 8-fan first would drag a full self-applied archetype planner into the "simple" bot.
+
+v0 is a **walking skeleton / tracer bullet**: the thinnest end-to-end slice (perception → decision → seat adapter), built to surface integration bugs early. It replaces the `CannedAdapter`-PASS placeholder that currently fills `kind: "bot"` seats. It is also the **fan-aware greedy baseline** later architectures must beat — distinct from the fan-*blind* greedy punching bag in the verification gates.
+
 ### v1: rule-based
 
-Components 1–5 wired together with hand-tuned weights. No learning. Should decisively beat random and greedy baselines. Useful as:
+Components 1–4 (recall component 5 is now Stage B of component 1) wired together with hand-tuned weights — i.e. v0 plus opponent modeling (2), defense (3), and the Stage B belief refinement. No learning. Should decisively beat random, the fan-blind greedy baseline, and v0 itself. Useful as:
 - The first occupant of the always-on spectator table.
 - A strong sparring partner for learned bots.
 - A baseline to detect regressions in the engine itself (its win rate vs. a fixed opponent should be stable across engine versions).
@@ -221,6 +253,7 @@ Use the v3 policy as a prior and the v6 value head as a leaf evaluator. **The 1-
 - Average score delta per hand (more granular than win rate; captures defense quality).
 - Deal-in rate.
 - Average final fan when winning (offensive quality).
+- **Paired evaluation with common random numbers (CRN).** Mahjong is high-variance; the win-rate delta from a *single component swap* (e.g. forecaster XYZ vs. ABC) can sit below seed noise for thousands of games. Run both variants on the *same* wall sequences and seed (a variance-reduction technique — **common random numbers**) and compare paired outcomes, or you will mistake noise for a component improvement — the same "believing it's learning when it isn't" failure, at the component level. This is the measurement cost of the modular design: swappability is cheap, but crediting a component is not.
 - Crucially, **evaluate against opponents the bot did not train against.** Self-play can produce policies that exploit specific quirks of their training partners and collapse against outsiders. Running matches against the prior year's Botzone entries is the cheap version of this check.
 
 **Convention to know:** in multi-agent training, **non-stationarity** is the core problem — your opponents change as you train, so the environment is moving under you. Approaches like **fictitious self-play** (play against a uniform mixture of past versions of yourself, not just the current version) mitigate the resulting cycles and exploitation by held-out opponents.
@@ -229,6 +262,7 @@ Use the v3 policy as a prior and the v6 value head as a leaf evaluator. **The 1-
 
 These are decisions deferred until they're actually answerable. Speculative *techniques* (not decisions) live in [research-ideas.md](research-ideas.md) instead.
 
+- **Conditioned model vs. specialists.** Train one fan-floor-conditioned policy (floor in the observation) or separate specialists per floor? Conditioned is more sample-efficient and enables the cleanest "does one net recover both regimes?" question; specialists give the cleanest behavioral contrast for the deferred study. Decide when v2 is running; until then the observation carries the floor either way, so the decision stays open at zero cost.
 - **Model size.** Suphx used relatively small networks by 2026 standards. For MCR on a home server, the right scale is whatever trains overnight on consumer GPU hardware. Don't optimize this until v2 is running.
 - **Framework.** PyTorch is the default for research; check whether the Botzone runtime constrains submission format (it historically did — bots must fit a size and runtime budget). Pick the framework that exports cleanly to whatever Botzone accepts.
 - **Imitation vs. self-play balance.** When to stop supervised pretraining and start self-play. Empirical question; defer until v2 is running.
@@ -241,17 +275,20 @@ Botzone 2026 registration closes **2026-06-09**, three weeks from today. Realist
 
 ## Build order
 
-Same as component order. Each step ships a feature:
+Reordered from the component order so the first deliverable is an end-to-end *playable* slice (tracer bullet), not a deep perception stack with no bot around it. Each step ships a feature:
 
-1. Tile-distribution tracker → ships as the "tiles out" overlay for human players.
-2. Hand-shape forecaster → ships as the "opponent hand analyzer" overlay.
-3. Deal-in risk → ships as a per-discard danger indicator for human players.
-4. Payout-weighted ukeire → ships as the "possible outs with fan" overlay.
-5. Opponent-need-aware draw distribution → upgrades (3) and (4) silently; no new UI.
-6. Rule-based bot v1 wired from (1)–(5) → ships as the always-on spectator table occupant.
-7. Value head v6 (supervised on MCR DB).
-8. Imitation-learned bot v2.
-9. Self-play RL bot v3.
-10. MCTS bot v4 for offline analysis.
+0. **Configurable scoring core** — enforce the ruleset `fan_cliff`, drive the conversion from ruleset config, add false-mahjong and renchan. Foundation for *both* live house-rules play and the training reward (one shared scorer → no training/serving skew). Test-first (core rule-engine change). Ships the 3-fan house ruleset.
+1. **MVP offense bot (v0)** + a real decision adapter replacing `CannedAdapter`-PASS → the server becomes solo-playable; debuts at the 3-fan floor. Needs (0) but only Stage A of the belief module.
+2. **Belief-state module, Stage A** (tile-location hard accounting) → ships as the always-on "tiles out" overlay.
+3. **Hand-shape forecaster** (component 2) → ships as the "opponent hand analyzer" overlay (inference → restricted; see below).
+4. **Belief-state module, Stage B** (archetype reweighting, the former component 5) → upgrades the wall distribution silently; no new UI.
+5. **Deal-in risk** (component 3) → per-discard danger indicator (inference → restricted).
+6. **Payout-weighted ukeire** (component 4) → "possible outs with fan" overlay. Components (1)–(4) wired together = **rule-based v1**, the always-on spectator-table occupant.
+7. **Value head** (component 6, supervised on the MCR DB).
+8. **Imitation-learned bot (v2).**
+9. **Self-play RL bot (v3).**
+10. **MCTS bot (v4)** for offline analysis.
 
-The user-facing analysis overlays and the bot are not separate workstreams — they share components 1 through 5 entirely. Building the overlays *is* building the bot's perception system.
+The user-facing analysis overlays and the bot are not separate workstreams — they share components (1)–(4) entirely. Building the overlays *is* building the bot's perception system.
+
+**Overlay gating.** Hard-fact and inference overlays have different exposure rules. Stage A "tiles out" reveals only already-visible tiles and can be shown always. The *inference* overlays — forecaster (2), deal-in risk (3), Stage B reweighting — are an unfair advantage if shown live, so they are restricted to **solo play, an explicit "anything goes" table, post-game review, or admin debug mode** — never live competitive play against humans.
