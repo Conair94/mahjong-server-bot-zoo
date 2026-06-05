@@ -18,14 +18,23 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, Literal
 
+from mahjong.server.seat_bots import is_known_bot
+
 SeatKind = Literal["human", "bot"]
 
 
 @dataclasses.dataclass(frozen=True)
 class SeatComposition:
-    """One seat's declared kind, as parsed from ``CREATE_TABLE.seats[i]``."""
+    """One seat's declared kind, as parsed from ``CREATE_TABLE.seats[i]``.
+
+    ``bot_id`` selects *which* in-process bot fills a ``kind == "bot"`` seat
+    (see ``mahjong.server.seat_bots``).  ``None`` means "use the default bot",
+    resolved to ``seat_bots.DEFAULT_BOT_ID`` at adapter-build time.  Always
+    ``None`` for human seats.
+    """
 
     kind: SeatKind
+    bot_id: str | None = None
 
 
 # The canonical 4-tuple shape used throughout the server.
@@ -74,15 +83,28 @@ def parse_seats_from_wire(seats_obj: Any) -> SeatsTuple:
     for i, entry in enumerate(seats_obj):
         if not isinstance(entry, dict):
             raise SeatsParseError(f"seats[{i}] must be an object")
-        extra = set(entry.keys()) - {"kind"}
-        if extra:
-            raise SeatsParseError(f"seats[{i}] contains forbidden field(s): {sorted(extra)}")
         kind = entry.get("kind")
         if kind not in _ALLOWED_KINDS:
             raise SeatsParseError(f"seats[{i}].kind must be 'human' or 'bot', got {kind!r}")
-        if kind == "human":
+        # Allowed fields are kind-dependent: ``bot_id`` selects the bot on a
+        # bot seat, but is forbidden on a human seat (still open-lobby — humans
+        # claim seats via ATTACH, not at create time).
+        allowed = {"kind", "bot_id"} if kind == "bot" else {"kind"}
+        extra = set(entry.keys()) - allowed
+        if extra:
+            raise SeatsParseError(f"seats[{i}] contains forbidden field(s): {sorted(extra)}")
+        bot_id: str | None = None
+        if kind == "bot":
+            raw_bot_id = entry.get("bot_id")
+            if raw_bot_id is not None:
+                if not isinstance(raw_bot_id, str) or not is_known_bot(raw_bot_id):
+                    raise SeatsParseError(
+                        f"seats[{i}].bot_id is not a known bot: {raw_bot_id!r}"
+                    )
+                bot_id = raw_bot_id
+        else:
             saw_human = True
-        parsed.append(SeatComposition(kind=kind))
+        parsed.append(SeatComposition(kind=kind, bot_id=bot_id))
 
     if not saw_human:
         raise SeatsParseError("seats must contain at least one 'human' entry")

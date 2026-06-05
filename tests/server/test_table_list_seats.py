@@ -4,7 +4,7 @@ Verification fixtures 12-14 from
 ``docs/specs/multi-human-seats.md § Verification fixtures``:
 
 12. Empty 2H+2B table snapshot: human seats occupied=false; bot seats
-    occupied=true with bot_id="canned-pass".
+    occupied=true with bot_id="v0".
 13. Mid-fill snapshot: one human attached → that seat occupied=true,
     user_id populated; other human seat still occupied=false.
 14. Phase transitions: WAITING_FOR_PLAYERS before the hand loop starts;
@@ -110,8 +110,8 @@ async def test_fixture_12_empty_2h2b_snapshot(tmp_path: Path) -> None:
             assert table["seats"] == [
                 {"seat": 0, "kind": "human", "occupied": False},
                 {"seat": 1, "kind": "human", "occupied": False},
-                {"seat": 2, "kind": "bot", "occupied": True, "bot_id": "canned-pass"},
-                {"seat": 3, "kind": "bot", "occupied": True, "bot_id": "canned-pass"},
+                {"seat": 2, "kind": "bot", "occupied": True, "bot_id": "v0"},
+                {"seat": 3, "kind": "bot", "occupied": True, "bot_id": "v0"},
             ]
     finally:
         await orch.close()
@@ -129,9 +129,9 @@ async def test_fixture_12_default_composition_snapshot(tmp_path: Path) -> None:
             tables = await _list_tables(ws)
             assert tables[0]["seats"] == [
                 {"seat": 0, "kind": "human", "occupied": False},
-                {"seat": 1, "kind": "bot", "occupied": True, "bot_id": "canned-pass"},
-                {"seat": 2, "kind": "bot", "occupied": True, "bot_id": "canned-pass"},
-                {"seat": 3, "kind": "bot", "occupied": True, "bot_id": "canned-pass"},
+                {"seat": 1, "kind": "bot", "occupied": True, "bot_id": "v0"},
+                {"seat": 2, "kind": "bot", "occupied": True, "bot_id": "v0"},
+                {"seat": 3, "kind": "bot", "occupied": True, "bot_id": "v0"},
             ]
     finally:
         await orch.close()
@@ -176,7 +176,7 @@ async def test_fixture_13_one_human_attached(tmp_path: Path) -> None:
                 }
                 assert seats[2]["kind"] == "bot"
                 assert seats[2]["occupied"] is True
-                assert seats[2]["bot_id"] == "canned-pass"
+                assert seats[2]["bot_id"] == "v0"
     finally:
         await orch.close()
 

@@ -50,7 +50,7 @@ def _two_table_registry() -> _FakeRegistry:
         [
             SeatSummary(seat=0, kind="human", occupied=True, user_id="u_7"),
             SeatSummary(seat=1, kind="human", occupied=True, user_id="u_9"),
-            SeatSummary(seat=2, kind="bot", occupied=True, bot_id="canned-pass"),
+            SeatSummary(seat=2, kind="bot", occupied=True, bot_id="v0"),
             SeatSummary(seat=3, kind="human", occupied=False),
         ],
     )
@@ -61,7 +61,7 @@ def _two_table_registry() -> _FakeRegistry:
             SeatSummary(seat=0, kind="human", occupied=True, user_id="u_4"),
             SeatSummary(seat=1, kind="human", occupied=False),
             SeatSummary(seat=2, kind="human", occupied=False),
-            SeatSummary(seat=3, kind="bot", occupied=True, bot_id="canned-pass"),
+            SeatSummary(seat=3, kind="bot", occupied=True, bot_id="v0"),
         ],
     )
     return _FakeRegistry([t1, t2])
