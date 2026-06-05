@@ -70,6 +70,8 @@ class HelloServer(TypedDict):
     server_id: str
     min_client_version: NotRequired[int]
     features: NotRequired[list[str]]
+    # Selectable in-process bots for the create-table picker (seat_bots.py).
+    bots: NotRequired[list[dict[str, Any]]]
 
 
 class HelloClient(TypedDict):

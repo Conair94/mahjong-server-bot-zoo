@@ -30,12 +30,12 @@ from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
 from mahjong.adapters.paced import PacedAdapter
-from mahjong.adapters.v0 import V0Adapter
 from mahjong.engine import initial_state
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
 from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.persistence import Participant, Persistence
+from mahjong.server.seat_bots import DEFAULT_BOT_ID, build_bot_adapter
 from mahjong.server.seats import DEFAULT_COMPOSITION, SeatsTuple
 from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS, SeatState
@@ -106,11 +106,6 @@ class TableNotFound(Exception):
 # ---------------------------------------------------------------------------
 # TableSummary
 # ---------------------------------------------------------------------------
-
-
-# v1 has a single bot identity for every ``kind: "bot"`` seat.  Layer 9 will
-# widen this enum when real bot-runner integration lands.
-BOT_PLACEHOLDER_ID: str = "canned-pass"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -337,7 +332,8 @@ class TableHandle:
     def _build_seat_summaries(self) -> tuple[SeatSummary, ...]:
         """One ``SeatSummary`` per seat, reflecting current session-mux state.
 
-        - Bot seats: always ``occupied=True``, ``bot_id=BOT_PLACEHOLDER_ID``.
+        - Bot seats: always ``occupied=True``, ``bot_id`` is the selected bot
+          (resolved to the default when the composition left it unset).
         - Human seats: ``occupied`` reflects whether session-mux holds a
           bound user (``LIVE`` or ``HELD``); when occupied, ``user_id`` is
           the bound id.
@@ -361,7 +357,7 @@ class TableHandle:
                         seat=seat,
                         kind="bot",
                         occupied=True,
-                        bot_id=BOT_PLACEHOLDER_ID,
+                        bot_id=comp.bot_id or DEFAULT_BOT_ID,
                     )
                 )
         return tuple(out)
@@ -534,7 +530,10 @@ class TableHandle:
     def _build_adapters_for_hand(self) -> list[SeatAdapter]:
         """Build the per-seat adapter list from this table's composition.
 
-        - ``kind: "bot"`` seat → its pre-allocated ``CannedAdapter``.
+        - ``kind: "bot"`` seat → the adapter for its selected ``bot_id`` (via
+          ``seat_bots.build_bot_adapter``; ``None`` → the default bot).  A seat
+          with a non-empty ``canned_seat_actions`` script overrides this with a
+          ``CannedAdapter`` (the test seam).
         - ``kind: "human"`` seat with a bound identity → ``HumanAdapter``.
         - ``kind: "human"`` seat with no bound identity → ``AutoPassAdapter``
           (interim safety net; 8.7.d gates the hand on all-humans-LIVE so
@@ -562,7 +561,8 @@ class TableHandle:
             elif seat in self._scripted_seats:
                 adapters.append(cast(SeatAdapter, self._canned_adapters[seat]))
             else:
-                adapters.append(cast(SeatAdapter, V0Adapter()))
+                bot_id = self._seats[seat].bot_id or DEFAULT_BOT_ID
+                adapters.append(build_bot_adapter(bot_id))
 
         if self._bot_pacing_enabled:
             for i, a in enumerate(adapters):

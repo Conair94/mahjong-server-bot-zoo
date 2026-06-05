@@ -181,6 +181,54 @@ def test_fixture_7_reserved_field_rejected(extra_field: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# bot_id selection — a bot seat may name which in-process bot fills it.
+# ---------------------------------------------------------------------------
+
+
+def test_bot_seat_accepts_known_bot_id() -> None:
+    result = parse_seats_from_wire(
+        [
+            {"kind": "human"},
+            {"kind": "bot", "bot_id": "v0"},
+            {"kind": "bot"},
+            {"kind": "bot"},
+        ]
+    )
+    assert result[1] == SeatComposition("bot", bot_id="v0")
+
+
+def test_bot_seat_without_bot_id_defaults_to_none() -> None:
+    """Omitted bot_id stays None at parse time; resolved to the default bot
+    only at adapter-build time."""
+    result = parse_seats_from_wire([{"kind": "human"}] + [{"kind": "bot"}] * 3)
+    assert all(sc.bot_id is None for sc in result[1:])
+
+
+@pytest.mark.parametrize("bad_bot_id", ["nope", "b_rule_v1", "", 42, True, []])
+def test_bot_seat_unknown_bot_id_rejected(bad_bot_id: object) -> None:
+    seats = [
+        {"kind": "human"},
+        {"kind": "bot", "bot_id": bad_bot_id},
+        {"kind": "bot"},
+        {"kind": "bot"},
+    ]
+    with pytest.raises(SeatsParseError, match="not a known bot"):
+        parse_seats_from_wire(seats)
+
+
+def test_human_seat_with_bot_id_rejected() -> None:
+    """bot_id is forbidden on human seats (still open-lobby)."""
+    seats = [
+        {"kind": "human", "bot_id": "v0"},
+        {"kind": "human"},
+        {"kind": "bot"},
+        {"kind": "bot"},
+    ]
+    with pytest.raises(SeatsParseError, match="forbidden field"):
+        parse_seats_from_wire(seats)
+
+
+# ---------------------------------------------------------------------------
 # Edge cases (not numbered fixtures but worth pinning)
 # ---------------------------------------------------------------------------
 
@@ -249,6 +297,55 @@ async def test_wire_default_composition_accepted(tmp_path: Path) -> None:
             table_id = str(resp["table_id"])
             handle = orch.registry.get_table(table_id)
             assert handle.seats == DEFAULT_COMPOSITION
+    finally:
+        await orch.close()
+
+
+@pytest.mark.asyncio
+async def test_hello_advertises_available_bots(tmp_path: Path) -> None:
+    """HELLO carries the selectable-bot menu for the create-table picker."""
+    orch = _make_orch(tmp_path)
+    await orch.start()
+    try:
+        ws = await websockets.connect(
+            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
+        )
+        try:
+            hello = json.loads(cast(str, await ws.recv()))
+            assert hello["kind"] == "HELLO", hello
+            ids = {b["bot_id"] for b in hello["bots"]}
+            assert "v0" in ids
+        finally:
+            await ws.close()
+    finally:
+        await orch.close()
+
+
+@pytest.mark.asyncio
+async def test_wire_bot_seat_with_bot_id_stored_on_handle(tmp_path: Path) -> None:
+    """A bot seat naming a known bot_id is parsed and stored, and surfaces in
+    the seat summary."""
+    orch = _make_orch(tmp_path)
+    await orch.start()
+    try:
+        url = f"ws://127.0.0.1:{orch.port}"
+        async with await _connect(url) as ws:
+            resp = await _send_create_table(
+                ws,
+                seats=[
+                    {"kind": "human"},
+                    {"kind": "bot", "bot_id": "v0"},
+                    {"kind": "bot"},
+                    {"kind": "bot"},
+                ],
+            )
+            assert resp["kind"] == "TABLE_CREATED", resp
+            handle = orch.registry.get_table(str(resp["table_id"]))
+            assert handle.seats[1] == SeatComposition("bot", bot_id="v0")
+            # Summary resolves the unset bot seats to the default bot.
+            summary = handle.summary()
+            assert summary.seats[1].bot_id == "v0"
+            assert summary.seats[2].bot_id == "v0"  # unset → default
     finally:
         await orch.close()
 

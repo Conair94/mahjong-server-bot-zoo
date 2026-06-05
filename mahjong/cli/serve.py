@@ -75,6 +75,10 @@ def _ruleset_ref(cfg: ServerConfig) -> RuleSetRef:
 def _open_persistence(cfg: ServerConfig) -> Persistence:
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.records_dir.mkdir(parents=True, exist_ok=True)
+    # Log the resolved absolute DB path: the default is now CWD-independent, but
+    # surfacing the exact file removes any doubt about which database is live
+    # (the old relative default silently opened different DBs per launch dir).
+    _logger.info("db.path %s", cfg.db_path.resolve())
     p = Persistence(cfg.db_path, cfg.data_dir)
     return p
 

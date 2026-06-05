@@ -712,6 +712,8 @@ class LobbyView extends LitElement {
   static properties = {
     tables: { type: Array },
     desiredHumans: { type: Number },
+    availableBots: { type: Array },      // HELLO.bots — [{bot_id,label,description}]
+    botSelections: { state: true },      // per-seat bot_id (length 4; bot seats only)
     lastRefreshTs: { type: Number, state: true },
     busy: { type: String, state: true }, // null | "joining" | "creating"
     // §22.6 Part A — table creation options (collapsed by default).
@@ -785,6 +787,26 @@ class LobbyView extends LitElement {
       flex-wrap: wrap;
     }
     .pick-label { color: var(--fg-dim); }
+    .bot-picker {
+      margin: 0.2rem 0 0.4rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .bot-pick-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+    }
+    .bot-select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font: inherit;
+      padding: 0.05rem 0.3rem;
+      cursor: pointer;
+    }
+    .bot-select:disabled { opacity: 0.4; cursor: default; }
     .pick-btn {
       background: transparent;
       border: 1px solid var(--border);
@@ -855,6 +877,10 @@ class LobbyView extends LitElement {
     super();
     this.tables = [];
     this.desiredHumans = 1;
+    this.availableBots = [];
+    // One bot_id per seat; only bot seats (index >= desiredHumans) are used.
+    // null entries resolve to the default bot at payload-build time.
+    this.botSelections = [null, null, null, null];
     this.lastRefreshTs = 0;
     this.busy = null;
     this.showAdvanced = false;
@@ -894,10 +920,77 @@ class LobbyView extends LitElement {
     this._emit("lobby-join", { tableId, seat });
   }
 
+  // Default bot_id when a seat hasn't been explicitly picked: first advertised
+  // bot, or "v0" if the server didn't send a menu (old server).
+  _defaultBotId() {
+    return this.availableBots[0]?.bot_id ?? "v0";
+  }
+
+  // Build the CREATE_TABLE.seats[] payload: first N seats human, the rest bots
+  // carrying their selected bot_id.
+  _seatsPayload() {
+    return Array.from({ length: 4 }, (_, i) => {
+      if (i < this.desiredHumans) return { kind: "human" };
+      return { kind: "bot", bot_id: this.botSelections[i] ?? this._defaultBotId() };
+    });
+  }
+
   _onCreate() {
     if (this.busy) return;
     this.busy = "creating";
-    this._emit("lobby-create", { humans: this.desiredHumans, options: this._buildOptions() });
+    this._emit("lobby-create", {
+      humans: this.desiredHumans,
+      options: this._buildOptions(),
+      seats: this._seatsPayload(),
+    });
+  }
+
+  _pickBot(seat, botId) {
+    const next = [...this.botSelections];
+    next[seat] = botId;
+    this.botSelections = next;
+  }
+
+  // Per-bot-seat agent picker. One row per seat that will be filled by a bot
+  // (seats at index >= desiredHumans). Lets the creator choose which agent
+  // sits where. With a single registered bot the <select> still renders so the
+  // choice is explicit and the UI is ready for more agents.
+  _renderBotPicker() {
+    const bots = Array.isArray(this.availableBots) ? this.availableBots : [];
+    const botSeats = [];
+    for (let i = this.desiredHumans; i < 4; i++) botSeats.push(i);
+    if (botSeats.length === 0) return "";
+    const defaultId = this._defaultBotId();
+    return html`
+      <div class="bot-picker">
+        ${botSeats.map((i) => {
+          const selected = this.botSelections[i] ?? defaultId;
+          return html`
+            <div class="bot-pick-row">
+              <span class="pick-label">Seat ${i} bot:</span>
+              ${bots.length > 0
+                ? html`
+                    <select
+                      class="bot-select"
+                      ?disabled=${!!this.busy}
+                      .value=${selected}
+                      @change=${(e) => this._pickBot(i, e.target.value)}
+                    >
+                      ${bots.map(
+                        (b) => html`
+                          <option value=${b.bot_id} ?selected=${b.bot_id === selected} title=${b.description ?? ""}>
+                            ${b.label ?? b.bot_id}
+                          </option>
+                        `,
+                      )}
+                    </select>
+                  `
+                : html`<span class="seat-bot">${selected}</span>`}
+            </div>
+          `;
+        })}
+      </div>
+    `;
   }
 
   _onRefresh() {
@@ -914,7 +1007,7 @@ class LobbyView extends LitElement {
         <div class="seat-row">
           <span class="seat-label">Seat ${seat.seat}</span>
           <span class="seat-kind">bot</span>
-          <span class="seat-bot">${seat.bot_id ?? "canned-pass"}</span>
+          <span class="seat-bot">${seat.bot_id ?? "v0"}</span>
         </div>
       `;
     }
@@ -1069,8 +1162,9 @@ class LobbyView extends LitElement {
               </button>
             `,
           )}
-          <span class="pick-label">+ ${4 - this.desiredHumans} canned-pass bot${4 - this.desiredHumans === 1 ? "" : "s"}</span>
+          <span class="pick-label">+ ${4 - this.desiredHumans} bot${4 - this.desiredHumans === 1 ? "" : "s"}</span>
         </div>
+        ${this._renderBotPicker()}
         <div class="pick-row">
           <label class="timer-toggle">
             <input
@@ -1638,10 +1732,7 @@ class MahjongApp extends LitElement {
     _lobbyHumans: { state: true },  // current composition pick (1..4)
     _lobbyError: { state: true },   // null | error string above the table list
     _sessionToken: { state: true }, // drives <feedback-button> visibility
-    // Settings menu + profile page (Spec 28).
-    _settingsOpen: { state: true }, // bool: settings overlay visible
-    _profile: { state: true },      // PROFILE payload, or null while loading
-    _serverFeatures: { state: true }, // HELLO.features (gates the profile button)
+    _availableBots: { state: true },// HELLO.bots — the create-table bot menu
   };
 
   static styles = css`
@@ -1776,6 +1867,8 @@ class MahjongApp extends LitElement {
     this._lobbyTables = [];
     this._lobbyHumans = this._desiredHumans;
     this._lobbyError = null;
+    // Selectable bots advertised by HELLO.bots; empty until the server greets.
+    this._availableBots = [];
     this._lobbyAutoRefresh = null;              // setInterval id while in lobby view
     this._lobbyTargetSeat = null;               // seat we're attempting to join (debug/diagnostic)
     // Settings + profile (Spec 28).
@@ -1918,6 +2011,8 @@ class MahjongApp extends LitElement {
         if (frame.kind === "HELLO") {
           // Server signals auth via HELLO.features = ["auth"].
           // Older/test servers that omit features skip straight to lobby.
+          // HELLO.bots is the create-table picker menu; absent on old servers.
+          this._availableBots = Array.isArray(frame.bots) ? frame.bots : [];
           const feats = Array.isArray(frame.features) ? frame.features : [];
           this._serverFeatures = feats;
           if (feats.includes("auth")) {
@@ -2165,11 +2260,14 @@ class MahjongApp extends LitElement {
     }
   }
 
-  _doCreateTable(humans, options = null) {
-    // The lobby panel passes the chosen composition; falls back to the
-    // URL-param default when called from auto-flows.
+  _doCreateTable(humans, options = null, seats = null) {
+    // The lobby panel passes the chosen composition (incl. per-seat bot
+    // selections); falls back to the URL-param human count for auto-flows.
     const n = Number.isFinite(humans) ? humans : this._desiredHumans;
-    const msg = { kind: "CREATE_TABLE", seats: _seatsForHumanCount(n) };
+    const msg = {
+      kind: "CREATE_TABLE",
+      seats: Array.isArray(seats) ? seats : _seatsForHumanCount(n),
+    };
     if (options) msg.options = options; // §22.6 Part A; omit → server defaults
     try {
       this._conn.send(msg);
@@ -2220,12 +2318,12 @@ class MahjongApp extends LitElement {
   }
 
   _onLobbyCreate(e) {
-    const { humans, options } = e.detail;
+    const { humans, options, seats } = e.detail;
     if (Number.isFinite(humans) && humans >= 1 && humans <= 4) {
       this._lobbyHumans = humans;
     }
     this._lobbyError = null;
-    this._doCreateTable(this._lobbyHumans, options ?? null);
+    this._doCreateTable(this._lobbyHumans, options ?? null, seats ?? null);
   }
 
   _onLobbyRefresh() {
@@ -2393,6 +2491,7 @@ class MahjongApp extends LitElement {
             <lobby-view
               .tables=${this._lobbyTables}
               .desiredHumans=${this._lobbyHumans}
+              .availableBots=${this._availableBots}
               @lobby-join=${this._onLobbyJoin.bind(this)}
               @lobby-create=${this._onLobbyCreate.bind(this)}
               @lobby-refresh=${this._onLobbyRefresh.bind(this)}
