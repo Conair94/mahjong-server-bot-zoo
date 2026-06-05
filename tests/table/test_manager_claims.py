@@ -164,6 +164,41 @@ def test_resolve_priority_all_pass_returns_none() -> None:
     assert _resolve_claim_priority([1, 2], seat_results) is None  # type: ignore[arg-type]
 
 
+@pytest.mark.needs_pymjgb
+@pytest.mark.asyncio(loop_scope="function")
+async def test_claim_hu_emits_hand_end_event(tmp_path: Path) -> None:
+    """Regression: a win declared *inside a claim window* (a discard win / ron)
+    must emit the terminal HAND_END.
+
+    `diff_to_events(HU)` returns only `[HAND_END]` — no leading CLAIM_DECISION —
+    so the old `_resolve_claim_window` `events[1:]` slice silently dropped it,
+    leaving every client waiting forever (the table stalled on any ron). Canned
+    PASS bots never won by claiming, so this was latent until the v0 offense bot
+    started winning hands. We need a real offense policy to reach a ron, so this
+    drives four-v0 and asserts every discard-win record carries a HAND_END.
+    """
+    from mahjong.adapters.v0 import V0Adapter
+
+    discard_wins = 0
+    for seed in range(6):
+        out = tmp_path / f"hand_{seed}.jsonl"
+        final = await run_hand(
+            adapters=[V0Adapter() for _ in range(4)],  # type: ignore[misc]
+            ruleset=MCR_REF,
+            seed=seed,
+            hand_id=f"claim-hu-{seed:08d}-0000-0000-0000-000000000000"[:36],
+            record_path=out,
+            server_info=SERVER,
+        )
+        terminal = final["terminal"]
+        if terminal["kind"] == "HU" and terminal["win_type"] == "DISCARD":
+            discard_wins += 1
+            kinds = [e["event"] for e in read_record(out)]
+            assert "HAND_END" in kinds, f"seed {seed}: claim-HU record missing HAND_END"
+
+    assert discard_wins > 0, "expected at least one discard win across the seed range"
+
+
 # Keep the unused-import keepers minimal — pytest cleans them when needed.
 _ = GameState
 _ = tile_sort_key

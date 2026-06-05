@@ -30,6 +30,7 @@ from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
 from mahjong.adapters.paced import PacedAdapter
+from mahjong.adapters.v0 import V0Adapter
 from mahjong.engine import initial_state
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
@@ -246,8 +247,16 @@ class TableHandle:
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
 
-        # One CannedAdapter-PASS per ``kind: "bot"`` seat.
+        # ``kind: "bot"`` seats are backed by the v0 offense bot (Spec 27).
+        # The ``canned_seat_actions`` injection seam is retained for tests that
+        # need a scripted seat: any seat given a non-empty script uses a
+        # ``CannedAdapter`` instead of v0 (see ``_build_adapters_for_hand``).
+        # A seat present in ``canned_seat_actions`` (even with an empty script,
+        # which falls back to ``default_action`` = PASS) is backed by a
+        # ``CannedAdapter``; absent bot seats get the v0 bot. This lets wire /
+        # session tests pin deterministic PASS bots, decoupled from bot logic.
         actions_by_seat = canned_seat_actions or {}
+        self._scripted_seats: set[int] = set(actions_by_seat)
         self._canned_adapters: dict[int, CannedAdapter] = {
             seat: CannedAdapter(
                 identity={"kind": "canned", "script": "pass"},
@@ -550,8 +559,10 @@ class TableHandle:
                             HumanAdapter(session=session, identity=identity),
                         )
                     )
-            else:
+            elif seat in self._scripted_seats:
                 adapters.append(cast(SeatAdapter, self._canned_adapters[seat]))
+            else:
+                adapters.append(cast(SeatAdapter, V0Adapter()))
 
         if self._bot_pacing_enabled:
             for i, a in enumerate(adapters):
