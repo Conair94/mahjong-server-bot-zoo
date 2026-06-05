@@ -14,7 +14,10 @@ def test_defaults_load_cleanly() -> None:
     assert isinstance(cfg, ServerConfig)
     assert cfg.listen_host == "127.0.0.1"
     assert cfg.listen_port == 8400
-    assert cfg.data_dir == Path("./var/mahjong")
+    # Default data dir is the absolute XDG path, not a CWD-relative one, so the
+    # launch directory can never silently swap which SQLite DB is opened.
+    assert cfg.data_dir == Path.home() / ".local" / "share" / "mahjong-server"
+    assert cfg.data_dir.is_absolute()
     assert cfg.seat_hold_seconds == 60
     assert cfg.session_lifetime_hours == 336
     assert cfg.default_ruleset == "mcr-2006"
@@ -45,6 +48,18 @@ def test_derived_paths() -> None:
     cfg, _ = load_config_from_env(env={"MAHJONG_DATA_DIR": "/tmp/mj"})
     assert cfg.db_path == Path("/tmp/mj/mahjong.db")
     assert cfg.records_dir == Path("/tmp/mj/records")
+
+
+def test_default_data_dir_honours_xdg_data_home() -> None:
+    cfg, _ = load_config_from_env(env={"XDG_DATA_HOME": "/srv/state"})
+    assert cfg.data_dir == Path("/srv/state/mahjong-server")
+    assert cfg.data_dir.is_absolute()
+
+
+def test_explicit_data_dir_expands_tilde() -> None:
+    cfg, _ = load_config_from_env(env={"MAHJONG_DATA_DIR": "~/mjdata"})
+    assert cfg.data_dir == Path.home() / "mjdata"
+    assert cfg.data_dir.is_absolute()
 
 
 def test_bad_int_raises_config_error_with_var_name() -> None:

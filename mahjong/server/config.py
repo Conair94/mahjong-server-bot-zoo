@@ -75,6 +75,21 @@ def _parse_int(name: str, raw: str) -> int:
         raise ConfigError(f"{name}={raw!r}: not an integer") from exc
 
 
+def _default_data_dir(env: Mapping[str, str]) -> Path:
+    """Absolute default data dir following the XDG Base Directory spec.
+
+    ``$XDG_DATA_HOME/mahjong-server`` if set, else
+    ``~/.local/share/mahjong-server``.  Anchoring to an *absolute* path (not
+    the historical CWD-relative ``./var/mahjong``) is deliberate: a relative
+    default silently opens a *different* SQLite DB depending on the directory
+    the server was launched from, which reads as "all my accounts vanished".
+    XDG is the conventional home for a home-hosted service's state.
+    """
+    xdg = env.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return (base / "mahjong-server").expanduser()
+
+
 def _parse_listen_addr(name: str, raw: str) -> tuple[str, int]:
     if ":" not in raw:
         raise ConfigError(f"{name}={raw!r}: expected host:port")
@@ -141,7 +156,15 @@ def load_config_from_env(
     addr_raw = e.get("MAHJONG_LISTEN_ADDR", "127.0.0.1:8400")
     host, port = _parse_listen_addr("MAHJONG_LISTEN_ADDR", addr_raw)
 
-    data_dir = Path(e.get("MAHJONG_DATA_DIR", "./var/mahjong"))
+    # An explicit MAHJONG_DATA_DIR is honoured as given (expanding ``~``); the
+    # default is the absolute XDG path so launch directory never decides which
+    # database is opened.
+    data_dir_raw = e.get("MAHJONG_DATA_DIR")
+    data_dir = (
+        Path(data_dir_raw).expanduser()
+        if data_dir_raw is not None
+        else _default_data_dir(e)
+    )
 
     cfg = ServerConfig(
         listen_host=host,

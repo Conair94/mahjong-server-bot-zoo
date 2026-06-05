@@ -44,6 +44,7 @@ from mahjong.server.registry import (
     TableNotFound,
     TableRegistry,
 )
+from mahjong.server.seat_bots import available_bots_wire
 from mahjong.server.seats import SeatsParseError, parse_seats_from_wire
 from mahjong.server.table_options import TableOptionsError, parse_table_options
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
@@ -496,6 +497,10 @@ class MultiTableOrchestrator:
             "seq": self._hello_seq,
             "protocol_version": 1,
             "server_id": SERVER_ID,
+            # Selectable in-process bots for the create-table picker. Additive
+            # field; the registry is the single source of truth so the menu
+            # never drifts from what the server can actually seat.
+            "bots": available_bots_wire(),
         }
         if self._auth_required:
             # Signal to the client that AUTH_REQUEST is expected before any
