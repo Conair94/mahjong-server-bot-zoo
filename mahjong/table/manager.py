@@ -413,16 +413,21 @@ async def _step_claim_window(
                 event_callback=event_callback,
             )
 
-        # Apply the winner. diff_to_events emits CLAIM_DECISION first; we've
-        # already written it, so skip events[0] and emit only the resolution
-        # and any post-events (DRAW / HAND_END).
+        # Apply the winner. PENG/CHI/GANG re-emit the winner's CLAIM_DECISION as
+        # events[0]; we already wrote it in the loop above, so drop that
+        # duplicate. A winning HU, however, emits *only* HAND_END (no leading
+        # CLAIM_DECISION) — slicing it off would silently drop the terminal
+        # event from the record and the fanout, leaving every client waiting
+        # forever (the table stalls on any discard-win / ron).
         winner_failure = seat_results[winner_seat][1]
         state_before = state
         state = apply_action(state, winner_seat, winner_action)
         events = diff_to_events(state_before, winner_seat, winner_action, state, ts=_now_ts())
-        if winner_failure and len(events) >= 2:
-            events[1].update(winner_failure)
-        for event in events[1:]:
+        if events and events[0]["event"] == "CLAIM_DECISION":
+            events = events[1:]
+        if winner_failure and events:
+            events[0].update(winner_failure)
+        for event in events:
             writer.write_event(event)
             await _fanout_observe(
                 adapters,

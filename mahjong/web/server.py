@@ -43,6 +43,7 @@ from typing import Any, cast
 from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
+from mahjong.adapters.v0 import V0Adapter
 from mahjong.engine import initial_state
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
@@ -125,10 +126,15 @@ class WebOrchestrator:
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
 
-        # CannedAdapters fill the non-human seats.  Empty action lists ⇒ each
-        # ``decide`` returns ``prompt.default_action``.  The orchestrator owns
-        # them; tests inject scripts via ``canned_seat_actions``.
+        # The v0 offense bot (Spec 27) fills the non-human seats.  The
+        # ``canned_seat_actions`` seam is retained for tests: any seat given a
+        # non-empty script uses a ``CannedAdapter`` instead of v0.
+        # A seat present in ``canned_seat_actions`` (even with an empty script,
+        # which falls back to ``default_action`` = PASS) uses a ``CannedAdapter``;
+        # absent bot seats get the v0 bot. Lets wire / session tests pin
+        # deterministic PASS bots, decoupled from bot logic.
         actions_by_seat = canned_seat_actions or {}
+        self._scripted_seats: set[int] = set(actions_by_seat)
         self._canned_adapters: dict[int, CannedAdapter] = {
             seat: CannedAdapter(
                 identity={"kind": "canned", "script": "pass"},
@@ -290,12 +296,12 @@ class WebOrchestrator:
                 hand_seed = self._seed + self._hand_index
                 human_session = self._sessions.seat(HUMAN_SEAT)
                 human = HumanAdapter(session=human_session, identity=human_identity)
-                adapters: list[SeatAdapter] = [
-                    cast(SeatAdapter, human),
-                    cast(SeatAdapter, self._canned_adapters[1]),
-                    cast(SeatAdapter, self._canned_adapters[2]),
-                    cast(SeatAdapter, self._canned_adapters[3]),
-                ]
+                adapters: list[SeatAdapter] = [cast(SeatAdapter, human)]
+                for seat in (1, 2, 3):
+                    if seat in self._scripted_seats:
+                        adapters.append(cast(SeatAdapter, self._canned_adapters[seat]))
+                    else:
+                        adapters.append(cast(SeatAdapter, V0Adapter()))
 
                 final_state = await mgr.run_hand(
                     adapters=adapters,

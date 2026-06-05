@@ -159,6 +159,9 @@ async def test_s2_e2e_record_is_byte_identical_to_fixture(
         record_path=out,
         server_info=F1_SERVER_INFO,
         identity_factory=_fixed_identity,
+        # Pin deterministic canned-PASS bots: these fixtures record wire/session
+        # behaviour, not bot play, and predate the v0 default bot.
+        canned_seat_actions={1: [], 2: [], 3: []},
     )
     await orch.start()
     try:
@@ -198,6 +201,9 @@ async def test_s2_e2e_no_double_emit_hand_end(
         record_path=out,
         server_info=F1_SERVER_INFO,
         identity_factory=_fixed_identity,
+        # Pin deterministic canned-PASS bots: these fixtures record wire/session
+        # behaviour, not bot play, and predate the v0 default bot.
+        canned_seat_actions={1: [], 2: [], 3: []},
     )
     await orch.start()
     captured: list[dict[str, Any]] = []
@@ -305,6 +311,9 @@ async def test_s2_e2e_spectator_sees_public_events_only(
         record_path=out,
         server_info=F1_SERVER_INFO,
         identity_factory=_fixed_identity,
+        # Pin deterministic canned-PASS bots: these fixtures record wire/session
+        # behaviour, not bot play, and predate the v0 default bot.
+        canned_seat_actions={1: [], 2: [], 3: []},
     )
     await orch.start()
 
@@ -457,6 +466,9 @@ async def test_s2_e2e_drop_and_reconnect_within_hold_is_byte_identical(
         server_info=F1_SERVER_INFO,
         identity_factory=_fixed_identity,  # both connections get u_test
         hold_seconds=5.0,  # generous; we reconnect in milliseconds
+        # Deterministic canned-PASS bots: this asserts reconnect doesn't leak
+        # into the record (bot play is incidental, fixture predates v0).
+        canned_seat_actions={1: [], 2: [], 3: []},
     )
     await orch.start()
 
