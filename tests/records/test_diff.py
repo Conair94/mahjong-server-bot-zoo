@@ -245,6 +245,72 @@ def test_diff_exposed_gang_emits_replacement_draw() -> None:
     assert draws[0]["seat"] == 0
     assert draws[0]["tile"] == s1["last_drawn"]["tile"]
 
+    # Spec 29 Bug C: an exposed kong is a *claim*, so it must emit a
+    # self-describing CLAIM_RESOLUTION (between the decision and the draw) so the
+    # client can authoritatively apply the winning meld and roll back any losing
+    # claim in the same window.
+    resolutions = [e for e in events if e["event"] == "CLAIM_RESOLUTION"]
+    assert len(resolutions) == 1, f"expected one CLAIM_RESOLUTION; got {[e['event'] for e in events]}"
+    res = resolutions[0]
+    assert res["outcome"] == "CLAIMED"
+    assert res["winning_seat"] == 0
+    assert res["winning_claim"] == "GANG"
+    assert res["winning_kind"] == "EXPOSED"
+    assert res["called_tile"] == "T3"
+    # Ordering: DECISION -> RESOLUTION -> DRAW.
+    kinds = [e["event"] for e in events]
+    assert kinds.index("CLAIM_DECISION") < kinds.index("CLAIM_RESOLUTION") < kinds.index("DRAW")
+
+
+def test_diff_concealed_gang_emits_no_resolution() -> None:
+    """A self-initiated kong can't lose a priority race, so it carries no
+    CLAIM_RESOLUTION (the client applies it straight off the decision)."""
+    seats = [
+        {
+            "seat": 0,
+            "seat_wind": "F1",
+            "concealed": sorted(["B5"] * 4 + ["W2"] * 9 + ["W3"], key=tile_sort_key),
+            "melds": [],
+            "discards": [],
+            "flowers": [],
+            "score": 0,
+        },
+        *(
+            {
+                "seat": i,
+                "seat_wind": f"F{i + 1}",
+                "concealed": ["W2"] * 13,
+                "melds": [],
+                "discards": [],
+                "flowers": [],
+                "score": 0,
+            }
+            for i in (1, 2, 3)
+        ),
+    ]
+    s: dict[str, Any] = {
+        "ruleset": MCR_REF,
+        "round_wind": "F1",
+        "dealer_seat": 0,
+        "hand_index": 0,
+        "turn_index": 5,
+        "wall": {"remaining": ["B7", "B8", "B9"], "drawn_count": 100, "total": 144},
+        "seats": seats,
+        "last_discard": None,
+        "last_drawn": {"seat": 0, "tile": "W3"},
+        "pending_claims": [],
+        "phase": "DISCARD",
+        "current_actor": 0,
+        "terminal": None,
+        "rng": {"seed": "0", "cursor": 0},
+    }
+    gang = {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}
+    s1 = apply_action(s, 0, gang)  # type: ignore[arg-type]
+    events = diff_to_events(s, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
+    assert not [e for e in events if e["event"] == "CLAIM_RESOLUTION"], (
+        f"concealed kong must NOT emit a resolution; got {[e['event'] for e in events]}"
+    )
+
 
 def test_diff_pass_emits_claim_decision() -> None:
     s = _seed_state()

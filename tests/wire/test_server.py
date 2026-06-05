@@ -386,6 +386,72 @@ async def test_static_serves_nested_assets(tmp_path: Any) -> None:
         assert ctype.startswith("text/javascript")
 
 
+def _fetch_with_headers(
+    url: str, headers: dict[str, str] | None = None
+) -> tuple[bytes, int, dict[str, str]]:
+    """Like `_fetch`, but also returns the response headers (lower-cased keys)."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            return resp.read(), resp.status, {k.lower(): v for k, v in resp.headers.items()}
+    except urllib.error.HTTPError as exc:
+        return exc.read(), exc.code, {k.lower(): v for k, v in exc.headers.items()}
+
+
+async def test_static_assets_revalidate_via_etag(tmp_path: Any) -> None:
+    """Spec 29 Bug B: static assets carry Cache-Control: no-cache + an ETag, and a
+    conditional re-request returns 304 — so a stale client can't keep serving an
+    old bundle after the server is updated."""
+    (tmp_path / "app.js").write_text("export const x = 1;")
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler, static_dir=tmp_path) as server:
+        url = f"http://127.0.0.1:{server.port}/static/app.js"
+        loop = asyncio.get_running_loop()
+        _body, status, hdrs = await loop.run_in_executor(None, _fetch_with_headers, url)
+        assert status == 200
+        assert hdrs.get("cache-control") == "no-cache"
+        etag = hdrs.get("etag")
+        assert etag, f"expected an ETag header; got {hdrs}"
+
+        # Conditional re-request with the same ETag → 304, empty body.
+        body2, status2, hdrs2 = await loop.run_in_executor(
+            None, _fetch_with_headers, url, {"If-None-Match": etag}
+        )
+        assert status2 == 304, f"expected 304 Not Modified; got {status2}"
+        assert body2 == b""
+        assert hdrs2.get("etag") == etag
+
+
+async def test_static_etag_changes_when_content_changes(tmp_path: Any) -> None:
+    """The ETag is content-derived, so an updated file invalidates the cached
+    copy (the browser's If-None-Match no longer matches → fresh 200)."""
+    asset = tmp_path / "app.js"
+    asset.write_text("export const x = 1;")
+
+    async def ws_handler(conn: Connection) -> None:  # pragma: no cover
+        return
+
+    async with _running_server(ws_handler, static_dir=tmp_path) as server:
+        url = f"http://127.0.0.1:{server.port}/static/app.js"
+        loop = asyncio.get_running_loop()
+        _, _, hdrs = await loop.run_in_executor(None, _fetch_with_headers, url)
+        etag_old = hdrs.get("etag")
+
+        asset.write_text("export const x = 2; // updated")
+        body2, status2, hdrs2 = await loop.run_in_executor(
+            None, _fetch_with_headers, url, {"If-None-Match": etag_old}
+        )
+        assert status2 == 200, "changed content must not 304 against the old ETag"
+        assert b"updated" in body2
+        assert hdrs2.get("etag") != etag_old
+
+
 async def test_static_path_traversal_returns_404(tmp_path: Any) -> None:
     """A `..` escape attempt is rejected — never reaches the filesystem."""
     secret = tmp_path.parent / "secret.txt"

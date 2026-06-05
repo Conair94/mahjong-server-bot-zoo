@@ -168,7 +168,13 @@ function renderMelds(melds, options) {
     out.push("[");
     out.push(m.type);
     out.push(" ");
-    out.push(...joinTiles(m.tiles ?? [], " ", options));
+    if (m.hidden) {
+      // An opponent's concealed kong — tile identity is private until
+      // settlement (Spec 29 Bug D), so show four face-down tiles.
+      out.push(...joinFaceDown(4, " ", options));
+    } else {
+      out.push(...joinTiles(m.tiles ?? [], " ", options));
+    }
     if (m.called_from_seat !== undefined && m.called_from_seat !== null) {
       out.push(` from ${windNameFromSeat(m.called_from_seat)}`);
     }

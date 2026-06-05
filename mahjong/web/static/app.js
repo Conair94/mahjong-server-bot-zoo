@@ -1650,6 +1650,30 @@ const THEMES = ["dark", "light"];
 const TILE_STYLE_STORAGE_KEY = "mahjong-tile-style";
 const TILE_STYLES = ["ascii", "unicode"];
 
+// Spec 29 Bug A: the session token is persisted so a full page reload restores
+// the session via RESUME instead of bouncing the user back to the login form
+// (which also made the profile page unreachable). localStorage (chosen over
+// sessionStorage) keeps the user signed in across tab reopen, not just reload.
+// Same private-mode/sandbox try/catch fallback as the theme/tile-style keys.
+const SESSION_TOKEN_STORAGE_KEY = "mahjong.session_token";
+
+function loadStoredSessionToken() {
+  try {
+    return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function storeSessionToken(token) {
+  try {
+    if (token) localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+  } catch {
+    // Storage unavailable — the token simply won't survive a reload. Non-fatal.
+  }
+}
+
 function loadInitialTheme() {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -1733,6 +1757,14 @@ class MahjongApp extends LitElement {
     _lobbyError: { state: true },   // null | error string above the table list
     _sessionToken: { state: true }, // drives <feedback-button> visibility
     _availableBots: { state: true },// HELLO.bots — the create-table bot menu
+    // Spec 29: these were missing from the reactive set, so mutating them did
+    // NOT schedule a re-render — the UI only updated when some *other* reactive
+    // change (e.g. a theme/colour toggle) flushed a render. That's why the
+    // settings menu "sometimes" failed to open/close depending on the UI colour,
+    // and why re-opening the profile while already on it could hang on "Loading".
+    _settingsOpen: { state: true }, // settings overlay visibility
+    _profile: { state: true },      // PROFILE payload (null while loading)
+    _serverFeatures: { state: true },// HELLO.features — gates profile button, etc.
   };
 
   static styles = css`
@@ -1783,6 +1815,11 @@ class MahjongApp extends LitElement {
       margin-bottom: 0.75rem;
       padding: 0.4rem 0.75rem;
       border: 1px solid var(--error);
+    }
+    .resuming {
+      color: var(--fg-dim);
+      text-align: center;
+      padding: 0.5rem;
     }
     .auth-form-row {
       display: flex;
@@ -1855,7 +1892,9 @@ class MahjongApp extends LitElement {
     this._authState = "idle";
     this._authError = null;
     this._authMode = "login";
-    this._sessionToken = null; // stored in memory; RESUME is a v2 concern
+    // Spec 29 Bug A: hydrate from storage so the HELLO handler can RESUME on a
+    // fresh page load (not just an in-session websocket reconnect).
+    this._sessionToken = loadStoredSessionToken();
     // Lobby state — see Step 8.7.e.
     this._desiredHumans = _readDesiredHumans(); // 1..4 from ?humans=N
     this._attachedTableId = null;               // populated on ATTACHED
@@ -2018,13 +2057,17 @@ class MahjongApp extends LitElement {
           if (feats.includes("auth")) {
             this._authRequired = true;
             if (this._sessionToken) {
-              // Reconnect path: we already hold a token — re-authenticate
-              // silently with RESUME instead of forcing the user to log in
-              // again. The AUTH_RESPONSE handler returns us to the lobby.
+              // Reconnect / reload path: we already hold a token (in memory
+              // from this session, or rehydrated from localStorage on a fresh
+              // load) — re-authenticate silently with RESUME instead of forcing
+              // the user to log in again. The AUTH_RESPONSE handler returns us
+              // to the lobby. The "resuming" state suppresses the login-form
+              // flash while RESUME is in flight (Spec 29 Bug A).
+              this._authState = "resuming";
               try {
                 this._conn.send({ kind: "RESUME", session_token: this._sessionToken });
               } catch (err) {
-                console.warn("RESUME on reconnect failed:", err);
+                console.warn("RESUME failed to send:", err);
                 this._authState = "waiting";
               }
             } else {
@@ -2040,14 +2083,25 @@ class MahjongApp extends LitElement {
         if (frame.kind === "AUTH_RESPONSE") {
           if (frame.ok) {
             this._sessionToken = frame.session_token ?? null;
+            storeSessionToken(this._sessionToken); // Spec 29 Bug A: survive reload
             this._authState = "authed";
             this._authError = null;
             this._enterLobby();
           } else {
             // Server allows up to 3 attempts on the same connection; keep the
-            // form open so the user can correct their credentials.
-            this._authState = "error";
-            this._authError = "Invalid credentials — please try again.";
+            // form open so the user can correct their credentials. A failure
+            // here also covers a stale/expired RESUME token — clear it so we
+            // don't retry the dead token on every reconnect, and don't show a
+            // scary "invalid credentials" message for an auto-resume.
+            const wasResuming = this._authState === "resuming";
+            if (this._sessionToken) {
+              this._sessionToken = null;
+              storeSessionToken(null);
+            }
+            this._authState = wasResuming ? "waiting" : "error";
+            this._authError = wasResuming
+              ? null
+              : "Invalid credentials — please try again.";
           }
           return;
         }
@@ -2435,11 +2489,16 @@ class MahjongApp extends LitElement {
 
   render() {
     const nextTheme = this.theme === "dark" ? "light" : "dark";
-    const nextTile = this.tileStyle === "ascii" ? "unicode" : "ascii";
+    // Spec 29 Bug A: while a stored token is being RESUMEd on load, show a
+    // brief "restoring session" splash instead of the login form, and keep the
+    // lobby/table/profile hidden until auth resolves (so we don't flash the
+    // form or the empty lobby on every reload).
+    const showResuming = this._authRequired && this._authState === "resuming";
     // Show the auth form when the server requires auth and we haven't authed yet.
-    const showAuth = this._authRequired && this._authState !== "authed";
-    const showLobby = !showAuth && this._view === "lobby";
-    const showProfile = !showAuth && this._view === "profile";
+    const showAuth =
+      this._authRequired && this._authState !== "authed" && !showResuming;
+    const showLobby = !showAuth && !showResuming && this._view === "lobby";
+    const showProfile = !showAuth && !showResuming && this._view === "profile";
     // Profile needs the server to persist history; gate the button on the
     // advertised feature (older/no-persistence servers omit it).
     const profileSupported = (this._serverFeatures ?? []).includes("profile");
@@ -2473,16 +2532,14 @@ class MahjongApp extends LitElement {
           >
             [ ${this.theme} → ${nextTheme} ]<span class="hint">Alt+T</span>
           </button>
-          <button
-            class="theme-btn"
-            @click=${this._toggleTileStyle}
-            title="Toggle tile style (Alt+U)"
-          >
-            [ tiles: ${this.tileStyle} → ${nextTile} ]<span class="hint">Alt+U</span>
-          </button>
+          <!-- Tile-style toggle lives in the Settings menu now (Spec 29). The
+               Alt+U chord still works; the header button was redundant. -->
         </div>
       </header>
       ${showAuth ? this._renderAuthForm() : ""}
+      ${showResuming
+        ? html`<div class="auth-overlay"><div class="resuming">Restoring session…</div></div>`
+        : ""}
       ${showLobby
         ? html`
             ${this._lobbyError
@@ -2507,7 +2564,7 @@ class MahjongApp extends LitElement {
       <table-page
         .panes=${this.panes}
         .tileStyle=${this.tileStyle}
-        ?hidden=${showLobby || showAuth || showProfile}
+        ?hidden=${showLobby || showAuth || showProfile || showResuming}
       ></table-page>
       ${this._settingsOpen
         ? html`<settings-menu

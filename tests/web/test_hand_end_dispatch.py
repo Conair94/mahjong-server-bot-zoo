@@ -75,6 +75,35 @@ def _hand_end_hu() -> dict[str, Any]:
     }
 
 
+def _hand_end_draw() -> dict[str, Any]:
+    """An exhaustive-draw HAND_END frame — the exact terminal shape that ended
+    ConnorL's reported game (Spec 29 Bug B): empty `winner`, no win tile/type,
+    zero score swing. `winner` is `[]` as `_terminal_from_record` produces."""
+    return {
+        "kind": "HAND_END",
+        "seq": 9,
+        "table_id": 1,
+        "hand_index": 0,
+        "next_hand_seq": None,
+        "terminal": {
+            "kind": "DRAW",
+            "winner": [],
+            "win_tile": None,
+            "win_type": None,
+            "deal_in_seat": None,
+            "fan": [],
+            "fan_total": 0,
+            "score_delta": [0, 0, 0, 0],
+            "final_hands": [
+                {"seat": 0, "concealed": ["B8"], "melds": [], "flowers": ["H4", "H5"]},
+                {"seat": 1, "concealed": ["W8", "W8"], "melds": [], "flowers": ["H7"]},
+                {"seat": 2, "concealed": ["B2", "B3"], "melds": [], "flowers": []},
+                {"seat": 3, "concealed": ["J2"], "melds": [], "flowers": []},
+            ],
+        },
+    }
+
+
 async def _wait_for_attached(page: Page) -> None:
     await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible(timeout=5000)
 
@@ -109,3 +138,24 @@ async def test_hand_end_frame_renders_summary(
     assert "All Pungs" in fan and "Total" in fan and "8" in fan, fan
     winner_row = gp.locator(".he-score-row.he-winner")
     await expect(winner_row).to_contain_text("+24")
+
+
+async def test_hand_end_draw_frame_renders_summary(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Spec 29 Bug B repro: the exhaustive-draw terminal (the exact case the user
+    hit) must render a summary, not silently vanish. The dispatch test previously
+    only covered a HU win."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+
+    await fake_wire_server.send(_hand_end_draw())
+
+    gp = page.locator("game-pane")
+    summary = gp.locator(".hand-end-summary")
+    await expect(summary).to_be_visible(timeout=5000)
+    await expect(gp.locator(".he-headline")).to_contain_text("Exhausted draw")
+    # The per-seat point swing still renders (all zero), and there's no winner row.
+    await expect(gp.locator(".he-score-row.he-winner")).to_have_count(0)

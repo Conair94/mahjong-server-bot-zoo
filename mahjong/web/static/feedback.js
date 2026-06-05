@@ -92,6 +92,7 @@ class FeedbackButton extends LitElement {
     this._text = "";
     this._phase = "draft";
     this._errorMsg = null;
+    this._doneTimer = null; // auto-close handle (Spec 29 Bug E)
   }
 
   // Called by <mahjong-app> when the server replies to a FEEDBACK frame.
@@ -99,6 +100,11 @@ class FeedbackButton extends LitElement {
     if (ok) {
       this._phase = "done";
       this._errorMsg = null;
+      // Spec 29 Bug E: confirm briefly, then auto-close + clear so the user
+      // doesn't sit on a lingering modal and re-click Submit (which had been
+      // producing duplicate reports).
+      clearTimeout(this._doneTimer);
+      this._doneTimer = setTimeout(() => this._closeDialog(), 1400);
     } else {
       this._phase = "error";
       this._errorMsg = message || "Something went wrong. Please try again.";
@@ -116,6 +122,8 @@ class FeedbackButton extends LitElement {
   }
 
   _closeDialog() {
+    clearTimeout(this._doneTimer);
+    this._doneTimer = null;
     const dlg = this.renderRoot.querySelector("dialog");
     if (dlg && dlg.open) dlg.close();
     this._open = false;
@@ -127,6 +135,11 @@ class FeedbackButton extends LitElement {
   }
 
   _onSubmit() {
+    // Spec 29 Bug E: idempotency guard — once a submission is in flight (or
+    // done), ignore further clicks. The disabled-button state only applies
+    // after Lit's async re-render, so without this a fast/slow round-trip let
+    // the same draft be sent more than once (three duplicate reports observed).
+    if (this._phase === "submitting" || this._phase === "done") return;
     const text = this._text.trim();
     if (text.length < 10) {
       this._phase = "error";
@@ -161,7 +174,7 @@ class FeedbackButton extends LitElement {
       return html`
         <dialog @cancel=${this._closeDialog}>
           <div class="title">─ Feedback ─</div>
-          <p class="done">Thank you! Your feedback was saved.</p>
+          <p class="done">Feedback received — thank you!</p>
           <div class="actions">
             <button class="act" @click=${this._closeDialog}>Close</button>
           </div>

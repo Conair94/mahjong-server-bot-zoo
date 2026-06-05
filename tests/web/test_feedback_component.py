@@ -104,6 +104,60 @@ async def test_valid_submit_dispatches_event(
     assert events[0]["text"] == "Please add a spectator chat window."
 
 
+async def test_repeat_submit_sends_only_once(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Spec 29 Bug E: clicking Submit repeatedly must dispatch exactly one
+    FEEDBACK event (the cause of the three duplicate reports)."""
+    await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
+    count = await page.evaluate(
+        """async () => {
+          const el = window.__fb;
+          el.renderRoot.querySelector('.launcher').click();
+          await el.updateComplete;
+          el._text = 'A perfectly valid bug report here.';
+          await el.updateComplete;
+          // Fire the handler several times synchronously, before any re-render
+          // could disable the button — the idempotency guard must hold.
+          el._onSubmit();
+          el._onSubmit();
+          el._onSubmit();
+          await el.updateComplete;
+          return window.__fbEvents.length;
+        }"""
+    )
+    assert count == 1
+
+
+async def test_ack_auto_closes_and_clears(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Spec 29 Bug E: a successful ACK auto-closes the dialog and clears the
+    draft, so the user can't sit on a lingering modal and re-submit."""
+    await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
+    result = await page.evaluate(
+        """async () => {
+          const el = window.__fb;
+          el.renderRoot.querySelector('.launcher').click();
+          await el.updateComplete;
+          el._text = 'A perfectly valid bug report here.';
+          await el.updateComplete;
+          el.renderRoot.querySelector('button.act').click();
+          await el.updateComplete;
+          el.onResult(true);
+          await el.updateComplete;
+          const sawDone = !!el.renderRoot.querySelector('.done');
+          await new Promise((r) => setTimeout(r, 1600)); // past the auto-close
+          await el.updateComplete;
+          return { sawDone, open: el._open, text: el._text, phase: el._phase };
+        }"""
+    )
+    assert result["sawDone"] is True
+    assert result["open"] is False
+    assert result["text"] == ""
+    assert result["phase"] == "draft"
+
+
 async def test_short_text_rejected_locally(
     page: Page, fake_wire_server: FakeWireServer
 ) -> None:
@@ -147,7 +201,7 @@ async def test_on_result_success_shows_thanks(
           return el.renderRoot.querySelector('.done')?.textContent?.trim();
         }"""
     )
-    assert "Thank you" in done_text
+    assert "Feedback received" in done_text
 
 
 async def test_on_result_failure_shows_error(

@@ -27,6 +27,7 @@ What lives elsewhere:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
@@ -265,7 +266,7 @@ class WebSocketServer:
         # when the subprotocol header is absent.
         offered = request.headers.get_all("Sec-WebSocket-Protocol")
         if not offered and self._static_dir is not None:
-            static_response = self._serve_static(connection, path)
+            static_response = self._serve_static(connection, path, request)
             if static_response is not None:
                 return static_response
         # Reject the WS upgrade unless `mahjong-v1` was offered. This is the
@@ -276,7 +277,9 @@ class WebSocketServer:
             return connection.respond(400, "subprotocol mahjong-v1 required\n")
         return None  # proceed with the WS upgrade
 
-    def _serve_static(self, connection: ServerConnection, path: str) -> Response | None:
+    def _serve_static(
+        self, connection: ServerConnection, path: str, request: Request
+    ) -> Response | None:
         assert self._static_dir is not None
         if path == "/":
             target = self._static_dir / "index.html"
@@ -292,10 +295,24 @@ class WebSocketServer:
         if not target.is_file():
             return connection.respond(404, "not found\n")
         body = target.read_bytes()
+        # Spec 29 Bug B: the client is build-free (no content-hashed filenames),
+        # so without revalidation a browser heuristically caches `app.js` and
+        # serves a stale bundle long after the server is updated — exactly why a
+        # landed fix appeared "still broken" in real play. `no-cache` forces the
+        # browser to revalidate every load; the ETag makes that revalidation a
+        # cheap 304 when the asset hasn't changed.
+        etag = '"' + hashlib.sha256(body).hexdigest()[:16] + '"'
+        if request.headers.get("If-None-Match") == etag:
+            not_modified = Headers()
+            not_modified["ETag"] = etag
+            not_modified["Cache-Control"] = "no-cache"
+            return Response(304, "Not Modified", not_modified, b"")
         ctype = _CONTENT_TYPES.get(target.suffix, "application/octet-stream")
         headers = Headers()
         headers["Content-Type"] = ctype
         headers["Content-Length"] = str(len(body))
+        headers["ETag"] = etag
+        headers["Cache-Control"] = "no-cache"
         return Response(200, "OK", headers, body)
 
     def _resolve_peer_ip(self, ws: ServerConnection) -> str:
