@@ -586,6 +586,68 @@ export function renderHandEndSummary(view, ownSeat, options = {}) {
   </div>`;
 }
 
+// --- Point-performance line graph (profile-and-settings.md § B.6) --------
+//
+// Pure function: a cumulative-score series → a multi-line ASCII chart string.
+// No charting lib (the client is build-free ASCII).  Auto-scales y to the
+// data with the zero baseline always shown; degenerate inputs (empty, single
+// point, all-equal) render an empty-state or flat line, never NaN.
+export function renderScoreGraph(series, options = {}) {
+  const width = Math.max(8, options.width ?? 48);
+  const height = Math.max(3, options.height ?? 9);
+  if (!Array.isArray(series) || series.length === 0) {
+    return "(no games yet)";
+  }
+
+  const values = series.map((p) => p.cumulative);
+  // Include 0 so the baseline is always in range; pad a flat series so the
+  // axis has a non-zero span (avoids divide-by-zero).
+  let lo = Math.min(0, ...values);
+  let hi = Math.max(0, ...values);
+  if (lo === hi) {
+    lo -= 1;
+    hi += 1;
+  }
+  const span = hi - lo;
+  const rowFor = (v) => Math.round(((hi - v) / span) * (height - 1));
+
+  // Resample the series across `width` columns (nearest data index).
+  const n = series.length;
+  const cols = [];
+  for (let x = 0; x < width; x++) {
+    const idx = n === 1 ? 0 : Math.round((x / (width - 1)) * (n - 1));
+    cols.push(rowFor(values[idx]));
+  }
+
+  const grid = Array.from({ length: height }, () => Array(width).fill(" "));
+  const zeroRow = rowFor(0);
+  for (let x = 0; x < width; x++) grid[zeroRow][x] = "·"; // baseline
+  for (let x = 0; x < width; x++) {
+    const r = cols[x];
+    // Connect the vertical gap to the previous column for a line feel.
+    if (x > 0) {
+      const prev = cols[x - 1];
+      const [a, b] = prev < r ? [prev, r] : [r, prev];
+      for (let y = a + 1; y < b; y++) {
+        if (grid[y][x] === " " || grid[y][x] === "·") grid[y][x] = "│";
+      }
+    }
+    grid[r][x] = "●";
+  }
+
+  const labelWidth = String(Math.max(Math.abs(hi), Math.abs(lo))).length + 1;
+  const fmt = (v) => (v > 0 ? `+${v}` : String(v)).padStart(labelWidth);
+  return grid
+    .map((row, r) => {
+      let label = " ".repeat(labelWidth);
+      if (r === 0) label = fmt(hi);
+      else if (r === height - 1) label = fmt(lo);
+      else if (r === zeroRow) label = fmt(0);
+      return `${label} │${row.join("")}`;
+    })
+    .join("\n");
+}
+
 // Test hooks (jsdom).  The pinwheel's pure helpers are easy to pin without
 // rendering, which keeps the cardinal-ui fixtures fast.
 export const __test__ = {
@@ -593,4 +655,5 @@ export const __test__ = {
   WIND_TO_NUMBER,
   pinwheelArrow: _pinwheelArrow,
   seatBadge: _seatBadge,
+  renderScoreGraph,
 };

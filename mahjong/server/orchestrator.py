@@ -304,6 +304,9 @@ class MultiTableOrchestrator:
                 elif kind == "FEEDBACK":
                     await self._handle_feedback(conn, msg)
 
+                elif kind == "GET_PROFILE":
+                    await self._handle_get_profile(conn)
+
                 elif kind == "ATTACH":
                     table = await self._handle_attach(conn, msg)
                     if table is None:
@@ -497,11 +500,17 @@ class MultiTableOrchestrator:
             "protocol_version": 1,
             "server_id": SERVER_ID,
         }
+        features: list[str] = []
         if self._auth_required:
             # Signal to the client that AUTH_REQUEST is expected before any
             # table operations.  Additive field — unknown features are tolerated
             # by clients that haven't been updated (wire-protocol.md § HELLO).
-            hello["features"] = ["auth"]
+            features.append("auth")
+        if self._persistence is not None:
+            # The profile home page (GET_PROFILE) needs persisted hand history.
+            features.append("profile")
+        if features:
+            hello["features"] = features
         await conn.send(hello)
         self._hello_seq += 1
 
@@ -666,6 +675,101 @@ class MultiTableOrchestrator:
                 break
         header = f"type: {report_type}\nsubmitted: {now.isoformat(timespec='seconds')}\nsubmitter: {submitter}\n---\n"
         path.write_text(header + text, encoding="utf-8")
+
+    # --- profile ---
+
+    async def _handle_get_profile(self, conn: Connection) -> None:
+        """Reply with a PROFILE for the connection's authenticated account.
+
+        Profile is a lobby concern, so this lives only in the admin/discovery
+        loop (not the in-game inbound loop).  DB reads are synchronous, so they
+        are off-loaded to a thread (sync-DB / run_in_executor rule).
+        """
+        auth = self._auth_state.get(conn)
+        if auth is None or self._persistence is None:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "not_authenticated"})
+            return
+
+        account_id = int(auth["account_id"])
+        try:
+            payload = await asyncio.get_running_loop().run_in_executor(
+                None, self._build_profile_payload, account_id
+            )
+        except Exception:
+            _logger.exception("profile.build_failed", extra={"account_id": account_id})
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "profile_error"})
+            return
+
+        payload["seq"] = self._make_seq()
+        with contextlib.suppress(Exception):
+            await conn.send(payload)
+
+    def _build_profile_payload(self, account_id: int) -> dict[str, Any]:
+        """Synchronous: gather stats + recent history + score series into a
+        PROFILE message body (no ``seq`` — the caller stamps it).
+
+        Runs on a worker thread; touches only the persistence layer.
+        """
+        assert self._persistence is not None
+        p = self._persistence
+        stats = p.account_stats(account_id)
+        recent_hands = p.find_hands_by_account(account_id, limit=20)
+        series = p.account_score_series(account_id, limit=200)
+        acct = p.get_account_by_id(account_id)
+
+        recent: list[dict[str, Any]] = []
+        for h in recent_hands:
+            # find_hands_by_account does not populate participants; fetch the
+            # full row to locate this account's seat + score delta.
+            full = p.get_hand(h.hand_id)
+            seat: int | None = None
+            delta: int | None = None
+            if full is not None:
+                for part in full.participants:
+                    if part.account_id == account_id:
+                        seat = part.seat
+                        delta = part.final_score_delta
+                        break
+            won = h.terminal_kind == "HU" and h.winner_seat == seat
+            recent.append(
+                {
+                    "hand_id": h.hand_id,
+                    "match_id": h.match_id,
+                    "started_at_ms": h.started_at_ms,
+                    "ended_at_ms": h.ended_at_ms,
+                    "terminal_kind": h.terminal_kind,
+                    "won": won,
+                    "score_delta": delta,
+                    "fan_total": h.fan_total if won else None,
+                    "seat": seat,
+                }
+            )
+
+        return {
+            "kind": "PROFILE",
+            "account": {
+                "account_id": account_id,
+                "username": acct.username if acct else "",
+                "display_name": acct.display_name if acct else "",
+            },
+            "stats": {
+                "hands_played": stats.hands_played,
+                "hands_won": stats.hands_won,
+                "draws": stats.draws,
+                "total_score": stats.total_score,
+                "total_win_points": stats.total_win_points,
+                "best_win_fan": stats.best_win_fan,
+                "first_played_ms": stats.first_played_ms,
+                "last_played_ms": stats.last_played_ms,
+            },
+            "recent": recent,
+            "series": [
+                {"ended_at_ms": pt.ended_at_ms, "cumulative": pt.cumulative}
+                for pt in series
+            ],
+        }
 
     # --- attach / spectate ---
 
