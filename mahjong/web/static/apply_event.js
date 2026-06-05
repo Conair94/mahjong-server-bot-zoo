@@ -190,95 +190,67 @@ function applyClaimDecision(view, event, _ownSeat) {
   view.turn_index = event.turn_index ?? view.turn_index;
   view.phase = event.phase ?? view.phase;
 
-  const decision = event.decision;
-  if (decision === "PASS" || decision === "HU") {
-    // PASS: pure information; window may close via a later CLAIM_RESOLUTION.
-    // HU: terminal sequence; HAND_END follows.
-    return view;
+  // Spec 29 Bug C: a CLAIM_DECISION is now *informational* for window claims
+  // (PENG / CHI / GANG-EXPOSED). The hand mutation moves to applyClaimResolution,
+  // which names the authoritative winner. Previously every decision mutated the
+  // view assuming it won; when a CHI lost the priority race to an overriding
+  // GANG, the phantom meld was never rolled back (the 5-meld / can't-mahjong
+  // bug). Deferring to the resolution means a *losing* decision touches nothing,
+  // so there is nothing to undo. `last_discard` is deliberately left intact —
+  // the resolution still needs it to locate the called tile and its discarder.
+  //
+  // The one exception is a self-initiated kong (concealed / added) declared from
+  // DISCARD phase: it can't contend and carries no resolution, so it applies here.
+  if (event.decision === "GANG" && (event.kind === "CONCEALED" || event.kind === "ADDED")) {
+    return applySelfGang(view, event);
   }
+  return view;
+}
 
+// Self-initiated kong from DISCARD phase (no claim window, no resolution event).
+function applySelfGang(view, event) {
   const claimer = view.seats.find((s) => s.seat === event.seat);
   if (!claimer) return view;
+  const tile = event.tile;
 
-  if (decision === "PENG") {
-    const tile = event.tile;
-    if (!tile) return view;
-    removeNFromConcealed(claimer, tile, 2);
-    const fromSeat = view.last_discard?.seat;
-    pullCalledTileOffDiscarder(view, tile, fromSeat);
-    claimer.melds.push({
-      type: "PENG",
-      tiles: [tile, tile, tile],
-      called_tile: tile,
-      called_from_seat: fromSeat ?? -1,
-    });
-    view.last_discard = null;
-    view.current_actor = event.seat;
-    return view;
-  }
-
-  if (decision === "CHI") {
-    const chiTiles = event.chi_tiles ?? [];
-    const calledTile = view.last_discard?.tile;
-    const fromSeat = view.last_discard?.seat;
-    if (calledTile) removeChiSupportTiles(claimer, chiTiles, calledTile);
-    pullCalledTileOffDiscarder(view, calledTile, fromSeat);
-    claimer.melds.push({
-      type: "CHI",
-      tiles: [...chiTiles],
-      called_tile: calledTile,
-      called_from_seat: fromSeat ?? -1,
-    });
-    view.last_discard = null;
-    view.current_actor = event.seat;
-    return view;
-  }
-
-  if (decision === "GANG") {
-    const kind = event.kind; // "EXPOSED" | "CONCEALED" | "ADDED"
-    const tile = event.tile;
-    if (!tile) return view;
-
-    if (kind === "EXPOSED") {
-      // From claim: claimer had 3 in concealed; takes the discarded 4th.
-      removeNFromConcealed(claimer, tile, 3);
-      const fromSeat = view.last_discard?.seat;
-      pullCalledTileOffDiscarder(view, tile, fromSeat);
-      claimer.melds.push({
-        type: "GANG_EXPOSED",
-        tiles: [tile, tile, tile, tile],
-        called_tile: tile,
-        called_from_seat: fromSeat ?? -1,
-      });
-      view.last_discard = null;
-    } else if (kind === "CONCEALED") {
-      // Self-initiated from DISCARD phase, no discard involved.
-      removeNFromConcealed(claimer, tile, 4);
+  if (event.kind === "CONCEALED") {
+    // `removeNFromConcealed` is count-based for opponents, so it works even
+    // though the tile is redacted from non-owners (Spec 29 Bug D).
+    removeNFromConcealed(claimer, tile, 4);
+    if (isOwnConcealed(claimer) && tile) {
+      // Own kong: we know the tile, show it face-up to ourselves.
       claimer.melds.push({
         type: "GANG_CONCEALED",
         tiles: [tile, tile, tile, tile],
         called_from_seat: event.seat,
       });
-    } else if (kind === "ADDED") {
-      // Upgrade an existing PENG meld of the same tile.
-      removeNFromConcealed(claimer, tile, 1);
-      const meldIdx = claimer.melds.findIndex(
-        (m) => m.type === "PENG" && m.tiles[0] === tile,
-      );
-      if (meldIdx >= 0) {
-        const old = claimer.melds[meldIdx];
-        claimer.melds[meldIdx] = {
-          type: "GANG_ADDED",
-          tiles: [tile, tile, tile, tile],
-          called_tile: tile,
-          called_from_seat: old.called_from_seat,
-        };
-      }
+    } else {
+      // Opponent kong: the tile identity is hidden until settlement; render
+      // four face-down tiles.
+      claimer.melds.push({
+        type: "GANG_CONCEALED",
+        hidden: true,
+        called_from_seat: event.seat,
+      });
     }
-    view.current_actor = event.seat;
-    return view;
+  } else if (event.kind === "ADDED") {
+    if (!tile) return view;
+    // Upgrade an existing PENG meld of the same tile.
+    removeNFromConcealed(claimer, tile, 1);
+    const meldIdx = claimer.melds.findIndex(
+      (m) => m.type === "PENG" && m.tiles[0] === tile,
+    );
+    if (meldIdx >= 0) {
+      const old = claimer.melds[meldIdx];
+      claimer.melds[meldIdx] = {
+        type: "GANG_ADDED",
+        tiles: [tile, tile, tile, tile],
+        called_tile: tile,
+        called_from_seat: old.called_from_seat,
+      };
+    }
   }
-
+  view.current_actor = event.seat;
   return view;
 }
 
@@ -299,8 +271,61 @@ function pullCalledTileOffDiscarder(view, tile, fromSeat) {
 function applyClaimResolution(view, event, _ownSeat) {
   view.turn_index = event.turn_index ?? view.turn_index;
   view.phase = event.phase ?? view.phase;
-  // PASSED / CLAIMED are both informational at this layer; state
-  // mutations happened in the preceding CLAIM_DECISION event.
+
+  // Spec 29 Bug C: the resolution is the *authoritative* winner of a claim
+  // window, so this is where the winning meld is applied (CLAIM_DECISION no
+  // longer mutates for window claims). PASSED means no claim landed — nothing
+  // to do. A winning HU emits HAND_END, not a resolution, so it never lands here.
+  if (event.outcome !== "CLAIMED") return view;
+
+  const claimer = view.seats.find((s) => s.seat === event.winning_seat);
+  if (!claimer) return view;
+
+  const claim = event.winning_claim;
+  // The server stamps `called_tile` on PENG/GANG resolutions; fall back to the
+  // still-intact last_discard for CHI (and older servers).
+  const calledTile = event.called_tile ?? view.last_discard?.tile;
+  const fromSeat = view.last_discard?.seat;
+
+  if (claim === "PENG") {
+    if (!calledTile) return view;
+    removeNFromConcealed(claimer, calledTile, 2);
+    pullCalledTileOffDiscarder(view, calledTile, fromSeat);
+    claimer.melds.push({
+      type: "PENG",
+      tiles: [calledTile, calledTile, calledTile],
+      called_tile: calledTile,
+      called_from_seat: fromSeat ?? -1,
+    });
+  } else if (claim === "CHI") {
+    const chiTiles = event.winning_chi_tiles ?? [];
+    if (calledTile) removeChiSupportTiles(claimer, chiTiles, calledTile);
+    pullCalledTileOffDiscarder(view, calledTile, fromSeat);
+    claimer.melds.push({
+      type: "CHI",
+      tiles: [...chiTiles],
+      called_tile: calledTile,
+      called_from_seat: fromSeat ?? -1,
+    });
+  } else if (claim === "GANG") {
+    // Only the EXPOSED kong reaches a resolution (concealed/added are
+    // self-initiated and applied on the decision). Claimer had 3 in concealed
+    // and takes the discarded 4th.
+    if (!calledTile) return view;
+    removeNFromConcealed(claimer, calledTile, 3);
+    pullCalledTileOffDiscarder(view, calledTile, fromSeat);
+    claimer.melds.push({
+      type: "GANG_EXPOSED",
+      tiles: [calledTile, calledTile, calledTile, calledTile],
+      called_tile: calledTile,
+      called_from_seat: fromSeat ?? -1,
+    });
+  } else {
+    return view;
+  }
+
+  view.last_discard = null;
+  view.current_actor = event.winning_seat;
   return view;
 }
 

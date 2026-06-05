@@ -133,6 +133,20 @@ def initial_state(
     return state
 
 
+def _mask_concealed_kong_for_opponent(meld: dict[str, Any]) -> dict[str, Any]:
+    """Hide a concealed kong's tile identity from opponents (Spec 29 Bug D).
+
+    Returns the meld unchanged unless it is a `GANG_CONCEALED`, in which case the
+    `tiles` are dropped and a `hidden: True` flag is set so the client renders
+    four face-down tiles. Exposed/added kongs are public and pass through.
+    """
+    if meld.get("type") != "GANG_CONCEALED":
+        return meld
+    masked = {k: v for k, v in meld.items() if k != "tiles"}
+    masked["hidden"] = True
+    return masked
+
+
 def project(state: GameState, seat: int | None) -> SeatView:
     """Privacy-filtered view of `state` for `seat`.
 
@@ -162,7 +176,9 @@ def project(state: GameState, seat: int | None) -> SeatView:
                 "seat": s["seat"],
                 "seat_wind": s["seat_wind"],
                 "concealed": {"count": len(s["concealed"])},
-                "melds": [dict(m) for m in s["melds"]],  # type: ignore[misc]
+                # Mask concealed-kong tiles in an opponent's meld bar (Spec 29
+                # Bug D); HAND_END.final_hands still reveals them at settlement.
+                "melds": [_mask_concealed_kong_for_opponent(dict(m)) for m in s["melds"]],  # type: ignore[misc]
                 "discards": list(s["discards"]),
                 "flowers": list(s["flowers"]),
                 "score": s["score"],
@@ -206,12 +222,27 @@ def project_event(event: dict[str, Any], seat: int | None) -> dict[str, Any]:
     """Privacy-filtered view of a record event for `seat`.
 
     `seat=None` is the public (spectator) projection. The DRAW event's `tile`
-    field is private to the drawing seat; all other event kinds are public.
-    Pure: returns a fresh dict; never mutates the input.
+    field is private to the drawing seat; a CONCEALED kong's `tile` is private to
+    its owner until settlement; all other event kinds are public. Pure: returns a
+    fresh dict; never mutates the input.
 
-    Spec: state-schema.md § Per-event projection.
+    Spec: state-schema.md § Per-event projection; live-play-bugfixes.md Bug D.
     """
-    if event.get("event") == "DRAW" and (seat is None or seat != event.get("seat")):
+    actor = event.get("seat")
+    is_other = seat is None or seat != actor
+    if event.get("event") == "DRAW" and is_other:
+        projected = dict(event)
+        projected.pop("tile", None)
+        return projected
+    # A concealed kong's tile identity is private to its owner until settlement
+    # (Spec 29 Bug D). The exposed/added kong variants are public (they sit on an
+    # open discard / upgrade an exposed pung), so only CONCEALED is redacted.
+    if (
+        event.get("event") == "CLAIM_DECISION"
+        and event.get("decision") == "GANG"
+        and event.get("kind") == "CONCEALED"
+        and is_other
+    ):
         projected = dict(event)
         projected.pop("tile", None)
         return projected

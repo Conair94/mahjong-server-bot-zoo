@@ -414,6 +414,65 @@ def test_project_event_draw_strips_tile_for_other_seats() -> None:
         assert "tile" not in projected, f"viewer {viewer} should not see seat 2's draw tile"
 
 
+def test_project_event_concealed_gang_hides_tile_from_others() -> None:
+    """Spec 29 Bug D: a CONCEALED kong's tile is private to its owner."""
+    decision = {
+        "event": "CLAIM_DECISION",
+        "turn_index": 7,
+        "phase": "DISCARD",
+        "ts": "ts",
+        "seat": 3,
+        "decision": "GANG",
+        "kind": "CONCEALED",
+        "tile": "W4",
+    }
+    # Owner (and only the owner) still sees the tile.
+    assert state.project_event(decision, 3)["tile"] == "W4"
+    # Everyone else — and the public/spectator view — does not.
+    for viewer in (None, 0, 1, 2):
+        assert "tile" not in state.project_event(decision, viewer), viewer
+
+
+def test_project_event_exposed_and_added_gang_tiles_public() -> None:
+    """Exposed and added kongs sit on public information, so their tile carries
+    through to every viewer (only CONCEALED is redacted)."""
+    for kind in ("EXPOSED", "ADDED"):
+        decision = {
+            "event": "CLAIM_DECISION",
+            "turn_index": 7,
+            "phase": "CLAIM_WINDOW",
+            "ts": "ts",
+            "seat": 3,
+            "decision": "GANG",
+            "kind": kind,
+            "tile": "W4",
+        }
+        for viewer in (None, 0, 1, 2, 3):
+            assert state.project_event(decision, viewer)["tile"] == "W4", (kind, viewer)
+
+
+def test_project_opponent_concealed_kong_meld_is_masked() -> None:
+    """An opponent's GANG_CONCEALED meld shows no tile identity in the snapshot;
+    the owner's own view keeps it."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    # Give seat 1 a concealed kong meld.
+    s["seats"][1]["melds"] = [
+        {"type": "GANG_CONCEALED", "tiles": ["W4", "W4", "W4", "W4"], "called_from_seat": 1}
+    ]
+
+    own = state.project(s, 1)
+    own_meld = own["seats"][1]["melds"][0]
+    assert own_meld["tiles"] == ["W4", "W4", "W4", "W4"]
+    assert not own_meld.get("hidden")
+
+    for viewer in (0, 2, 3):
+        opp = state.project(s, viewer)
+        meld = opp["seats"][1]["melds"][0]
+        assert meld["type"] == "GANG_CONCEALED"
+        assert meld.get("hidden") is True
+        assert "tiles" not in meld, f"viewer {viewer} must not see the kong tiles"
+
+
 def test_project_event_discard_preserved_in_full() -> None:
     """DISCARD is publicly visible — every field carries through."""
     discard = {

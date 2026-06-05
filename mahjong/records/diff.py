@@ -36,8 +36,9 @@ def diff_to_events(
     - PASS    -> CLAIM_DECISION (+ resolution / DRAW when window closes)
     - PENG    -> CLAIM_DECISION + CLAIM_RESOLUTION(CLAIMED)
     - CHI     -> CLAIM_DECISION + CLAIM_RESOLUTION(CLAIMED)
-    - GANG    -> CLAIM_DECISION + CLAIM_RESOLUTION (claim variants) or single
-                 standalone event for CONCEALED / ADDED gangs
+    - GANG    -> EXPOSED (claim): CLAIM_DECISION + CLAIM_RESOLUTION + DRAW.
+                 CONCEALED / ADDED (self-initiated from DISCARD): CLAIM_DECISION
+                 + DRAW, no resolution (cannot lose a priority race).
     - HU      -> HAND_END
     """
     events: list[dict[str, Any]] = []
@@ -54,6 +55,14 @@ def diff_to_events(
         events.append(_claim_resolution_claimed(state_after, seat, action, ts))
     elif t == "GANG":
         events.append(_gang_event(state_before, state_after, seat, action, ts))
+        # Exposed kongs are a *claim* from a CLAIM_WINDOW and must emit a
+        # CLAIM_RESOLUTION so the client can authoritatively apply the winning
+        # meld (Spec 29 Bug C: without it, a CHI that loses the priority race to
+        # an overriding GANG is never rolled back on the client). Concealed and
+        # added kongs are self-initiated from DISCARD — they can't lose a race,
+        # so they carry no resolution.
+        if action.get("kind") == "EXPOSED":
+            events.append(_claim_resolution_claimed(state_after, seat, action, ts))
         # All three gang variants draw a replacement tile (gangshanghua) via
         # internal_draw and return to DISCARD for the same seat. Surface that
         # DRAW or the wire/record never reports the replacement tile, the
@@ -128,8 +137,18 @@ def _claim_resolution_claimed(
         "winning_seat": seat,
         "winning_claim": action["type"],
     }
+    # `called_tile` makes the resolution self-describing so the client can
+    # rebuild the meld from the resolution alone (Spec 29 Bug C — the client now
+    # mutates on the resolution, not the decision). CHI carries the full meld in
+    # `winning_chi_tiles`; the called tile of a CHI is the open discard, which
+    # the client still holds as `last_discard`.
     if action["type"] == "CHI":
         payload["winning_chi_tiles"] = list(action["tiles"])
+    elif action["type"] == "PENG":
+        payload["called_tile"] = action["tile"]
+    elif action["type"] == "GANG":
+        payload["called_tile"] = action["tile"]
+        payload["winning_kind"] = action["kind"]
     return payload
 
 

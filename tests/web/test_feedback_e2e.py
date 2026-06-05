@@ -18,8 +18,9 @@ This pins the app.js glue (``_onFeedbackSubmit`` → ``FEEDBACK`` frame, and the
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -96,7 +97,9 @@ async def test_feedback_e2e_login_submit_writes_file(
     await page.click("button.act")
 
     # --- confirmation in UI --------------------------------------------------
-    await expect(page.locator(".done")).to_contain_text("Thank you", timeout=10_000)
+    # The confirmation auto-closes after ~1.4s (Spec 29 Bug E); Playwright
+    # resolves to_contain_text as soon as it first matches, well within that.
+    await expect(page.locator(".done")).to_contain_text("Feedback received", timeout=10_000)
 
     # --- file landed on disk -------------------------------------------------
     reports_dir = data_dir / "reports"
