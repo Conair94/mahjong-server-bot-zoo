@@ -2,6 +2,21 @@
 
 ## Run history
 
+### 2026-06-05 — Sessions bdf243da, b648c74f, 399034fe, 5122538c, 0b2add49 (+ older 8.8 ops sessions)
+- Scanned 10 sessions (2026-06-03 to 2026-06-04), all in mahjong-server-bot-zoo. Focus: Layer 9 brainstorm + scoring core (Spec 26) + v0 bot (Spec 27).
+- Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 2, NOISE: many (most session content already captured in dedicated memories written during the sessions themselves).
+- Accepted candidates (both written to project memory):
+  - FILL_GAP: `feedback-mcr-fan-win-tile-maximization` — HU legality maxes fan over ALL win-tile choices; interior win tile earns a wait fan (+1). A "7-fan" hand spuriously cleared the 8-fan floor (Spec 26). Author floor-relative fixtures by probing max-over-win-tiles, prefer pung/closed hands. NOT in code comments.
+  - FILL_GAP: `feedback-offense-bot-feasibility-probe-discard` — user correction: judge "keep this tenpai?" by ron-ability (win_type=DISCARD), not SELF_DRAW (self-draw fan / Fully-Concealed +4 makes the permissive probe lock the bot into self-draw-only shapes). Generalizes to all offense bots v0→v2+.
+- Discarded as NOISE / already-captured:
+  - House conversion table, 4X/6X payout, false-mahjong, renchan, per-hand/session split — all already in `project_house_ruleset_conversion.md` (written during session 399034fe).
+  - v0 design (always-GANG rationale, fan-aware distance, DISCARD probe *what*), the 2 latent engine bugs (claim-HU HAND_END, replay window/terminal-aware) — all in `project_layer9_v0_offense_bot.md`.
+  - "Verify spec premise" (scoring-core premise was inverted) — already `feedback_verify_spec_premise`; also re-noted in the house-ruleset status.
+  - git-fetch-before-branch-reasoning (recurred again in 399034fe / 5122538c) — already captured.
+  - character-flush heuristic inversion, Component 1+5 merge, conditioned-vs-specialist policy — these live in docs/ai-plan.md (source of truth), not memory-worthy.
+  - Layer 8.8 ops sessions (0b2add49 etc.) — already consolidated 2026-06-04.
+  - ukeire-at-tenpai counting bug, mypy/ruff baseline handling, key-presence canned_seat_actions semantics — derivable from code / one-off implementation detail.
+
 ### 2026-05-21 — Sessions 95f2c9b9, 7b9d8b26
 - Scanned 2 sessions (2026-05-21), both in mahjong-server-bot-zoo.
 - Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 3, NOISE: 2
