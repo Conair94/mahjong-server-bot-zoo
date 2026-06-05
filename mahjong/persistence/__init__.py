@@ -26,11 +26,13 @@ from mahjong.persistence.db import open_db
 from mahjong.persistence.migrations import apply_migrations
 from mahjong.persistence.models import (
     Account,
+    AccountStats,
     HandRow,
     IntegrityReport,
     InviteRow,
     Participant,
     RebuildReport,
+    ScorePoint,
     SessionRow,
 )
 
@@ -39,12 +41,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Account",
+    "AccountStats",
     "HandRow",
     "IntegrityReport",
     "InviteRow",
     "Participant",
     "Persistence",
     "RebuildReport",
+    "ScorePoint",
     "SessionRow",
     "apply_migrations",
     "open_db",
@@ -321,6 +325,18 @@ class Persistence:
 
     def find_in_progress_hands(self) -> list[HandRow]:
         return _hands.find_in_progress_hands(self._conn)
+
+    # ------------------------------------------------------------------
+    # Profile stats  (profile-and-settings.md § B)
+    # ------------------------------------------------------------------
+
+    def account_stats(self, account_id: int) -> AccountStats:
+        return _hands.account_stats(self._conn, account_id)
+
+    def account_score_series(
+        self, account_id: int, *, limit: int = 200
+    ) -> list[ScorePoint]:
+        return _hands.account_score_series(self._conn, account_id, limit=limit)
 
     # ------------------------------------------------------------------
     # Integrity / rebuild

@@ -264,6 +264,42 @@ _FEEDBACK: dict[str, Any] = {
 
 _FEEDBACK_ACK: dict[str, Any] = {"kind": "FEEDBACK_ACK"}
 
+_GET_PROFILE: dict[str, Any] = {"kind": "GET_PROFILE"}
+
+_PROFILE: dict[str, Any] = {
+    "kind": "PROFILE",
+    "seq": 12,
+    "account": {"account_id": 3, "username": "connor", "display_name": "Connor"},
+    "stats": {
+        "hands_played": 142,
+        "hands_won": 39,
+        "draws": 11,
+        "total_score": 312,
+        "total_win_points": 1880,
+        "best_win_fan": 26,
+        "first_played_ms": 1717500000000,
+        "last_played_ms": 1717589000000,
+    },
+    "recent": [
+        {
+            "hand_id": "018f00000000c2",
+            "match_id": None,
+            "started_at_ms": 1717589000000,
+            "ended_at_ms": 1717589120000,
+            "terminal_kind": "HU",
+            "won": True,
+            "score_delta": 48,
+            "fan_total": 8,
+            "seat": 0,
+            "opponents": ["v0", "v0", "v0"],
+        }
+    ],
+    "series": [
+        {"ended_at_ms": 1717500120000, "cumulative": -24},
+        {"ended_at_ms": 1717500300000, "cumulative": 24},
+    ],
+}
+
 ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("HELLO_server", _HELLO_SERVER),
     ("HELLO_client", _HELLO_CLIENT),
@@ -296,6 +332,8 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("START_HAND", _START_HAND),
     ("FEEDBACK", _FEEDBACK),
     ("FEEDBACK_ACK", _FEEDBACK_ACK),
+    ("GET_PROFILE", _GET_PROFILE),
+    ("PROFILE", _PROFILE),
 ]
 
 

@@ -50,6 +50,8 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "START_HAND",
         "FEEDBACK",
         "FEEDBACK_ACK",
+        "GET_PROFILE",
+        "PROFILE",
     }
 )
 
@@ -137,6 +139,19 @@ class TableList(TypedDict):
     kind: Literal["TABLE_LIST"]
     seq: int
     tables: list[dict[str, Any]]
+
+
+class GetProfile(TypedDict):
+    kind: Literal["GET_PROFILE"]
+
+
+class Profile(TypedDict):
+    kind: Literal["PROFILE"]
+    seq: int
+    account: dict[str, Any]
+    stats: dict[str, Any]
+    recent: list[dict[str, Any]]
+    series: list[dict[str, Any]]
 
 
 class Attach(TypedDict):

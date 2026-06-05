@@ -21,9 +21,10 @@
 //   human at the same table got there first); treat as silent no-op.
 
 import { LitElement, html, css } from "lit";
-import { renderTable, renderPinwheel, renderHandEndSummary } from "/static/render.js";
+import { renderTable, renderPinwheel, renderHandEndSummary, renderScoreGraph } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
+import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
 
 // --- ConnectionManager --------------------------------------------------
@@ -1362,6 +1363,285 @@ class TablePage extends LitElement {
 
 customElements.define("table-page", TablePage);
 
+// --- <settings-menu> ----------------------------------------------------
+//
+// Modal overlay listing every client toggle (settings.js § SETTINGS).  Purely
+// presentational: reads current values via `.values`, emits `setting-cycle`
+// {key} when a row is activated and `settings-close` on dismiss.  The existing
+// keyboard chords keep working — this is a discoverable surface over the same
+// state, not a replacement.
+class SettingsMenu extends LitElement {
+  static properties = {
+    values: { type: Object },     // { [key]: currentValue }
+    tableActive: { type: Boolean }, // table-scoped rows enabled?
+  };
+
+  static styles = css`
+    :host { display: block; }
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+    .modal {
+      background: var(--bg);
+      border: 1px solid var(--accent);
+      padding: 1rem 1.25rem 1.25rem;
+      min-width: 340px;
+      max-width: 90vw;
+      font-family: inherit;
+    }
+    .title {
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .close {
+      background: transparent;
+      border: none;
+      color: var(--fg-dim);
+      font-family: inherit;
+      font-size: inherit;
+      cursor: pointer;
+    }
+    .close:hover { color: var(--accent); }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 0.75rem;
+      align-items: center;
+      padding: 0.3rem 0;
+    }
+    .row .name { color: var(--fg); }
+    .row.disabled .name { color: var(--fg-dim); }
+    .val {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0.15rem 0.7rem;
+      cursor: pointer;
+      min-width: 96px;
+      text-align: center;
+    }
+    .val:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    .val:disabled { opacity: 0.45; cursor: default; }
+    .hk { color: var(--fg-dim); font-size: 0.85em; min-width: 3.5em; text-align: right; }
+    .hint { color: var(--fg-dim); font-size: 0.8em; margin-top: 0.6rem; }
+  `;
+
+  render() {
+    const values = this.values ?? {};
+    return html`
+      <div class="backdrop" @click=${this._onBackdrop}>
+        <div class="modal" @click=${(e) => e.stopPropagation()}>
+          <div class="title">
+            <span>── Settings ──</span>
+            <button class="close" @click=${this._close} title="Close (Esc)">[ × ]</button>
+          </div>
+          ${SETTINGS.map((s) => {
+            const disabled = s.scope === "table" && !this.tableActive;
+            const current = values[s.key] ?? s.values[0];
+            return html`
+              <div class="row ${disabled ? "disabled" : ""}">
+                <span class="name">${s.label}</span>
+                <button
+                  class="val"
+                  ?disabled=${disabled}
+                  @click=${() => this._cycle(s.key)}
+                  title=${disabled ? "Available at a table" : `Cycle (${s.hotkey})`}
+                >
+                  ${current}${disabled ? "" : " ▸"}
+                </button>
+                <span class="hk">${s.hotkey}</span>
+              </div>
+            `;
+          })}
+          ${this.tableActive ? "" : html`<div class="hint">Pane toggles are available once you're at a table.</div>`}
+        </div>
+      </div>
+    `;
+  }
+
+  _cycle(key) {
+    this.dispatchEvent(new CustomEvent("setting-cycle", { detail: { key }, bubbles: true, composed: true }));
+  }
+
+  _onBackdrop() {
+    this._close();
+  }
+
+  _close() {
+    this.dispatchEvent(new CustomEvent("settings-close", { bubbles: true, composed: true }));
+  }
+}
+
+customElements.define("settings-menu", SettingsMenu);
+
+// --- <profile-page> -----------------------------------------------------
+//
+// Top-level profile home screen (profile-and-settings.md § B.5).  Renders the
+// PROFILE wire payload: a stats grid, a cumulative-points ASCII line graph,
+// and a recent-games list.  Stays dumb — derives win-rate / avg-win from raw
+// counts and emits `profile-back` to return to the lobby.
+function _relTime(ms) {
+  if (ms == null) return "—";
+  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+function _signed(n) {
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : String(n);
+}
+
+class ProfilePage extends LitElement {
+  static properties = {
+    profile: { type: Object }, // PROFILE payload, or null while loading
+  };
+
+  static styles = css`
+    :host { display: block; }
+    .wrap { border: 1px solid var(--border); padding: 1rem 1.25rem 1.25rem; }
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .who { color: var(--accent); font-size: 1.1em; }
+    .back {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0.25rem 0.75rem;
+      cursor: pointer;
+    }
+    .back:hover { color: var(--accent); border-color: var(--accent); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.6rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .stat .label { color: var(--fg-dim); font-size: 0.85em; }
+    .stat .value { color: var(--fg); font-size: 1.15em; }
+    .section-title { color: var(--accent); margin: 0.5rem 0; }
+    pre.graph {
+      color: var(--accent);
+      line-height: 1.05;
+      margin: 0 0 1.25rem;
+      overflow-x: auto;
+    }
+    table.recent { width: 100%; border-collapse: collapse; }
+    table.recent th, table.recent td {
+      text-align: left;
+      padding: 0.2rem 0.6rem 0.2rem 0;
+      border-bottom: 1px solid var(--border);
+      font-weight: normal;
+    }
+    table.recent th { color: var(--fg-dim); font-size: 0.85em; }
+    .win { color: var(--accent); }
+    .loss { color: var(--fg-dim); }
+    .empty { color: var(--fg-dim); padding: 1.5rem 0; }
+  `;
+
+  render() {
+    const p = this.profile;
+    if (p == null) {
+      return html`<div class="wrap"><div class="empty">Loading profile…</div></div>`;
+    }
+    const s = p.stats ?? {};
+    const played = s.hands_played ?? 0;
+    const won = s.hands_won ?? 0;
+    const winRate = played > 0 ? `${((won / played) * 100).toFixed(1)}%` : "—";
+    const avgWin = won > 0 ? `+${Math.round((s.total_win_points ?? 0) / won)}` : "—";
+
+    return html`
+      <div class="wrap">
+        <div class="head">
+          <span class="who">${p.account?.display_name ?? "—"} · profile</span>
+          <button class="back" @click=${this._back} title="Back to lobby (Esc)">[ back ]</button>
+        </div>
+
+        ${played === 0
+          ? html`<div class="empty">No games yet — play a hand and your stats will appear here.</div>`
+          : html`
+              <div class="grid">
+                ${this._stat("Hands played", played)}
+                ${this._stat("Win rate", winRate)}
+                ${this._stat("Wins", won)}
+                ${this._stat("Draws", s.draws ?? 0)}
+                ${this._stat("Avg win size", avgWin)}
+                ${this._stat("Best win (fan)", s.best_win_fan ?? "—")}
+                ${this._stat("Total standing", _signed(s.total_score ?? 0))}
+                ${this._stat("Last played", _relTime(s.last_played_ms))}
+              </div>
+
+              <div class="section-title">─ Point performance (cumulative) ─</div>
+              <pre class="graph">${renderScoreGraph(p.series ?? [])}</pre>
+
+              <div class="section-title">─ Recent games ─</div>
+              ${this._recentTable(p.recent ?? [])}
+            `}
+      </div>
+    `;
+  }
+
+  _stat(label, value) {
+    return html`<div class="stat">
+      <div class="label">${label}</div>
+      <div class="value">${value}</div>
+    </div>`;
+  }
+
+  _recentTable(recent) {
+    if (recent.length === 0) {
+      return html`<div class="empty">No recent games.</div>`;
+    }
+    return html`
+      <table class="recent">
+        <tr><th>When</th><th>Result</th><th>Points</th><th>Fan</th></tr>
+        ${recent.map((h) => {
+          const result = h.won
+            ? html`<span class="win">WIN</span>`
+            : h.terminal_kind === "EXHAUSTIVE_DRAW"
+              ? html`<span class="loss">draw</span>`
+              : html`<span class="loss">loss</span>`;
+          return html`<tr>
+            <td>${_relTime(h.started_at_ms)}</td>
+            <td>${result}</td>
+            <td class=${h.score_delta > 0 ? "win" : "loss"}>${_signed(h.score_delta)}</td>
+            <td>${h.fan_total ?? "—"}</td>
+          </tr>`;
+        })}
+      </table>
+    `;
+  }
+
+  _back() {
+    this.dispatchEvent(new CustomEvent("profile-back", { bubbles: true, composed: true }));
+  }
+}
+
+customElements.define("profile-page", ProfilePage);
+
 // --- <mahjong-app> ------------------------------------------------------
 
 const THEME_STORAGE_KEY = "mahjong-theme";
@@ -1447,7 +1727,7 @@ class MahjongApp extends LitElement {
     _authError: { state: true },    // null | error string shown under the form
     _authMode: { state: true },     // "login" | "register" (invite-gated signup)
     // Lobby vs. in-game view.
-    _view: { state: true },         // "lobby" | "table"
+    _view: { state: true },         // "lobby" | "table" | "profile"
     _lobbyTables: { state: true },  // array of TABLE_LIST.tables entries
     _lobbyHumans: { state: true },  // current composition pick (1..4)
     _lobbyError: { state: true },   // null | error string above the table list
@@ -1591,6 +1871,10 @@ class MahjongApp extends LitElement {
     this._availableBots = [];
     this._lobbyAutoRefresh = null;              // setInterval id while in lobby view
     this._lobbyTargetSeat = null;               // seat we're attempting to join (debug/diagnostic)
+    // Settings + profile (Spec 28).
+    this._settingsOpen = false;
+    this._profile = null;
+    this._serverFeatures = [];
   }
 
   connectedCallback() {
@@ -1613,8 +1897,22 @@ class MahjongApp extends LitElement {
   }
 
   _handleKeydown(e) {
-    // Alt+T toggles theme; Alt+U toggles tile style. Other Alt-chords belong
-    // to <table-page>; we early-return on those to avoid double-handling.
+    // Esc closes whichever overlay/screen is open (settings first, then profile).
+    if (e.key === "Escape") {
+      if (this._settingsOpen) {
+        e.preventDefault();
+        this._settingsOpen = false;
+        return;
+      }
+      if (this._view === "profile") {
+        e.preventDefault();
+        this._closeProfile();
+        return;
+      }
+    }
+    // Alt+T toggles theme; Alt+U toggles tile style; Alt+, opens settings.
+    // Other Alt-chords belong to <table-page>; we early-return to avoid
+    // double-handling.
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.code === "KeyT") {
       e.preventDefault();
@@ -1622,6 +1920,9 @@ class MahjongApp extends LitElement {
     } else if (e.code === "KeyU") {
       e.preventDefault();
       this._toggleTileStyle();
+    } else if (e.code === "Comma") {
+      e.preventDefault();
+      this._settingsOpen = !this._settingsOpen;
     }
   }
 
@@ -1641,6 +1942,54 @@ class MahjongApp extends LitElement {
     } catch {
       // ignore — non-fatal.
     }
+  }
+
+  // --- Settings menu (Spec 28 Part A) ------------------------------------
+
+  // Current value per settings.js descriptor key, for the menu to display.
+  _settingsValues() {
+    return {
+      theme: this.theme,
+      "tile-style": this.tileStyle,
+      "pane-chat": this.panes.chat ? "on" : "off",
+      "pane-stats": this.panes.stats ? "on" : "off",
+      "pane-spectator": this.panes.spectator ? "on" : "off",
+    };
+  }
+
+  _onSettingCycle(e) {
+    const key = e.detail?.key;
+    if (key === "theme") {
+      this._toggleTheme();
+    } else if (key === "tile-style") {
+      this._toggleTileStyle();
+    } else if (key === "pane-chat" || key === "pane-stats" || key === "pane-spectator") {
+      // Route through table-page's _togglePane so its `panes` copy and ours
+      // stay in sync via the existing `panes-changed` event (single source).
+      const pane = key.slice("pane-".length);
+      const tablePage = this.renderRoot.querySelector("table-page");
+      if (tablePage && typeof tablePage._togglePane === "function") {
+        tablePage._togglePane(pane);
+      }
+    }
+  }
+
+  // --- Profile home page (Spec 28 Part B) --------------------------------
+
+  _openProfile() {
+    this._profile = null; // loading state until PROFILE arrives
+    this._view = "profile";
+    this._settingsOpen = false;
+    try {
+      this._conn.send({ kind: "GET_PROFILE" });
+    } catch (err) {
+      console.warn("GET_PROFILE send failed:", err);
+    }
+  }
+
+  _closeProfile() {
+    this._profile = null;
+    this._view = "lobby";
   }
 
   firstUpdated() {
@@ -1665,6 +2014,7 @@ class MahjongApp extends LitElement {
           // HELLO.bots is the create-table picker menu; absent on old servers.
           this._availableBots = Array.isArray(frame.bots) ? frame.bots : [];
           const feats = Array.isArray(frame.features) ? frame.features : [];
+          this._serverFeatures = feats;
           if (feats.includes("auth")) {
             this._authRequired = true;
             if (this._sessionToken) {
@@ -1699,6 +2049,13 @@ class MahjongApp extends LitElement {
             this._authState = "error";
             this._authError = "Invalid credentials — please try again.";
           }
+          return;
+        }
+
+        // --- Profile (Spec 28) ---------------------------------------------
+        if (frame.kind === "PROFILE") {
+          this._profile = frame;
+          if (this._view !== "profile") this._view = "profile";
           return;
         }
 
@@ -2082,6 +2439,10 @@ class MahjongApp extends LitElement {
     // Show the auth form when the server requires auth and we haven't authed yet.
     const showAuth = this._authRequired && this._authState !== "authed";
     const showLobby = !showAuth && this._view === "lobby";
+    const showProfile = !showAuth && this._view === "profile";
+    // Profile needs the server to persist history; gate the button on the
+    // advertised feature (older/no-persistence servers omit it).
+    const profileSupported = (this._serverFeatures ?? []).includes("profile");
     return html`
       <header>
         <pre>
@@ -2089,6 +2450,22 @@ class MahjongApp extends LitElement {
  ║   Mahjong / 麻将        — web client                     ║
  ╚══════════════════════════════════════════════════════════╝</pre>
         <div class="controls">
+          ${!showAuth && profileSupported
+            ? html`<button
+                class="theme-btn"
+                @click=${this._openProfile}
+                title="Your profile & stats"
+              >
+                [ profile ]
+              </button>`
+            : ""}
+          <button
+            class="theme-btn"
+            @click=${() => { this._settingsOpen = true; }}
+            title="Settings (Alt+,)"
+          >
+            [ ⚙ ]<span class="hint">Alt+,</span>
+          </button>
           <button
             class="theme-btn"
             @click=${this._toggleTheme}
@@ -2121,11 +2498,25 @@ class MahjongApp extends LitElement {
             ></lobby-view>
           `
         : ""}
+      ${showProfile
+        ? html`<profile-page
+            .profile=${this._profile}
+            @profile-back=${this._closeProfile}
+          ></profile-page>`
+        : ""}
       <table-page
         .panes=${this.panes}
         .tileStyle=${this.tileStyle}
-        ?hidden=${showLobby || showAuth}
+        ?hidden=${showLobby || showAuth || showProfile}
       ></table-page>
+      ${this._settingsOpen
+        ? html`<settings-menu
+            .values=${this._settingsValues()}
+            .tableActive=${this._view === "table"}
+            @setting-cycle=${this._onSettingCycle}
+            @settings-close=${() => { this._settingsOpen = false; }}
+          ></settings-menu>`
+        : ""}
       <feedback-button
         .sessionToken=${this._sessionToken}
         @feedback-submit=${this._onFeedbackSubmit}

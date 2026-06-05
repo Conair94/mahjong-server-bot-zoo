@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from mahjong.persistence.models import HandRow, Participant
+from mahjong.persistence.models import AccountStats, HandRow, Participant, ScorePoint
 
 # ---------------------------------------------------------------------------
 # Write helpers
@@ -244,6 +244,84 @@ def find_in_progress_hands(conn: sqlite3.Connection) -> list[HandRow]:
 
 
 # ---------------------------------------------------------------------------
+# Profile stats  (profile-and-settings.md § B.1, B.2)
+# ---------------------------------------------------------------------------
+
+
+def account_stats(conn: sqlite3.Connection, account_id: int) -> AccountStats:
+    """Aggregate an account's finalized live hands into an AccountStats.
+
+    Counts only finalized (``ended_at_ms`` non-NULL) live-source hands the
+    account participated in.  Win-rate / average-win-size are left to the
+    caller (raw counts + sums only).
+    """
+    row = conn.execute(
+        """
+        SELECT
+          COUNT(*)                                                       AS hands_played,
+          COALESCE(SUM(hp.final_score_delta), 0)                         AS total_score,
+          COALESCE(SUM(hi.winner_seat = hp.seat), 0)                     AS hands_won,
+          COALESCE(SUM(hi.terminal_kind = 'EXHAUSTIVE_DRAW'), 0)         AS draws,
+          COALESCE(SUM(CASE WHEN hi.winner_seat = hp.seat
+                            THEN hp.final_score_delta ELSE 0 END), 0)    AS total_win_points,
+          MAX(CASE WHEN hi.winner_seat = hp.seat THEN hi.fan_total END)  AS best_win_fan,
+          MIN(hi.started_at_ms)                                          AS first_played_ms,
+          MAX(hi.started_at_ms)                                          AS last_played_ms
+        FROM hand_participants hp
+        JOIN hand_index hi ON hi.hand_id = hp.hand_id
+        WHERE hp.account_id = ?
+          AND hi.ended_at_ms IS NOT NULL
+          AND hp.final_score_delta IS NOT NULL
+          AND hi.source = 'live'
+        """,
+        (account_id,),
+    ).fetchone()
+    return AccountStats(
+        account_id=account_id,
+        hands_played=row["hands_played"],
+        hands_won=row["hands_won"],
+        draws=row["draws"],
+        total_score=row["total_score"],
+        total_win_points=row["total_win_points"],
+        best_win_fan=row["best_win_fan"],
+        first_played_ms=row["first_played_ms"],
+        last_played_ms=row["last_played_ms"],
+    )
+
+
+def account_score_series(
+    conn: sqlite3.Connection, account_id: int, *, limit: int = 200
+) -> list[ScorePoint]:
+    """Cumulative score after each of the account's most-recent *limit* hands.
+
+    Returns points oldest→newest.  The running total is relative to the start
+    of the returned window (v1; absolute-lifetime baseline is an open question
+    in the spec).
+    """
+    rows = conn.execute(
+        """
+        SELECT hi.ended_at_ms AS ended_at_ms, hp.final_score_delta AS delta
+        FROM hand_participants hp
+        JOIN hand_index hi ON hi.hand_id = hp.hand_id
+        WHERE hp.account_id = ?
+          AND hi.ended_at_ms IS NOT NULL
+          AND hp.final_score_delta IS NOT NULL
+          AND hi.source = 'live'
+        ORDER BY hi.ended_at_ms DESC
+        LIMIT ?
+        """,
+        (account_id, limit),
+    ).fetchall()
+    # Fetched newest-first for the cap; reverse to oldest-first and accumulate.
+    series: list[ScorePoint] = []
+    running = 0
+    for r in reversed(rows):
+        running += r["delta"]
+        series.append(ScorePoint(ended_at_ms=r["ended_at_ms"], cumulative=running))
+    return series
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -295,6 +373,8 @@ def _row_to_hand(
 
 
 __all__ = [
+    "account_score_series",
+    "account_stats",
     "finalize_hand",
     "find_hands_by_account",
     "find_hands_by_match",

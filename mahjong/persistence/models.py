@@ -89,6 +89,39 @@ class HandRow:
 
 
 # ---------------------------------------------------------------------------
+# Profile stat types  (consumed by profile-and-settings.md § B.1, B.2)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class AccountStats:
+    """Per-account play aggregate over finalized live hands.
+
+    Raw counts/sums only; win-rate and average-win-size are derived by the
+    caller (the wire contract sends these and the client formats the ratios)
+    so there is one source of truth and no float-rounding in the protocol.
+    """
+
+    account_id: int
+    hands_played: int
+    hands_won: int
+    draws: int
+    total_score: int
+    total_win_points: int
+    best_win_fan: int | None
+    first_played_ms: int | None
+    last_played_ms: int | None
+
+
+@dataclasses.dataclass(frozen=True)
+class ScorePoint:
+    """One point on the cumulative point-performance graph."""
+
+    ended_at_ms: int
+    cumulative: int
+
+
+# ---------------------------------------------------------------------------
 # Integrity / rebuild report types
 # ---------------------------------------------------------------------------
 
@@ -131,10 +164,12 @@ class RebuildReport:
 
 __all__ = [
     "Account",
+    "AccountStats",
     "HandRow",
     "IntegrityReport",
     "InviteRow",
     "Participant",
     "RebuildReport",
+    "ScorePoint",
     "SessionRow",
 ]
