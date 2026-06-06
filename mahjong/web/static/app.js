@@ -23,6 +23,7 @@
 import { LitElement, html, css } from "lit";
 import { renderTable, renderPinwheel, renderHandEndSummary, renderScoreGraph } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
+import { audioCues, cueForEvent, cueForPrompt } from "/static/audio.js";
 import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
@@ -1680,6 +1681,8 @@ const THEMES = ["dark", "light"];
 const TILE_STYLE_STORAGE_KEY = "mahjong-tile-style";
 const TILE_STYLES = ["ascii", "unicode"];
 
+const SOUND_STORAGE_KEY = "mahjong-sound"; // "on" | "off" (FB-06)
+
 // Spec 29 Bug A: the session token is persisted so a full page reload restores
 // the session via RESUME instead of bouncing the user back to the login form
 // (which also made the profile page unreachable). localStorage (chosen over
@@ -1722,6 +1725,15 @@ function loadInitialTileStyle() {
     // ignore.
   }
   return "ascii";
+}
+
+// FB-06: sound on by default; persisted as "off" when the user mutes.
+function loadInitialMuted() {
+  try {
+    return localStorage.getItem(SOUND_STORAGE_KEY) === "off";
+  } catch {
+    return false;
+  }
 }
 
 // Read `?humans=N` from the URL, clamped to 1..4.  Default 1 keeps the
@@ -1775,6 +1787,7 @@ class MahjongApp extends LitElement {
     panes: { state: true },
     theme: { state: true },
     tileStyle: { state: true },
+    muted: { state: true },
     // Auth state — driven by HELLO.features and AUTH_RESPONSE.
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
     _authState: { state: true },    // "idle"|"waiting"|"submitting"|"authed"|"error"
@@ -1915,6 +1928,8 @@ class MahjongApp extends LitElement {
     this.panes = { chat: false, stats: false, spectator: false };
     this.theme = loadInitialTheme();
     this.tileStyle = loadInitialTileStyle();
+    this.muted = loadInitialMuted();
+    audioCues.setMuted(this.muted);
     this._conn = null;
     this._onKeydown = this._handleKeydown.bind(this);
     // Auth state — see Step 8.5.
@@ -2013,6 +2028,16 @@ class MahjongApp extends LitElement {
     }
   }
 
+  _toggleSound() {
+    this.muted = !this.muted;
+    audioCues.setMuted(this.muted);
+    try {
+      localStorage.setItem(SOUND_STORAGE_KEY, this.muted ? "off" : "on");
+    } catch {
+      // ignore — non-fatal.
+    }
+  }
+
   // --- Settings menu (Spec 28 Part A) ------------------------------------
 
   // Current value per settings.js descriptor key, for the menu to display.
@@ -2023,6 +2048,7 @@ class MahjongApp extends LitElement {
       "pane-chat": this.panes.chat ? "on" : "off",
       "pane-stats": this.panes.stats ? "on" : "off",
       "pane-spectator": this.panes.spectator ? "on" : "off",
+      sound: this.muted ? "off" : "on",
     };
   }
 
@@ -2032,6 +2058,8 @@ class MahjongApp extends LitElement {
       this._toggleTheme();
     } else if (key === "tile-style") {
       this._toggleTileStyle();
+    } else if (key === "sound") {
+      this._toggleSound();
     } else if (key === "pane-chat" || key === "pane-stats" || key === "pane-spectator") {
       // Route through table-page's _togglePane so its `panes` copy and ours
       // stay in sync via the existing `panes-changed` event (single source).
@@ -2217,6 +2245,7 @@ class MahjongApp extends LitElement {
           // ASCII layout stays current without a fresh snapshot per turn.
           const next = applyEvent(pane.seatView, frame.event, pane.ownSeat);
           pane.setSnapshot(next, pane.ownSeat);
+          audioCues.play(cueForEvent(frame.event, pane.ownSeat)); // FB-06
           // First EVENT means the hand is actually running; cancel any
           // lobby polling that was still in flight.
           this._handStarted = true;
@@ -2238,6 +2267,7 @@ class MahjongApp extends LitElement {
           pane.setSnapshot(next, pane.ownSeat);
         } else if (frame.kind === "PROMPT") {
           pane.setPrompt(frame);
+          audioCues.play(cueForPrompt(frame)); // FB-06: escalating claim cue
         } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {
           pane.showIllegalBanner(frame.message ?? "Server rejected that action — try again.");
         } else if (frame.kind === "ERROR" && frame.code === "humans_not_ready") {

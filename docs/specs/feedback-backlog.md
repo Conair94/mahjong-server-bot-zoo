@@ -38,7 +38,7 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | triaged | TBD |
 | FB-04 | feat | Per-account game records (replay + stats) | P1 | triaged | TBD |
 | FB-05 | feat | Table management / multi-human join UX | P2 | triaged | TBD |
-| FB-06 | feat | Audio cues + clearer claim-opportunity notifications | P2 | triaged | TBD |
+| FB-06 | feat | Audio cues + clearer claim-opportunity notifications | P2 | implemented | (this doc) |
 | FB-07 | meta | Feedback-tracking system (this backlog + admin console) | P0 (enabler) | implemented | [feedback-tracking.md](feedback-tracking.md) |
 | FB-08 | bug | Profile page unreachable / re-login on refresh | — | implemented | [live-play-bugfixes.md](live-play-bugfixes.md) (Spec 29 Bug A/E) |
 
@@ -231,13 +231,23 @@ who can start the hand) and likely share groundwork with FB-03's seat-hold/rejoi
 - **Priority:** P2 — player-facing polish; client-only.
 - **Status:** triaged.
 
-### Shape
+### Shape (implemented)
 
-Client-only: Web Audio cues on draw + escalating cues for CHI < PENG < GANG < HU claim
-windows, plus a clearer visual prompt when the human has an actionable claim. Respect a mute
-toggle in the existing Settings menu (Spec 28). No server/wire change expected — the claim
-window is already signalled; this is presentation. Keep assets tiny/synth (no large binaries
-in git; cf. [var/-runtime-not-committed] discipline for any generated audio).
+Client-only ([mahjong/web/static/audio.js](../../mahjong/web/static/audio.js)): **synthesized**
+Web Audio tones (no binary assets — build-free client) — a soft blip on the local human's own
+DRAW, and an **escalating** tone on a claim window (CHI < PENG < GANG < HU). Pure cue-selection
+(`cueForEvent` / `cueForPrompt`) + a side-effecting `audioCues.play` that no-ops when muted or
+when Web Audio is blocked (records `lastCue` for tests). Wired into app.js's EVENT/PROMPT
+dispatch; a **Sound on/off** row added to the Settings menu (Spec 28), persisted to
+`localStorage` (`mahjong-sound`). No server/wire change — the claim window is already signalled
+(existing `isClaimAvailable` visual chip stays); this is the audio layer.
+
+### Verification (all green)
+
+- [tests/web/test_audio_cues.py](../../tests/web/test_audio_cues.py): real `<mahjong-app>` over
+  the fake wire — own DRAW → `lastCue == "draw"`; a PENG claim prompt → `"peng"`; muting
+  suppresses the cue. Full fast suite 1078 passed (+ the settings-rows test updated for the new
+  Sound row). **Actual audio is browser-verify-owed** (headless Web Audio needs a user gesture).
 
 ---
 
