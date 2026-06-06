@@ -645,6 +645,22 @@ class TableHandle:
                     hand_index=self._hand_index,
                 )
                 await self._sessions.begin_next_hand()
+        except asyncio.CancelledError:
+            raise  # normal shutdown / drain — never swallow cancellation
+        except Exception:
+            # FB-01: same silent-hang guard as WebOrchestrator._run_hand_loop, on
+            # the *live* multi-table path. An unhandled exception here used to kill
+            # the task silently — clients frozen, no HAND_END, record truncated
+            # mid-hand. Log with full context, then tear the table down gracefully.
+            _logger.exception(
+                "hand_loop_crashed table=%s hand_id=%s seed=%s hand_index=%s",
+                self._table_id,
+                self._hand_id_for_hand(self._hand_index),
+                self._seed + self._hand_index,
+                self._hand_index,
+            )
+            with contextlib.suppress(Exception):
+                await self._sessions.shutdown(reason="hand_aborted")
         finally:
             self._match_done.set()
 
