@@ -133,11 +133,35 @@ class ControlPlane:
             if self._feedback is None:
                 return {"kind": "FEEDBACK_LIST", "reports": []}
             return {"kind": "FEEDBACK_LIST", "reports": await self._feedback.list_reports()}
+        if kind == "FEEDBACK_UPDATE":
+            return await self._handle_feedback_update(msg)
         return {
             "kind": "ERROR",
             "code": "unknown_command",
             "message": f"unknown command: {kind!r}",
         }
+
+    async def _handle_feedback_update(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Set a report's triage status (Spec 30 § 30.4), reply with the refreshed list.
+
+        Validation lives in FeedbackInbox/FeedbackStatusStore; a bad frame becomes an
+        ERROR reply, never an exception that would drop the admin socket."""
+        if self._feedback is None:
+            return {"kind": "ERROR", "code": "feedback_error", "message": "feedback unavailable"}
+        backlog_id = msg.get("backlog_id")
+        note = msg.get("note")
+        try:
+            reports = await self._feedback.update_status(
+                str(msg.get("filename", "")),
+                str(msg.get("status", "")),
+                backlog_id=str(backlog_id) if backlog_id else None,
+                note=str(note) if note is not None else None,
+            )
+        except KeyError:
+            return {"kind": "ERROR", "code": "feedback_error", "message": "unknown report"}
+        except ValueError as exc:
+            return {"kind": "ERROR", "code": "feedback_error", "message": str(exc)}
+        return {"kind": "FEEDBACK_LIST", "reports": reports}
 
     async def _handle_data_command(
         self, kind: str, msg: dict[str, Any]

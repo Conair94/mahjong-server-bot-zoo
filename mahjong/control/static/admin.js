@@ -6,6 +6,10 @@ import { LitElement, html } from "lit";
 // Reserved tabs that render a "coming soon" stub pane but are still selectable.
 const FUTURE_TABS = [];
 
+// Feedback triage status vocabulary (Spec 30 § 30.1), kept in sync with the server's
+// VALID_STATUSES and feedback-backlog.md.
+const STATUS_VALUES = ["open", "triaged", "in-progress", "implemented", "verified", "wontfix", "duplicate"];
+
 class AdminApp extends LitElement {
   createRenderRoot() { return this; }
 
@@ -188,10 +192,34 @@ class AdminApp extends LitElement {
               <span class="tag ${r.type}">${r.type || "?"}</span>
               <b>${r.submitter || "anonymous"}</b>
               <span style="color:var(--muted)">${r.submitted || ""}</span>
+              <span class="tag status-${r.status || "open"}">${r.status || "open"}</span>
             </div>
             <pre class="report-body">${r.text || ""}</pre>
+            <div class="report-status" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">
+              <select class="fb-status">
+                ${STATUS_VALUES.map((v) => html`<option value=${v} ?selected=${(r.status || "open") === v}>${v}</option>`)}
+              </select>
+              <input class="fb-backlog" placeholder="FB-NN" size="6" .value=${r.backlog_id || ""} />
+              <input class="fb-note" placeholder="note (optional)" .value=${r.note || ""} />
+              <button @click=${(e) => this._saveStatus(r.filename, e)}>Save</button>
+              ${r.updated ? html`<span style="color:var(--muted)">updated ${r.updated}</span>` : ""}
+            </div>
           </div>`)}</div>`}
     </div>`;
+  }
+
+  _saveStatus(filename, e) {
+    // Read the row's controls and send one FEEDBACK_UPDATE. Disable Save in-flight
+    // (idempotency lesson from Spec 29 Bug E); the FEEDBACK_LIST reply re-renders the
+    // pane (recreating the button), and the timeout re-enables if no reply arrives.
+    const row = e.target.closest(".report");
+    if (!row || e.target.disabled) return;
+    e.target.disabled = true;
+    const status = row.querySelector(".fb-status").value;
+    const backlog_id = row.querySelector(".fb-backlog").value.trim();
+    const note = row.querySelector(".fb-note").value;
+    this._sendMsg({ kind: "FEEDBACK_UPDATE", filename, status, backlog_id, note });
+    setTimeout(() => { e.target.disabled = false; }, 800);
   }
 
   _healthPane() {
