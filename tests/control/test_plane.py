@@ -175,6 +175,74 @@ async def test_feedback_list_without_inbox_replies_empty() -> None:
     assert reply == {"kind": "FEEDBACK_LIST", "reports": []}
 
 
+def _plane_with_report(tmp_path) -> ControlPlane:
+    """Real FeedbackInbox over a tmp reports dir with one report — exercises the
+    full validate→write→merge path (Spec 30 § 30.4), not a fake."""
+    from mahjong.control.feedback import FeedbackInbox
+
+    reports = tmp_path / "reports"
+    reports.mkdir(parents=True)
+    (reports / "20260606_000643_bug.txt").write_text(
+        "type: bug\nsubmitted: 2026-06-06T00:06:43+00:00\nsubmitter: ConnorL\n---\na bug",
+        encoding="utf-8",
+    )
+    return ControlPlane(
+        supervisor=_FakeSupervisor(ServerState.STOPPED),  # type: ignore[arg-type]
+        metrics=_FakeMetrics(None),  # type: ignore[arg-type]
+        admin_status_fetch=_async_none,
+        server_listen_url="ws://0.0.0.0:8400",
+        feedback=FeedbackInbox(reports),
+    )
+
+
+async def test_feedback_update_sets_status_and_returns_list(tmp_path) -> None:
+    plane = _plane_with_report(tmp_path)
+    reply = await plane.handle_command(
+        {
+            "kind": "FEEDBACK_UPDATE",
+            "filename": "20260606_000643_bug.txt",
+            "status": "implemented",
+            "backlog_id": "FB-01",
+            "note": "fixed the hang",
+        }
+    )
+    assert reply["kind"] == "FEEDBACK_LIST"
+    row = next(r for r in reply["reports"] if r["filename"] == "20260606_000643_bug.txt")
+    assert row["status"] == "implemented"
+    assert row["backlog_id"] == "FB-01"
+    assert row["note"] == "fixed the hang"
+
+
+async def test_feedback_update_bad_status_errors(tmp_path) -> None:
+    plane = _plane_with_report(tmp_path)
+    reply = await plane.handle_command(
+        {"kind": "FEEDBACK_UPDATE", "filename": "20260606_000643_bug.txt", "status": "banana"}
+    )
+    assert reply["kind"] == "ERROR"
+    assert reply["code"] == "feedback_error"
+    # the rejected update left the report at the default open
+    listed = await plane.handle_command({"kind": "FEEDBACK_LIST"})
+    assert listed["reports"][0]["status"] == "open"
+
+
+async def test_feedback_update_unknown_filename_errors(tmp_path) -> None:
+    plane = _plane_with_report(tmp_path)
+    reply = await plane.handle_command(
+        {"kind": "FEEDBACK_UPDATE", "filename": "nope.txt", "status": "triaged"}
+    )
+    assert reply["kind"] == "ERROR"
+    assert reply["code"] == "feedback_error"
+
+
+async def test_feedback_update_without_inbox_errors() -> None:
+    plane = _plane(supervisor=_FakeSupervisor(ServerState.STOPPED))
+    reply = await plane.handle_command(
+        {"kind": "FEEDBACK_UPDATE", "filename": "a.txt", "status": "open"}
+    )
+    assert reply["kind"] == "ERROR"
+    assert reply["code"] == "feedback_error"
+
+
 async def _async_none() -> dict | None:
     return None
 

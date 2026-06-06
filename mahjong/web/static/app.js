@@ -23,6 +23,7 @@
 import { LitElement, html, css } from "lit";
 import { renderTable, renderPinwheel, renderHandEndSummary, renderScoreGraph } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
+import { audioCues, cueForEvent, cueForPrompt } from "/static/audio.js";
 import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
@@ -162,6 +163,7 @@ class GamePane extends LitElement {
     currentPrompt: { state: true },
     selectedTile: { state: true },
     illegalBanner: { state: true },
+    readySent: { state: true },
   };
 
   static styles = [
@@ -464,6 +466,7 @@ class GamePane extends LitElement {
     this.selectedTile = null;
     this.illegalBanner = null;
     this._illegalBannerTimer = null;
+    this.readySent = false; // FB-02: has the local human acked this HAND_END?
   }
 
   pushFrame(msg) {
@@ -475,8 +478,20 @@ class GamePane extends LitElement {
   }
 
   setSnapshot(seatView, ownSeat) {
+    // FB-02: a snapshot without a terminal means a fresh hand started — re-arm
+    // the ready button for the next HAND_END.
+    if (!seatView?.terminal) this.readySent = false;
     this.seatView = seatView;
     this.ownSeat = ownSeat;
+  }
+
+  _submitReady() {
+    // FB-02: ack the HAND_END summary so the server starts the next hand.
+    if (this.readySent) return;
+    this.readySent = true;
+    this.dispatchEvent(
+      new CustomEvent("ready-submitted", { bubbles: true, composed: true, detail: {} }),
+    );
   }
 
   setPrompt(prompt) {
@@ -609,6 +624,22 @@ class GamePane extends LitElement {
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
 
         ${handEndSummary ?? ""}
+        ${this.seatView?.terminal
+          ? this.readySent
+            ? html`<div
+                class="ready-waiting"
+                style="margin-top:0.5rem;color:var(--fg-dim)"
+              >
+                Waiting for the next hand…
+              </div>`
+            : html`<button
+                class="ready-btn"
+                style="margin-top:0.5rem;font-family:inherit;cursor:pointer;color:var(--accent);background:transparent;border:1px solid var(--accent);padding:0.25rem 0.75rem"
+                @click=${() => this._submitReady()}
+              >
+                Ready ▶ Next hand
+              </button>`
+          : ""}
 
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
@@ -1650,6 +1681,8 @@ const THEMES = ["dark", "light"];
 const TILE_STYLE_STORAGE_KEY = "mahjong-tile-style";
 const TILE_STYLES = ["ascii", "unicode"];
 
+const SOUND_STORAGE_KEY = "mahjong-sound"; // "on" | "off" (FB-06)
+
 // Spec 29 Bug A: the session token is persisted so a full page reload restores
 // the session via RESUME instead of bouncing the user back to the login form
 // (which also made the profile page unreachable). localStorage (chosen over
@@ -1692,6 +1725,15 @@ function loadInitialTileStyle() {
     // ignore.
   }
   return "ascii";
+}
+
+// FB-06: sound on by default; persisted as "off" when the user mutes.
+function loadInitialMuted() {
+  try {
+    return localStorage.getItem(SOUND_STORAGE_KEY) === "off";
+  } catch {
+    return false;
+  }
 }
 
 // Read `?humans=N` from the URL, clamped to 1..4.  Default 1 keeps the
@@ -1745,6 +1787,7 @@ class MahjongApp extends LitElement {
     panes: { state: true },
     theme: { state: true },
     tileStyle: { state: true },
+    muted: { state: true },
     // Auth state — driven by HELLO.features and AUTH_RESPONSE.
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
     _authState: { state: true },    // "idle"|"waiting"|"submitting"|"authed"|"error"
@@ -1885,6 +1928,8 @@ class MahjongApp extends LitElement {
     this.panes = { chat: false, stats: false, spectator: false };
     this.theme = loadInitialTheme();
     this.tileStyle = loadInitialTileStyle();
+    this.muted = loadInitialMuted();
+    audioCues.setMuted(this.muted);
     this._conn = null;
     this._onKeydown = this._handleKeydown.bind(this);
     // Auth state — see Step 8.5.
@@ -1983,6 +2028,16 @@ class MahjongApp extends LitElement {
     }
   }
 
+  _toggleSound() {
+    this.muted = !this.muted;
+    audioCues.setMuted(this.muted);
+    try {
+      localStorage.setItem(SOUND_STORAGE_KEY, this.muted ? "off" : "on");
+    } catch {
+      // ignore — non-fatal.
+    }
+  }
+
   // --- Settings menu (Spec 28 Part A) ------------------------------------
 
   // Current value per settings.js descriptor key, for the menu to display.
@@ -1993,6 +2048,7 @@ class MahjongApp extends LitElement {
       "pane-chat": this.panes.chat ? "on" : "off",
       "pane-stats": this.panes.stats ? "on" : "off",
       "pane-spectator": this.panes.spectator ? "on" : "off",
+      sound: this.muted ? "off" : "on",
     };
   }
 
@@ -2002,6 +2058,8 @@ class MahjongApp extends LitElement {
       this._toggleTheme();
     } else if (key === "tile-style") {
       this._toggleTileStyle();
+    } else if (key === "sound") {
+      this._toggleSound();
     } else if (key === "pane-chat" || key === "pane-stats" || key === "pane-spectator") {
       // Route through table-page's _togglePane so its `panes` copy and ours
       // stay in sync via the existing `panes-changed` event (single source).
@@ -2187,6 +2245,7 @@ class MahjongApp extends LitElement {
           // ASCII layout stays current without a fresh snapshot per turn.
           const next = applyEvent(pane.seatView, frame.event, pane.ownSeat);
           pane.setSnapshot(next, pane.ownSeat);
+          audioCues.play(cueForEvent(frame.event, pane.ownSeat)); // FB-06
           // First EVENT means the hand is actually running; cancel any
           // lobby polling that was still in flight.
           this._handStarted = true;
@@ -2208,6 +2267,7 @@ class MahjongApp extends LitElement {
           pane.setSnapshot(next, pane.ownSeat);
         } else if (frame.kind === "PROMPT") {
           pane.setPrompt(frame);
+          audioCues.play(cueForPrompt(frame)); // FB-06: escalating claim cue
         } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {
           pane.showIllegalBanner(frame.message ?? "Server rejected that action — try again.");
         } else if (frame.kind === "ERROR" && frame.code === "humans_not_ready") {
@@ -2243,6 +2303,14 @@ class MahjongApp extends LitElement {
           this._conn.send({ kind: "ACTION", ...e.detail });
         } catch (err) {
           console.warn("ACTION send failed:", err);
+        }
+      });
+      pane.addEventListener("ready-submitted", () => {
+        // FB-02: ack the end-of-hand summary so the server advances.
+        try {
+          this._conn.send({ kind: "READY", table_id: this._attachedTableId });
+        } catch (err) {
+          console.warn("READY send failed:", err);
         }
       });
       this._conn.connect();

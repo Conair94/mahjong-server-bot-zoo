@@ -87,3 +87,50 @@ async def test_malformed_file_is_skipped_not_fatal(tmp_path):
     # The well-formed report is still listed; the garbage one is tolerated
     # (either skipped or surfaced with empty fields) without raising.
     assert any(r["filename"] == "20260603_120000_bug.txt" for r in rows)
+
+
+# --- Spec 30: triage-status overlay (status.json sidecar) ---
+
+
+async def test_list_defaults_status_open(tmp_path):
+    reports = tmp_path / "reports"
+    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
+                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="a bug")
+    rows = await FeedbackInbox(reports).list_reports()
+    assert rows[0]["status"] == "open"
+    assert rows[0]["backlog_id"] == ""
+    assert rows[0]["note"] == ""
+
+
+async def test_update_status_then_list_reflects_it(tmp_path):
+    reports = tmp_path / "reports"
+    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
+                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="a bug")
+    inbox = FeedbackInbox(reports)
+
+    returned = await inbox.update_status(
+        "20260603_120000_bug.txt", "triaged", backlog_id="FB-02", note="the end-game gate"
+    )
+    row = next(r for r in returned if r["filename"] == "20260603_120000_bug.txt")
+    assert row["status"] == "triaged"
+    assert row["backlog_id"] == "FB-02"
+    assert row["note"] == "the end-game gate"
+
+    # persisted: a fresh inbox over the same dir still sees it
+    rows = await FeedbackInbox(reports).list_reports()
+    assert next(r for r in rows if r["filename"] == "20260603_120000_bug.txt")["status"] == "triaged"
+
+
+async def test_update_status_unknown_filename_raises(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir(parents=True)
+    with pytest.raises(KeyError):
+        await FeedbackInbox(reports).update_status("does_not_exist.txt", "open")
+
+
+async def test_update_status_rejects_path_separator(tmp_path):
+    reports = tmp_path / "reports"
+    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
+                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="a bug")
+    with pytest.raises(KeyError):
+        await FeedbackInbox(reports).update_status("../evil.txt", "open")

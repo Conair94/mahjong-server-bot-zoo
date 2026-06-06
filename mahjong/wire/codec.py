@@ -48,6 +48,8 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "TABLE_CREATED",
         "CLOSE_TABLE",
         "START_HAND",
+        "READY",
+        "READY_STATE",
         "FEEDBACK",
         "FEEDBACK_ACK",
         "GET_PROFILE",

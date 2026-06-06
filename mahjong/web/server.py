@@ -345,6 +345,26 @@ class WebOrchestrator:
 
                 # Issue DETACH(hand_ended) + ATTACHED(new hand) to all seats.
                 await self._sessions.begin_next_hand()
+        except asyncio.CancelledError:
+            raise  # normal shutdown path — never swallow cancellation
+        except Exception:
+            # FB-01: a hand task that dies on an unhandled exception used to do
+            # so *silently* — clients got no HAND_END and no error, just a frozen
+            # last frame (an indefinite "hang"), and the record truncated mid-hand.
+            # run_hand itself is exception-safe, but the surrounding loop
+            # (next_dealer / begin_next_hand / adapter construction / an
+            # unforeseen run_hand edge) is not. Log with full context so the
+            # failure is post-mortem-able (CLAUDE.md "log enough to post-mortem"),
+            # then tear the table down gracefully so seated clients receive a
+            # DETACH instead of hanging forever.
+            _logger.exception(
+                "hand_loop_crashed hand_id=%s seed=%s hand_index=%s",
+                self._hand_id_for_hand(self._hand_index),
+                self._seed + self._hand_index,
+                self._hand_index,
+            )
+            with contextlib.suppress(Exception):
+                await self._sessions.shutdown(reason="hand_aborted")
         finally:
             self._match_done.set()
 

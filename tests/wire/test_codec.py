@@ -248,6 +248,10 @@ _CLOSE_TABLE: dict[str, Any] = {
 
 _START_HAND: dict[str, Any] = {"kind": "START_HAND", "table_id": 17}
 
+# FB-02: end-game ready-up gate.
+_READY: dict[str, Any] = {"kind": "READY", "table_id": 17}
+_READY_STATE: dict[str, Any] = {"kind": "READY_STATE", "ready": [0, 2], "waiting_on": 1}
+
 _REGISTER: dict[str, Any] = {
     "kind": "REGISTER",
     "username": "alice",
@@ -330,6 +334,8 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("TABLE_CREATED", _TABLE_CREATED),
     ("CLOSE_TABLE", _CLOSE_TABLE),
     ("START_HAND", _START_HAND),
+    ("READY", _READY),
+    ("READY_STATE", _READY_STATE),
     ("FEEDBACK", _FEEDBACK),
     ("FEEDBACK_ACK", _FEEDBACK_ACK),
     ("GET_PROFILE", _GET_PROFILE),

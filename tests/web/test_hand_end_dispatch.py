@@ -159,3 +159,30 @@ async def test_hand_end_draw_frame_renders_summary(
     await expect(gp.locator(".he-headline")).to_contain_text("Exhausted draw")
     # The per-seat point swing still renders (all zero), and there's no winner row.
     await expect(gp.locator(".he-score-row.he-winner")).to_have_count(0)
+
+
+async def test_ready_button_sends_ready_and_shows_waiting(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """FB-02: at HAND_END the human gets a 'Ready ▶ Next hand' button; clicking it
+    sends a READY frame and swaps to a 'waiting' indicator (the end-game ready-up
+    gate's client half — exercised over the real wire, not pre-set view state)."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_hand_end_hu())
+
+    gp = page.locator("game-pane")
+    ready_btn = gp.locator("button.ready-btn")
+    await expect(ready_btn).to_be_visible(timeout=5000)
+
+    await ready_btn.click()
+
+    # The client emits exactly a READY frame...
+    ready = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "READY")
+    assert ready["kind"] == "READY"
+
+    # ...and the button is replaced by the waiting indicator (no double-submit).
+    await expect(gp.locator(".ready-waiting")).to_be_visible()
+    await expect(ready_btn).to_have_count(0)

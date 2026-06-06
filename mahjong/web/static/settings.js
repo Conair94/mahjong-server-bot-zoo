@@ -15,6 +15,7 @@
 export const SETTINGS = [
   { key: "theme", label: "Theme", values: ["dark", "light"], hotkey: "Alt+T", scope: "global" },
   { key: "tile-style", label: "Tiles", values: ["ascii", "unicode"], hotkey: "Alt+U", scope: "global" },
+  { key: "sound", label: "Sound", values: ["on", "off"], hotkey: "", scope: "global" },
   { key: "pane-chat", label: "Chat pane", values: ["off", "on"], hotkey: "Alt+C", scope: "table" },
   { key: "pane-stats", label: "Stats pane", values: ["off", "on"], hotkey: "Alt+S", scope: "table" },
   { key: "pane-spectator", label: "Spectator pane", values: ["off", "on"], hotkey: "Alt+W", scope: "table" },

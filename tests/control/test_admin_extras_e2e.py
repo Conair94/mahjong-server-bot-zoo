@@ -95,6 +95,48 @@ async def test_feedback_list_round_trip(tmp_path: Any) -> None:
             assert row["text"] == "tiles overlap"
 
 
+async def test_feedback_update_round_trip(tmp_path: Any) -> None:
+    """FEEDBACK_UPDATE over the real admin socket persists status (Spec 30 § 30.4)."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "20260606_000643_bug.txt").write_text(
+        "type: bug\nsubmitted: 2026-06-06T00:06:43+00:00\nsubmitter: ConnorL\n---\nthe hang",
+        encoding="utf-8",
+    )
+    plane = ControlPlane(
+        supervisor=_FakeSupervisor(),  # type: ignore[arg-type]
+        metrics=_FakeMetrics(),  # type: ignore[arg-type]
+        admin_status_fetch=_fetch_none,
+        server_listen_url="ws://0.0.0.0:8400",
+        feedback=FeedbackInbox(reports),
+    )
+    async with _running(plane) as server:
+        url = f"ws://127.0.0.1:{server.port}/"
+        async with websockets.connect(url, subprotocols=[SUBPROTOCOL]) as ws:
+            await _recv(ws)  # initial STATUS
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "FEEDBACK_UPDATE",
+                        "filename": "20260606_000643_bug.txt",
+                        "status": "triaged",
+                        "backlog_id": "FB-01",
+                        "note": "repro first",
+                    }
+                )
+            )
+            reply = await _recv(ws)
+            assert reply["kind"] == "FEEDBACK_LIST"
+            row = reply["reports"][0]
+            assert row["status"] == "triaged"
+            assert row["backlog_id"] == "FB-01"
+            assert row["note"] == "repro first"
+
+    # The sidecar persisted to disk (a fresh inbox sees it).
+    persisted = await FeedbackInbox(reports).list_reports()
+    assert persisted[0]["status"] == "triaged"
+
+
 async def test_tunnel_start_missing_binary_reports_error_over_ws() -> None:
     tunnel = TunnelSupervisor(argv=["definitely-not-a-real-binary-xyz", "tunnel"])
     plane = ControlPlane(
