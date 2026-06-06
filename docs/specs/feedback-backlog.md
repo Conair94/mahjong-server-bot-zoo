@@ -33,7 +33,7 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 
 | ID | Type | Title | Priority | Status | Target spec |
 | --- | --- | --- | --- | --- | --- |
-| FB-01 | bug | Concealed-gang hang / concealed tiles not displayed | **P0** (game-breaking) | triaged | TBD (Spec 31?) |
+| FB-01 | bug | Concealed-gang hang / concealed tiles not displayed | **P0** (game-breaking) | implemented | (this doc — robustness guard) |
 | FB-02 | bug+feat | End-of-game summary too brief — needs ready-up / acknowledge gate | **P0** (user "urgent") | triaged | TBD |
 | FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | triaged | TBD |
 | FB-04 | feat | Per-account game records (replay + stats) | P1 | triaged | TBD |
@@ -71,13 +71,53 @@ This is the [test-the-wire→UI-seam] failure mode: Spec 29's `test_concealed_ko
 pins the **projection** (server) but may not exercise the **live frame dispatch** of an
 opponent's `GANG_CONCEALED` through the real client reducer.
 
-### Verification (reproduce-first — no blind fix)
+### Investigation outcome (2026-06-05) — the hypothesis was WRONG; real cause is a silent hand-task crash
 
-- Drive a seeded game where a bot declares a concealed kong; assert the client reducer +
-  renderer produce four face-down tiles and the turn advances (fails on current `main` if
-  the hypothesis holds).
-- If confirmed: handle the `hidden`/no-`tiles` meld in `apply_event.js` + `render.js`
-  without throwing; add a wire→UI dispatch test for the opponent concealed-gang frame.
+Reproduced from the recorded game `~/.local/share/mahjong-server/records/t1/hand_0000.jsonl`
+(timestamp `00:04:19Z`, immediately before the report): seat 2 (a bot) draws W1 → declares a
+**concealed GANG of W1** (seq 77) → replacement draw → discards T3 (seq 79) → the record
+**dead-stops** with no claim window, no further turn, and **no `HAND_END`**. Classic frozen table.
+
+Ruled out, by direct probing, every part of the leading hypothesis and more:
+
+- `project_event` replayed over all 80 events for every seat → **no throw**.
+- `project` (full SeatView) on the post-kong state for every seat → **no throw** (the masked
+  `hidden`-meld is opponent-only; the owner sees its own kong).
+- `apply_event.js` `applySelfGang` handles the redacted/opponent kong (count-based removal,
+  `hidden:true` meld); `render.js` `renderMelds` is null-safe (`m.tiles ?? []`, explicit
+  `m.hidden` → four face-down). **Client doesn't crash.**
+- Engine `legal_actions` + `apply_action` stepped 6+ turns forward from the post-kong state →
+  **clean**. `diff_to_events` on the continuation (incl. a later claim window) → **clean**.
+- `run_hand` is internally exception-proof: every decision goes through `_decide_or_default`
+  (catches timeout **and** any adapter exception → default), and `_fanout_observe` bounds
+  each observe with `wait_for` + swallows. It **cannot** hang or die uncaught.
+
+**Real root cause:** `WebOrchestrator._run_hand_loop` ran the hand in a background task wrapped
+in `try: … finally: _match_done.set()` with **no `except`**. Any unhandled exception in the
+loop *surrounding* `run_hand` (`next_dealer`, `begin_next_hand`, adapter construction, or an
+unforeseen `run_hand` edge) killed the task **silently** — clients got no `HAND_END`, no error,
+just a frozen frame, and the record truncated mid-hand. The precise original trigger isn't
+deterministically reproducible from the replay (the game logic is sound), but this gap is the
+mechanism by which *any* such failure becomes an indefinite "hang."
+
+### Fix (implemented)
+
+Guard the loop ([mahjong/web/server.py](../../mahjong/web/server.py) `_run_hand_loop`):
+re-raise `CancelledError` (normal shutdown), but on any other exception **log with full
+context** (`hand_id`/`seed`/`hand_index` + traceback — so the next occurrence is
+post-mortem-able, per CLAUDE.md) and **`sessions.shutdown(reason="hand_aborted")`** so seated
+clients receive a graceful `DETACH` instead of freezing.
+
+**Verification:** [tests/web/test_hand_loop_crash_guard.py](../../tests/web/test_hand_loop_crash_guard.py)
+— a `run_hand` patched to raise: the loop tears down (`shutdown("hand_aborted")`) and completes
+rather than propagating. Reproduce-first confirmed: **fails without the guard** (RuntimeError
+escapes), passes with it.
+
+**Honest caveat:** this converts the *silent hang* into a logged, visible failure and a clean
+client teardown — it does **not** pin the exact original trigger (the offline logic is clean).
+If FB-01 recurs, the new log line will carry the actual stack trace to fix the trigger directly.
+The "concealed tiles not displayed" half is likely the *correct* new Bug-D face-down masking
+(opponent kongs are private now) being read as a regression — not a defect.
 
 ---
 
