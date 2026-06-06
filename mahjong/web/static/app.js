@@ -162,6 +162,7 @@ class GamePane extends LitElement {
     currentPrompt: { state: true },
     selectedTile: { state: true },
     illegalBanner: { state: true },
+    readySent: { state: true },
   };
 
   static styles = [
@@ -464,6 +465,7 @@ class GamePane extends LitElement {
     this.selectedTile = null;
     this.illegalBanner = null;
     this._illegalBannerTimer = null;
+    this.readySent = false; // FB-02: has the local human acked this HAND_END?
   }
 
   pushFrame(msg) {
@@ -475,8 +477,20 @@ class GamePane extends LitElement {
   }
 
   setSnapshot(seatView, ownSeat) {
+    // FB-02: a snapshot without a terminal means a fresh hand started — re-arm
+    // the ready button for the next HAND_END.
+    if (!seatView?.terminal) this.readySent = false;
     this.seatView = seatView;
     this.ownSeat = ownSeat;
+  }
+
+  _submitReady() {
+    // FB-02: ack the HAND_END summary so the server starts the next hand.
+    if (this.readySent) return;
+    this.readySent = true;
+    this.dispatchEvent(
+      new CustomEvent("ready-submitted", { bubbles: true, composed: true, detail: {} }),
+    );
   }
 
   setPrompt(prompt) {
@@ -609,6 +623,22 @@ class GamePane extends LitElement {
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
 
         ${handEndSummary ?? ""}
+        ${this.seatView?.terminal
+          ? this.readySent
+            ? html`<div
+                class="ready-waiting"
+                style="margin-top:0.5rem;color:var(--fg-dim)"
+              >
+                Waiting for the next hand…
+              </div>`
+            : html`<button
+                class="ready-btn"
+                style="margin-top:0.5rem;font-family:inherit;cursor:pointer;color:var(--accent);background:transparent;border:1px solid var(--accent);padding:0.25rem 0.75rem"
+                @click=${() => this._submitReady()}
+              >
+                Ready ▶ Next hand
+              </button>`
+          : ""}
 
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
@@ -2243,6 +2273,14 @@ class MahjongApp extends LitElement {
           this._conn.send({ kind: "ACTION", ...e.detail });
         } catch (err) {
           console.warn("ACTION send failed:", err);
+        }
+      });
+      pane.addEventListener("ready-submitted", () => {
+        // FB-02: ack the end-of-hand summary so the server advances.
+        try {
+          this._conn.send({ kind: "READY", table_id: this._attachedTableId });
+        } catch (err) {
+          console.warn("READY send failed:", err);
         }
       });
       this._conn.connect();

@@ -34,7 +34,7 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | ID | Type | Title | Priority | Status | Target spec |
 | --- | --- | --- | --- | --- | --- |
 | FB-01 | bug | Concealed-gang hang / concealed tiles not displayed | **P0** (game-breaking) | implemented | (this doc — robustness guard) |
-| FB-02 | bug+feat | End-of-game summary too brief — needs ready-up / acknowledge gate | **P0** (user "urgent") | triaged | TBD |
+| FB-02 | bug+feat | End-of-game summary too brief — needs ready-up / acknowledge gate | **P0** (user "urgent") | implemented | (this doc) |
 | FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | triaged | TBD |
 | FB-04 | feat | Per-account game records (replay + stats) | P1 | triaged | TBD |
 | FB-05 | feat | Table management / multi-human join UX | P2 | triaged | TBD |
@@ -131,20 +131,40 @@ The "concealed tiles not displayed" half is likely the *correct* new Bug-D face-
   summary *appear*, but it auto-advances too fast (worse on fast bots).
 - **Status:** triaged.
 
-### Shape
+### Shape (implemented)
 
-Spec 29 confirmed the `HAND_END` summary renders correctly. The gap is **flow control**:
-after `HAND_END`, the table should **pause for a human acknowledgement** ("Ready" /
-"Next hand") instead of immediately starting the next hand. Open design points for the
-spec: does the gate apply to solo-vs-bots tables (user plays solo), per-human ready in
-multi-human tables, and a timeout fallback so an idle human can't stall bots forever
-(cf. [human-decide-timeout.md](human-decide-timeout.md)).
+Spec 29 confirmed the `HAND_END` summary renders correctly. The gap was **flow control**:
+the table auto-advanced after a fixed ~2s pause, flashing the summary. Now the live
+between-hand advance (`TableHandle._run_hand_loop`, registry.py) holds the next hand at a
+**ready-up gate** until every **LIVE human** seat sends a `READY` ack, with a
+`ready_timeout_seconds` (default 120s) safety net so a disconnected / walked-away human
+can't stall the table forever. Pure-bot tables aren't gated (no LIVE humans → the gate
+returns immediately, so self-play / bot timing is unchanged).
 
-### Verification
+Design decisions:
 
-- Integration: after a `HAND_END`, the next hand does **not** start until a `READY`
-  (name TBD) frame arrives from each seated human; a timeout path still advances.
-- Browser: summary stays up until "Ready" is clicked.
+- **`READY` wire message** (client → server, game wire — `KNOWN_KINDS` + round-trip).
+  `READY_STATE` (server → client) is reserved in the codec for future multi-human
+  "waiting on N players" feedback; not broadcast yet (the live case is solo).
+- **Only LIVE humans gate.** A human who drops during the gate falls out of the LIVE set,
+  so the remaining humans (or none) advance — reuses the 8.7 `SeatState.LIVE` model.
+- **Brief pause kept** before the gate (preserves drain/`stop_event` behavior); the gate
+  is purely additive on top.
+- **Client:** `<game-pane>` shows a `Ready ▶ Next hand` button at `HAND_END`; click sends
+  `READY` (via a `ready-submitted` CustomEvent → app `_conn.send`) and swaps to
+  "Waiting for the next hand…" (idempotent — no double-submit). `setSnapshot` re-arms the
+  button when a terminal-free snapshot (new hand) arrives.
+
+### Verification (all green)
+
+- Gate unit tests [tests/server/test_ready_gate.py](../../tests/server/test_ready_gate.py):
+  no-live-humans advances immediately; un-readied human times out (waited, didn't flash);
+  a mid-gate READY advances well under the timeout; `_mark_ready` ignores non-human/unknown.
+- Codec round-trip for `READY`/`READY_STATE` ([tests/wire/test_codec.py](../../tests/wire/test_codec.py)).
+- Browser wire→UI [tests/web/test_hand_end_dispatch.py](../../tests/web/test_hand_end_dispatch.py)
+  `test_ready_button_sends_ready_and_shows_waiting`: real `<mahjong-app>` over the fake wire —
+  button appears at HAND_END, click emits exactly one `READY`, button → waiting indicator.
+- Full fast suite 1076 passed.
 
 ---
 
