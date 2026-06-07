@@ -35,9 +35,9 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | --- | --- | --- | --- | --- | --- |
 | FB-01 | bug | Concealed-gang hang / concealed tiles not displayed | **P0** (game-breaking) | implemented | (this doc — robustness guard) |
 | FB-02 | bug+feat | End-of-game summary too brief — needs ready-up / acknowledge gate | **P0** (user "urgent") | implemented | (this doc) |
-| FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | triaged | TBD |
-| FB-04 | feat | Per-account game records (replay + stats) | P1 | triaged | TBD |
-| FB-05 | feat | Table management / multi-human join UX | P2 | triaged | TBD |
+| FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | in-progress (spec) | [reconnect-rejoin.md](reconnect-rejoin.md) (Spec 31) |
+| FB-04 | feat | Per-account game records (replay + stats) | P1 | in-progress (spec) | [account-records-replay.md](account-records-replay.md) (Spec 32) |
+| FB-05 | feat | Table management / multi-human join UX | P2 | in-progress (spec) | [table-management.md](table-management.md) (Spec 33) |
 | FB-06 | feat | Audio cues + clearer claim-opportunity notifications | P2 | implemented | (this doc) |
 | FB-07 | meta | Feedback-tracking system (this backlog + admin console) | P0 (enabler) | implemented | [feedback-tracking.md](feedback-tracking.md) |
 | FB-08 | bug | Profile page unreachable / re-login on refresh | — | implemented | [live-play-bugfixes.md](live-play-bugfixes.md) (Spec 29 Bug A/E) |
@@ -172,18 +172,19 @@ Design decisions:
 
 - **Report(s):** `20260606_001109_bug.txt` (first clause).
   > "There is no way to rejoin a game you were previously connected to."
-- **Priority:** P1 — high value, architecturally significant.
-- **Status:** triaged.
+- **Priority:** P1 — high value.
+- **Status:** in-progress — **specced** in [reconnect-rejoin.md](reconnect-rejoin.md) (Spec 31).
 
-### Shape
+### Shape — FB-03 specced (the reframe)
 
-Spec 29 Bug A persists the session token (`localStorage`) so a **refresh re-authenticates**,
-and `RESUME` ([session-mux.md](session-mux.md)) reattaches a *websocket*. What's missing is
-**rejoining the table/seat** you held when you dropped: seat-hold semantics, replaying the
-hand state to a returning player, and the lobby affordance to get back in. Overlaps
-[late-join-replay.md](late-join-replay.md) (spectator catch-up) and FB-05 (table mgmt).
-Non-trivial: spec must define seat-hold timeout, what a bot does while a human is away, and
-the state-replay frame on rejoin.
+Spec-time grounding flipped the difficulty estimate. The seat-hold state machine
+(`UNBOUND/LIVE/HELD`, ring-buffer replay, takeover/reject) is **already built and tested**
+in `mahjong/sessions/mux.py`, and Spec 29 Bug A already persists the token so refresh
+re-authenticates. What's missing is the *player-facing loop*: surfacing your held seat
+(new `HELLO.seat_holds`), auto/-manual re-`ATTACH` from the lobby, and raising the hold
+window (60→180s) for deliberate return. So FB-03 is **client orchestration + a small
+discovery API**, not a new server subsystem. Full design + 10 verification fixtures in
+Spec 31.
 
 ---
 
@@ -192,16 +193,19 @@ the state-replay frame on rejoin.
 - **Report(s):** `20260606_001109_bug.txt` (second clause).
   > "Also game records should be saved by account for replay and stat purposes."
 - **Priority:** P1.
-- **Status:** triaged.
+- **Status:** in-progress — **specced** in [account-records-replay.md](account-records-replay.md) (Spec 32).
 
-### Shape
+### Shape — FB-04 specced (the reframe)
 
-Records are currently keyed **by table/hand** (`data_dir/records/<table>/hand_NNNN.jsonl`),
-not by account, so there's no "my games" view. Needs: an account↔record index (seat→account
-association persisted with each hand), a query/listing API, and a replay/stats surface in the
-client. Builds on [record-format.md](record-format.md) and the SQLite persistence layer
-([persistence-api.md](persistence-api.md), [sqlite-schema.md](sqlite-schema.md)). Large;
-likely split into (a) the index/association, (b) the list/replay API, (c) the UI.
+Spec-time grounding found the data layer **already complete**: `hand_index` +
+`hand_participants(account_id)` are written live (`registry.py` reserve/finalize), and
+`find_hands_by_account` / `account_stats` / `account_score_series` exist — Spec 28's
+profile already renders stats + a recent-hands list. `records/replay.py` already
+reconstructs a hand from disk. The genuinely missing half is the **replay *viewer***: a
+thin `GET_HISTORY`/`GET_REPLAY` wire API (projecting recorded events for the viewing seat,
+reusing the live renderer) + a `<history-view>`/`<replay-view>` client surface with
+authorization (participant = own seat; admin = public view). Full design + 10 fixtures in
+Spec 32.
 
 ---
 
@@ -211,14 +215,18 @@ likely split into (a) the index/association, (b) the list/replay API, (c) the UI
   > "There is no way for multiple players to manage which table they are joining etc. This
   > connects to the not being able rejoin bug."
 - **Priority:** P2.
-- **Status:** triaged.
+- **Status:** in-progress — **specced** in [table-management.md](table-management.md) (Spec 33).
 
-### Shape
+### Shape — FB-05 specced
 
-The lobby lists tables and supports join (Layer 8 / [multi-human-seats.md](multi-human-seats.md)),
-but the UX for *coordinating* which table multiple humans land on is thin. The user links this
-to FB-03. Spec should clarify the multi-human lobby flow (table visibility, seat selection,
-who can start the hand) and likely share groundwork with FB-03's seat-hold/rejoin.
+Spec-time grounding: the lobby (create/join/`START_HAND`, per-seat occupancy on the wire)
+**already works** for one human + bots. Thin is the multi-human *coordination*: seated
+players' **display names** (only `user_id` ships today), **live lobby refresh** on
+occupancy change (fetch-only today), a clear open-human-seat vs bot-seat join, a readiness
+/ start-authority display, and the held-seat "▶ Rejoin" row (consuming FB-03's
+`HELLO.seat_holds` — the explicit FB-03↔FB-05 seam). So FB-05 is **lobby UX + a push-on-
+change + display-name plumbing**, not new architecture. Full design + 8 fixtures in
+Spec 33.
 
 ---
 
