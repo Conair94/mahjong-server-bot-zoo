@@ -92,6 +92,23 @@ _AUTH_RESPONSE_FAIL: dict[str, Any] = {
     "ok": False,
 }
 
+# AUTH_RESPONSE carrying FB-03 rejoin discovery (reconnect-rejoin.md):
+# seat_holds[] tells a returning client which seats it can re-ATTACH to.
+_AUTH_RESPONSE_OK_SEAT_HOLDS: dict[str, Any] = {
+    "kind": "AUTH_RESPONSE",
+    "seq": 2,
+    "ok": True,
+    "user_id": "u_7",
+    "display_name": "ConnorL",
+    "session_token": "s_8f1c0000",
+    "expires_at_ms": 1748908800000,
+    "seat_holds": [
+        {"table_id": 3, "seat": 1, "state": "HELD", "hand_index": 4,
+         "rejoin_deadline_ms": 1748908800000},
+        {"table_id": 5, "seat": 0, "state": "LIVE", "hand_index": 0},
+    ],
+}
+
 _RESUME: dict[str, Any] = {
     "kind": "RESUME",
     "session_token": "s_8f1c0000",
@@ -313,6 +330,7 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("ERROR_shutting_down", _ERROR_SHUTTING_DOWN),
     ("AUTH_REQUEST", _AUTH_REQUEST),
     ("AUTH_RESPONSE_ok", _AUTH_RESPONSE_OK),
+    ("AUTH_RESPONSE_ok_seat_holds", _AUTH_RESPONSE_OK_SEAT_HOLDS),
     ("AUTH_RESPONSE_fail", _AUTH_RESPONSE_FAIL),
     ("RESUME", _RESUME),
     ("REGISTER", _REGISTER),

@@ -18,7 +18,7 @@ def test_defaults_load_cleanly() -> None:
     # launch directory can never silently swap which SQLite DB is opened.
     assert cfg.data_dir == Path.home() / ".local" / "share" / "mahjong-server"
     assert cfg.data_dir.is_absolute()
-    assert cfg.seat_hold_seconds == 60
+    assert cfg.seat_hold_seconds == 180  # raised from 60 for FB-03 rejoin (reconnect-rejoin.md)
     assert cfg.session_lifetime_hours == 336
     assert cfg.default_ruleset == "mcr-2006"
     assert cfg.log_format == "json"

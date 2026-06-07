@@ -94,20 +94,28 @@ code.)
 
 ## Design
 
-### 1. Discovery — `HELLO` carries your live seat-holds
+### 1. Discovery — `AUTH_RESPONSE` carries your live seat-holds
 
 The server already knows every `(table, seat)` a `user_id` holds (each `SeatSession`
 stores `_user_id` while `LIVE` or `HELD`). On a successful auth handshake, surface it
 directly rather than making the client scan `TABLE_LIST`:
 
-Add a `seat_holds` array to the **`HELLO` (server→client)** response (the post-auth
-welcome frame). Each entry is a seat this authenticated account currently holds:
+> **Implementation note (grounded correction).** The spec originally proposed `HELLO`,
+> but `HELLO` is emitted *before* auth (`orchestrator._send_hello`, line 270) so the
+> account is unknown at that point. The post-auth frame is **`AUTH_RESPONSE { ok:true }`**
+> (sent on both AUTH_REQUEST and RESUME success) — that's where `seat_holds` actually
+> lives. Same idea (piggy-back on the existing post-auth frame), correct frame.
+
+Add a `seat_holds` array to the **`AUTH_RESPONSE { ok:true }` (server→client)** frame
+(sent after AUTH_REQUEST or RESUME succeeds). Each entry is a seat this authenticated
+account currently holds:
 
 ```jsonc
 {
-  "kind": "HELLO",
-  "seq": 1,
-  // ... existing HELLO fields (account, bots, etc.) ...
+  "kind": "AUTH_RESPONSE",
+  "seq": 2,
+  "ok": true,
+  // ... existing fields (user_id, display_name, session_token, expires_at_ms) ...
   "seat_holds": [
     {
       "table_id": 3,
@@ -188,7 +196,7 @@ config, until a real need for two appears):
 
 | Change | File | Note |
 | --- | --- | --- |
-| Add `seat_holds: list` to `HELLO` (server→client) | `wire/codec.py` HELLO model | optional, default `[]`; **needs a `test_codec.py` round-trip** per [wire-codec-known-kinds] |
+| Add `seat_holds: list` to `AUTH_RESPONSE { ok:true }` | `wire/codec.py` `AuthResponseOk` | optional, omitted when empty; **`test_codec.py` round-trip** per [wire-codec-known-kinds] |
 | New read `TableRegistry.seat_holds_for(user_id) -> list[SeatHold]` | `server/registry.py` | iterates tables; pure read |
 | `HELLO` builder populates `seat_holds` | `server/orchestrator.py` auth path | after auth resolves `account_id → user_id` |
 | Client: parse `seat_holds`, auto/-manual rejoin | `web/static/app.js`, `<lobby-view>` | reuses existing `ATTACH` emit |

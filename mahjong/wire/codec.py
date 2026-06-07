@@ -112,6 +112,10 @@ class AuthResponseOk(TypedDict):
     display_name: str
     session_token: str
     expires_at_ms: int
+    # Seats this account currently holds, for FB-03 rejoin discovery
+    # (reconnect-rejoin.md). Each entry: {table_id, seat, state, hand_index,
+    # rejoin_deadline_ms?}. Omitted when the account holds no seats.
+    seat_holds: NotRequired[list[dict[str, Any]]]
 
 
 class AuthResponseFail(TypedDict):

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import enum
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -315,6 +316,11 @@ class SeatSession:
         self._pending: _Pending | None = None
         self._hold_timer: IdempotentTimer = IdempotentTimer()
         self._hold_expiry_task: asyncio.Task[None] | None = None
+        # Wall-clock (Unix epoch ms) deadline of the current hold window, set
+        # on LIVE->HELD and cleared on resume/teardown. Surfaced to clients as
+        # `rejoin_deadline_ms` so the lobby can show how long they have to come
+        # back (reconnect-rejoin.md, FB-03).
+        self._hold_deadline_ms: int | None = None
 
     # --- properties ---
 
@@ -341,6 +347,11 @@ class SeatSession:
     @property
     def has_pending_prompt(self) -> bool:
         return self._pending is not None and not self._pending.future.done()
+
+    @property
+    def hold_deadline_ms(self) -> int | None:
+        """Wall-clock ms when the current hold window expires; None unless HELD."""
+        return self._hold_deadline_ms if self._state is SeatState.HELD else None
 
     # --- attach / detach ---
 
@@ -392,6 +403,7 @@ class SeatSession:
 
     async def _resume(self, new_sink: OutboundSink) -> AttachOutcome:
         self._hold_timer.cancel()
+        self._hold_deadline_ms = None
         self._outbound = _Outbound(sink=new_sink)
         if self._buffer_overflowed:
             self._buffer.clear()
@@ -436,6 +448,7 @@ class SeatSession:
             return
         self._state = SeatState.HELD
         self._outbound = None
+        self._hold_deadline_ms = int(time.time() * 1000) + int(self.hold_seconds * 1000)
         self._hold_timer.arm(self.hold_seconds, self._on_hold_timer_fired)
 
     def _on_hold_timer_fired(self) -> None:
@@ -460,6 +473,7 @@ class SeatSession:
         self._buffer_overflowed = False
         self._pending = None
         self._hold_timer.cancel()
+        self._hold_deadline_ms = None
 
     # --- outbound: observe ---
 
@@ -724,6 +738,7 @@ class SeatSession:
             # Cancel any outstanding hold timer — the new hand's hold window
             # begins fresh when they reconnect.
             self._hold_timer.cancel()
+            self._hold_deadline_ms = None
             # HELD: _user_id is preserved; they will _resume() → ATTACHED.
             # (snapshot_provider already updated by the orchestrator before
             # begin_next_hand is called, so _resume picks up the new state.)

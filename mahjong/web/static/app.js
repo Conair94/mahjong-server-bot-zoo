@@ -742,6 +742,7 @@ const PHASE_LABEL_LOBBY = {
 class LobbyView extends LitElement {
   static properties = {
     tables: { type: Array },
+    seatHolds: { type: Array },          // FB-03 — seats this account can rejoin
     desiredHumans: { type: Number },
     availableBots: { type: Array },      // HELLO.bots — [{bot_id,label,description}]
     botSelections: { state: true },      // per-seat bot_id (length 4; bot seats only)
@@ -771,6 +772,20 @@ class LobbyView extends LitElement {
       color: var(--accent);
       margin: 0.75rem 0 0.4rem;
     }
+    .rejoin-block {
+      border: 1px solid var(--accent);
+      padding: 0.4rem 0.75rem 0.6rem;
+      margin-bottom: 0.75rem;
+    }
+    .rejoin-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin: 0.3rem 0;
+    }
+    .rejoin-label em { color: var(--fg-dim); font-style: normal; }
+    .rejoin-btn { white-space: nowrap; }
     .table-block {
       border: 1px solid var(--border);
       padding: 0.5rem 0.75rem;
@@ -1028,6 +1043,37 @@ class LobbyView extends LitElement {
     this._emit("lobby-refresh", {});
   }
 
+  _onRejoin(hold) {
+    // Emit a rejoin intent; the app turns it into an ATTACH on the held seat.
+    this._emit("lobby-rejoin", { tableId: hold.table_id, seat: hold.seat });
+  }
+
+  // FB-03 — render a prominent "rejoin / take over" block when this account
+  // holds seats it can return to.
+  _renderRejoin() {
+    const holds = Array.isArray(this.seatHolds) ? this.seatHolds : [];
+    if (holds.length === 0) return html``;
+    return html`
+      <div class="rejoin-block">
+        <div class="lobby-section-title">Rejoin a game in progress</div>
+        ${holds.map((h) => {
+          const live = h.state === "LIVE";
+          return html`
+            <div class="rejoin-row">
+              <span class="rejoin-label">
+                Table ${h.table_id} · seat ${h.seat}
+                ${live ? html`<em>(open elsewhere — take over)</em>` : html`<em>(you're away)</em>`}
+              </span>
+              <button class="lobby-btn rejoin-btn" @click=${() => this._onRejoin(h)}>
+                ${live ? "[ ▶ Take over ]" : "[ ▶ Rejoin ]"}
+              </button>
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
   _pickHumans(n) {
     this.desiredHumans = n;
   }
@@ -1173,6 +1219,8 @@ class LobbyView extends LitElement {
     return html`
       <div class="lobby">
         <div class="lobby-title">── Lobby ──</div>
+
+        ${this._renderRejoin()}
 
         <div class="lobby-section-title">Active tables (${tables.length})</div>
         ${tables.length === 0
@@ -1864,6 +1912,12 @@ class MahjongApp extends LitElement {
       text-align: center;
       padding: 0.5rem;
     }
+    .rejoin-notice {
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+      padding: 0.4rem 0.75rem;
+      border: 1px solid var(--accent);
+    }
     .auth-form-row {
       display: flex;
       flex-direction: column;
@@ -1959,6 +2013,11 @@ class MahjongApp extends LitElement {
     this._settingsOpen = false;
     this._profile = null;
     this._serverFeatures = [];
+    // FB-03 rejoin (reconnect-rejoin.md): seats this account holds, learned
+    // from AUTH_RESPONSE.seat_holds[]. A single HELD hold auto-rejoins; more
+    // than one (or a LIVE takeover candidate) renders rows in the lobby.
+    this._seatHolds = [];
+    this._rejoinNotice = null;                  // transient "Reconnected…" toast text
   }
 
   connectedCallback() {
@@ -2144,6 +2203,9 @@ class MahjongApp extends LitElement {
             storeSessionToken(this._sessionToken); // Spec 29 Bug A: survive reload
             this._authState = "authed";
             this._authError = null;
+            // FB-03: seats this account still holds (rejoinable). Captured
+            // before _enterLobby so it can auto-rejoin a lone HELD seat.
+            this._seatHolds = Array.isArray(frame.seat_holds) ? frame.seat_holds : [];
             this._enterLobby();
           } else {
             // Server allows up to 3 attempts on the same connection; keep the
@@ -2403,6 +2465,7 @@ class MahjongApp extends LitElement {
   _enterLobby() {
     this._view = "lobby";
     this._lobbyError = null;
+    this._rejoinNotice = null;
     // Reset any stale attach state — lobby is the "between-tables" view.
     this._attachedTableId = null;
     this._attachedSeat = null;
@@ -2418,10 +2481,40 @@ class MahjongApp extends LitElement {
         if (this._view === "lobby") this._doTableDiscovery();
       }, 2000);
     }
+    // FB-03: if the account holds a seat, either auto-rejoin (unambiguous) or
+    // leave the holds for the lobby to render as "▶ Rejoin" rows.
+    this._maybeAutoRejoin();
+  }
+
+  _maybeAutoRejoin() {
+    const holds = Array.isArray(this._seatHolds) ? this._seatHolds : [];
+    const held = holds.filter((h) => h && h.state === "HELD");
+    // Exactly one hold, and it's HELD → rejoin without asking. Anything
+    // ambiguous (>1 hold, or a LIVE takeover candidate) goes to the lobby
+    // rows so the player chooses.
+    if (holds.length === 1 && held.length === 1) {
+      const h = held[0];
+      this._seatHolds = [];
+      this._rejoinNotice = `Reconnecting to your game (table ${h.table_id})…`;
+      this._lobbyTargetSeat = { tableId: h.table_id, seat: h.seat };
+      this._doAttach(h.table_id, h.seat);
+    }
+  }
+
+  _onLobbyRejoin(e) {
+    // A rejoin row was clicked — it's just an ATTACH to a held seat (the
+    // server routes a same-user ATTACH on a HELD seat to its resume path).
+    const { tableId, seat } = e.detail || {};
+    if (tableId == null || seat == null) return;
+    this._seatHolds = [];
+    this._lobbyError = null;
+    this._lobbyTargetSeat = { tableId, seat };
+    this._doAttach(tableId, seat);
   }
 
   _enterTableView() {
     this._view = "table";
+    this._rejoinNotice = null;  // landed in the game — drop the reconnect toast
     if (this._lobbyAutoRefresh !== null) {
       clearInterval(this._lobbyAutoRefresh);
       this._lobbyAutoRefresh = null;
@@ -2613,11 +2706,16 @@ class MahjongApp extends LitElement {
             ${this._lobbyError
               ? html`<div class="auth-error">${this._lobbyError}</div>`
               : ""}
+            ${this._rejoinNotice
+              ? html`<div class="rejoin-notice">${this._rejoinNotice}</div>`
+              : ""}
             <lobby-view
               .tables=${this._lobbyTables}
+              .seatHolds=${this._seatHolds}
               .desiredHumans=${this._lobbyHumans}
               .availableBots=${this._availableBots}
               @lobby-join=${this._onLobbyJoin.bind(this)}
+              @lobby-rejoin=${this._onLobbyRejoin.bind(this)}
               @lobby-create=${this._onLobbyCreate.bind(this)}
               @lobby-refresh=${this._onLobbyRefresh.bind(this)}
             ></lobby-view>

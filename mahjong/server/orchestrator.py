@@ -443,18 +443,23 @@ class MultiTableOrchestrator:
                     display_name=result.display_name or "",
                     role=role,
                 )
+                # Rejoin discovery (reconnect-rejoin.md, FB-03): tell the client
+                # which seats this account currently holds so it can re-ATTACH
+                # to a HELD seat (or take over a LIVE one) from the lobby.
+                seat_holds = [h.to_wire() for h in self._registry.seat_holds_for(result.user_id)]
+                auth_ok: dict[str, Any] = {
+                    "kind": "AUTH_RESPONSE",
+                    "seq": self._make_seq(),
+                    "ok": True,
+                    "user_id": result.user_id,
+                    "display_name": result.display_name,
+                    "session_token": result.session_token,
+                    "expires_at_ms": result.expires_at_ms,
+                }
+                if seat_holds:
+                    auth_ok["seat_holds"] = seat_holds
                 with contextlib.suppress(Exception):
-                    await conn.send(
-                        {
-                            "kind": "AUTH_RESPONSE",
-                            "seq": self._make_seq(),
-                            "ok": True,
-                            "user_id": result.user_id,
-                            "display_name": result.display_name,
-                            "session_token": result.session_token,
-                            "expires_at_ms": result.expires_at_ms,
-                        }
-                    )
+                    await conn.send(auth_ok)
                 return True
 
             with contextlib.suppress(Exception):
