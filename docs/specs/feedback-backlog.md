@@ -35,9 +35,9 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | --- | --- | --- | --- | --- | --- |
 | FB-01 | bug | Concealed-gang hang / concealed tiles not displayed | **P0** (game-breaking) | implemented | (this doc — robustness guard) |
 | FB-02 | bug+feat | End-of-game summary too brief — needs ready-up / acknowledge gate | **P0** (user "urgent") | implemented | (this doc) |
-| FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | in-progress (spec) | [reconnect-rejoin.md](reconnect-rejoin.md) (Spec 31) |
-| FB-04 | feat | Per-account game records (replay + stats) | P1 | in-progress (spec) | [account-records-replay.md](account-records-replay.md) (Spec 32) |
-| FB-05 | feat | Table management / multi-human join UX | P2 | in-progress (spec) | [table-management.md](table-management.md) (Spec 33) |
+| FB-03 | feat | Reconnect / rejoin an in-progress game | P1 | implemented | [reconnect-rejoin.md](reconnect-rejoin.md) (Spec 31) |
+| FB-04 | feat | Per-account game records (replay + stats) | P1 | implemented | [account-records-replay.md](account-records-replay.md) (Spec 32) |
+| FB-05 | feat | Table management / multi-human join UX | P2 | implemented | [table-management.md](table-management.md) (Spec 33) |
 | FB-06 | feat | Audio cues + clearer claim-opportunity notifications | P2 | implemented | (this doc) |
 | FB-07 | meta | Feedback-tracking system (this backlog + admin console) | P0 (enabler) | implemented | [feedback-tracking.md](feedback-tracking.md) |
 | FB-08 | bug | Profile page unreachable / re-login on refresh | — | implemented | [live-play-bugfixes.md](live-play-bugfixes.md) (Spec 29 Bug A/E) |
@@ -186,6 +186,12 @@ window (60→180s) for deliberate return. So FB-03 is **client orchestration + a
 discovery API**, not a new server subsystem. Full design + 10 verification fixtures in
 Spec 31.
 
+**Implemented 2026-06-07.** Grounding moved the discovery field from `HELLO` (pre-auth,
+account unknown) to `AUTH_RESPONSE { ok:true }`. Shipped: `SeatSession.hold_deadline_ms`,
+`TableRegistry.seat_holds_for`, `AUTH_RESPONSE.seat_holds[]`, hold default 60→180,
+client auto/-manual rejoin. Tests green (registry discovery, codec round-trip, lobby
+rejoin rows).
+
 ---
 
 ## FB-04 — Per-account game records (replay + stats)
@@ -207,6 +213,14 @@ reusing the live renderer) + a `<history-view>`/`<replay-view>` client surface w
 authorization (participant = own seat; admin = public view). Full design + 10 fixtures in
 Spec 32.
 
+**Implemented 2026-06-07.** Shipped: `records/replay_stream.py`, `GET_HISTORY`/`GET_REPLAY`
+wire + handlers (auth: participant→own seat, admin→public, else `not_authorized`;
+corrupt-record→`replay_unavailable`), `<replay-view>` folding the projected stream through
+the live reducer with step/play/scrub, and `[▶ watch]` on profile recent rows. Tests green
+(projection/privacy, wire auth paths, replay transport). **Deferred:** a standalone
+paginated "my games" view beyond the profile's recent-20 (`GET_HISTORY` is wired +
+server-tested, no "load more" UI yet); match-replay; public-replays config.
+
 ---
 
 ## FB-05 — Table management / multi-human join UX
@@ -227,6 +241,13 @@ occupancy change (fetch-only today), a clear open-human-seat vs bot-seat join, a
 `HELLO.seat_holds` — the explicit FB-03↔FB-05 seam). So FB-05 is **lobby UX + a push-on-
 change + display-name plumbing**, not new architecture. Full design + 8 fixtures in
 Spec 33.
+
+**Implemented 2026-06-07.** Shipped: `display_name` + `state` (LIVE/HELD) on
+`TABLE_LIST.seats[]`; lobby seat rows show the name and mark dropped players "(away)";
+held-seat rejoin rows come from FB-03. Tests green (server TABLE_LIST fields, lobby seat
+display). **Deferred:** the server push-on-change (the existing 2s lobby auto-refresh
+already keeps the list fresh — the spec lists polling as an acceptable fallback); explicit
+start-authority reason chip; bot↔human mid-lobby seat conversion (Spec 33 open questions).
 
 ---
 
