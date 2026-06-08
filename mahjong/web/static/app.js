@@ -804,6 +804,7 @@ class LobbyView extends LitElement {
     .seat-label { color: var(--fg-dim); min-width: 8ch; }
     .seat-kind { min-width: 6ch; }
     .seat-occupied { color: var(--accent); }
+    .seat-away { color: var(--fg-dim); font-style: italic; }
     .seat-open { color: var(--fg-dim); }
     .seat-bot { color: var(--fg-dim); }
     .seat-join {
@@ -1088,13 +1089,18 @@ class LobbyView extends LitElement {
         </div>
       `;
     }
-    // Human seat.
+    // Human seat. FB-05: show who's seated (display name), and mark a player
+    // who dropped (HELD) as "away" so others know the seat isn't free to take.
     if (seat.occupied) {
+      const who = seat.display_name ?? seat.user_id ?? "occupied";
+      const away = seat.state === "HELD";
       return html`
         <div class="seat-row">
           <span class="seat-label">Seat ${seat.seat}</span>
           <span class="seat-kind">human</span>
-          <span class="seat-occupied">${seat.user_id ?? "occupied"}</span>
+          <span class="seat-occupied">
+            ${who}${away ? html` <em class="seat-away">(away)</em>` : ""}
+          </span>
         </div>
       `;
     }

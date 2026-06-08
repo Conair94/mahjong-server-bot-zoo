@@ -122,6 +122,11 @@ class SeatSummary:
     occupied: bool
     user_id: str | None = None
     bot_id: str | None = None
+    # FB-05 (table-management.md): human-readable name + LIVE/HELD so the lobby
+    # can show "who" (not just a count) and mark away players. Present only on
+    # occupied human seats.
+    display_name: str | None = None
+    state: str | None = None  # "LIVE" | "HELD"
 
     def to_wire(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -131,6 +136,10 @@ class SeatSummary:
         }
         if self.kind == "human" and self.occupied and self.user_id is not None:
             out["user_id"] = self.user_id
+            if self.display_name is not None:
+                out["display_name"] = self.display_name
+            if self.state is not None:
+                out["state"] = self.state
         if self.kind == "bot" and self.bot_id is not None:
             out["bot_id"] = self.bot_id
         return out
@@ -414,13 +423,23 @@ class TableHandle:
         for seat in range(4):
             comp = self._seats[seat]
             if comp.kind == "human":
-                user_id = self._sessions.seat(seat).user_id
+                session = self._sessions.seat(seat)
+                user_id = session.user_id
+                occupied = user_id is not None
+                display_name: str | None = None
+                seat_state: str | None = None
+                if occupied:
+                    identity = self._human_identities.get(seat)
+                    display_name = identity.get("display") if identity else None
+                    seat_state = session.state.value  # "LIVE" | "HELD"
                 out.append(
                     SeatSummary(
                         seat=seat,
                         kind="human",
-                        occupied=user_id is not None,
+                        occupied=occupied,
                         user_id=user_id,
+                        display_name=display_name,
+                        state=seat_state,
                     )
                 )
             else:

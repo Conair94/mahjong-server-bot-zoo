@@ -163,12 +163,13 @@ async def test_fixture_13_one_human_attached(tmp_path: Path) -> None:
             async with await _connect(url) as observer_ws:
                 tables = await _list_tables(observer_ws)
                 seats = tables[0]["seats"]
-                assert seats[0] == {
-                    "seat": 0,
-                    "kind": "human",
-                    "occupied": True,
-                    "user_id": alice_user_id,
-                }
+                # FB-05: occupied human seats now also carry display_name + state.
+                assert seats[0]["seat"] == 0
+                assert seats[0]["kind"] == "human"
+                assert seats[0]["occupied"] is True
+                assert seats[0]["user_id"] == alice_user_id
+                assert seats[0]["state"] == "LIVE"
+                assert isinstance(seats[0]["display_name"], str) and seats[0]["display_name"]
                 assert seats[1] == {
                     "seat": 1,
                     "kind": "human",
