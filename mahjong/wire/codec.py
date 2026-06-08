@@ -54,6 +54,10 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "FEEDBACK_ACK",
         "GET_PROFILE",
         "PROFILE",
+        "GET_HISTORY",
+        "HISTORY",
+        "GET_REPLAY",
+        "REPLAY",
     }
 )
 
@@ -158,6 +162,34 @@ class Profile(TypedDict):
     stats: dict[str, Any]
     recent: list[dict[str, Any]]
     series: list[dict[str, Any]]
+
+
+class GetHistory(TypedDict):
+    kind: Literal["GET_HISTORY"]
+    before_hand_id: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class History(TypedDict):
+    kind: Literal["HISTORY"]
+    seq: int
+    hands: list[dict[str, Any]]
+    next_before_hand_id: str | None
+
+
+class GetReplay(TypedDict):
+    kind: Literal["GET_REPLAY"]
+    hand_id: str
+
+
+class Replay(TypedDict):
+    kind: Literal["REPLAY"]
+    seq: int
+    hand_id: str
+    seat: int  # viewing seat; -1 for the public (admin / non-participant) view
+    snapshot: dict[str, Any]
+    events: list[dict[str, Any]]
+    meta: dict[str, Any]
 
 
 class Attach(TypedDict):

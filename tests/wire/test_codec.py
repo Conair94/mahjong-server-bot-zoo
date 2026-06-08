@@ -114,6 +114,38 @@ _RESUME: dict[str, Any] = {
     "session_token": "s_8f1c0000",
 }
 
+# FB-04 records + replay (account-records-replay.md).
+_GET_HISTORY: dict[str, Any] = {
+    "kind": "GET_HISTORY",
+    "before_hand_id": "h_0040",
+    "limit": 50,
+}
+
+_HISTORY: dict[str, Any] = {
+    "kind": "HISTORY",
+    "seq": 9,
+    "hands": [
+        {"hand_id": "h_0041", "started_at_ms": 1748900000000, "ended_at_ms": 1748900300000,
+         "terminal_kind": "HU", "won": True, "score_delta": 48, "fan_total": 8, "seat": 1},
+    ],
+    "next_before_hand_id": "h_0041",
+}
+
+_GET_REPLAY: dict[str, Any] = {"kind": "GET_REPLAY", "hand_id": "h_0041"}
+
+_REPLAY: dict[str, Any] = {
+    "kind": "REPLAY",
+    "seq": 10,
+    "hand_id": "h_0041",
+    "seat": 1,
+    "snapshot": {"phase": "DISCARD", "concealed": ["B1", "B2"]},
+    "events": [
+        {"event": "DRAW", "seat": 1, "tile": "B5", "turn_index": 2, "phase": "DISCARD", "ts": "t"},
+        {"event": "HAND_END", "winner": [1], "turn_index": 9, "phase": "TERMINAL", "ts": "t"},
+    ],
+    "meta": {"ruleset_id": "mcr-house-3fan", "winner_seat": 1, "fan_total": 8},
+}
+
 _LIST_TABLES: dict[str, Any] = {"kind": "LIST_TABLES"}
 
 _TABLE_LIST: dict[str, Any] = {
@@ -333,6 +365,10 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("AUTH_RESPONSE_ok_seat_holds", _AUTH_RESPONSE_OK_SEAT_HOLDS),
     ("AUTH_RESPONSE_fail", _AUTH_RESPONSE_FAIL),
     ("RESUME", _RESUME),
+    ("GET_HISTORY", _GET_HISTORY),
+    ("HISTORY", _HISTORY),
+    ("GET_REPLAY", _GET_REPLAY),
+    ("REPLAY", _REPLAY),
     ("REGISTER", _REGISTER),
     ("LIST_TABLES", _LIST_TABLES),
     ("TABLE_LIST", _TABLE_LIST),

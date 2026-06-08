@@ -28,6 +28,11 @@ from typing import Any
 from mahjong.adapters.base import HumanIdentity
 from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
+from mahjong.records.reader import RecordCorruptError, read_record
+from mahjong.records.replay_stream import (
+    initial_snapshot_for_seat,
+    projected_events_for_seat,
+)
 from mahjong.persistence.auth import (
     AuthResult,
     RegisterError,
@@ -307,6 +312,12 @@ class MultiTableOrchestrator:
 
                 elif kind == "GET_PROFILE":
                     await self._handle_get_profile(conn)
+
+                elif kind == "GET_HISTORY":
+                    await self._handle_get_history(conn, msg)
+
+                elif kind == "GET_REPLAY":
+                    await self._handle_get_replay(conn, msg)
 
                 elif kind == "ATTACH":
                     table = await self._handle_attach(conn, msg)
@@ -780,6 +791,157 @@ class MultiTableOrchestrator:
                 for pt in series
             ],
         }
+
+    # --- history + replay (account-records-replay.md, FB-04) -----------------
+
+    async def _handle_get_history(self, conn: Connection, msg: dict[str, Any]) -> None:
+        """Paginated "my games" list for the connection's account. Lobby/profile
+        concern — admin loop only. DB reads are off-loaded to a thread."""
+        auth = self._auth_state.get(conn)
+        if auth is None or self._persistence is None:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "not_authenticated"})
+            return
+        account_id = int(auth["account_id"])
+        before = msg.get("before_hand_id")
+        before_hand_id = before if isinstance(before, str) else None
+        raw_limit = msg.get("limit")
+        limit = raw_limit if isinstance(raw_limit, int) and 1 <= raw_limit <= 100 else 50
+        try:
+            payload = await asyncio.get_running_loop().run_in_executor(
+                None, self._build_history_payload, account_id, before_hand_id, limit
+            )
+        except Exception:
+            _logger.exception("history.build_failed", extra={"account_id": account_id})
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "history_error"})
+            return
+        payload["seq"] = self._make_seq()
+        with contextlib.suppress(Exception):
+            await conn.send(payload)
+
+    def _build_history_payload(
+        self, account_id: int, before_hand_id: str | None, limit: int
+    ) -> dict[str, Any]:
+        """Synchronous: keyset-paginated history rows for *account_id*."""
+        assert self._persistence is not None
+        p = self._persistence
+        hands = p.find_hands_by_account(account_id, limit=limit, before_hand_id=before_hand_id)
+        rows = [self._history_row(account_id, h) for h in hands]
+        # A full page implies there may be more; hand the last id back as the
+        # keyset cursor. A short page is the end of history.
+        next_before = hands[-1].hand_id if len(hands) == limit and hands else None
+        return {"kind": "HISTORY", "hands": rows, "next_before_hand_id": next_before}
+
+    def _history_row(self, account_id: int, hand: Any) -> dict[str, Any]:
+        """One "my games" row: outcome from this account's seat. ``find_hands_by_account``
+        omits participants, so fetch the full row to locate the seat + delta."""
+        assert self._persistence is not None
+        full = self._persistence.get_hand(hand.hand_id)
+        seat: int | None = None
+        delta: int | None = None
+        if full is not None:
+            for part in full.participants:
+                if part.account_id == account_id:
+                    seat = part.seat
+                    delta = part.final_score_delta
+                    break
+        won = hand.terminal_kind == "HU" and hand.winner_seat == seat
+        return {
+            "hand_id": hand.hand_id,
+            "match_id": hand.match_id,
+            "started_at_ms": hand.started_at_ms,
+            "ended_at_ms": hand.ended_at_ms,
+            "terminal_kind": hand.terminal_kind,
+            "won": won,
+            "score_delta": delta,
+            "fan_total": hand.fan_total if won else None,
+            "seat": seat,
+        }
+
+    async def _handle_get_replay(self, conn: Connection, msg: dict[str, Any]) -> None:
+        """Fetch one finished hand's projected event stream for playback.
+
+        Authorization: a participant replays from their own seat; an admin gets
+        the public (seat=None) view; everyone else is refused. The record read +
+        projection are off-loaded to a thread."""
+        auth = self._auth_state.get(conn)
+        if auth is None or self._persistence is None:
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "not_authenticated"})
+            return
+        hand_id = msg.get("hand_id")
+        if not isinstance(hand_id, str):
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "framing"})
+            return
+        account_id = int(auth["account_id"])
+        role = str(auth.get("role") or "user")
+        try:
+            status, payload = await asyncio.get_running_loop().run_in_executor(
+                None, self._build_replay_payload, account_id, role, hand_id
+            )
+        except Exception:
+            _logger.exception("replay.build_failed", extra={"hand_id": hand_id})
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": "replay_unavailable"})
+            return
+        if status != "ok":
+            with contextlib.suppress(Exception):
+                await conn.send({"kind": "ERROR", "code": status})
+            return
+        payload["seq"] = self._make_seq()
+        with contextlib.suppress(Exception):
+            await conn.send(payload)
+
+    def _build_replay_payload(
+        self, account_id: int, role: str, hand_id: str
+    ) -> tuple[str, dict[str, Any]]:
+        """Synchronous. Returns ``("ok", payload)`` or ``(error_code, {})``.
+
+        error_code ∈ {hand_not_found, not_authorized, replay_unavailable}.
+        """
+        assert self._persistence is not None
+        hand = self._persistence.get_hand(hand_id)
+        if hand is None:
+            return ("hand_not_found", {})
+
+        # Authorize + pick the viewing seat (participant → own; admin → public).
+        view_seat: int | None = None
+        is_participant = False
+        for part in hand.participants:
+            if part.account_id == account_id:
+                view_seat = part.seat
+                is_participant = True
+                break
+        if not is_participant:
+            if role == "admin":
+                view_seat = None  # public projection
+            else:
+                return ("not_authorized", {})
+
+        try:
+            events = read_record(Path(hand.record_path))
+        except (RecordCorruptError, OSError):
+            return ("replay_unavailable", {})
+
+        snapshot = initial_snapshot_for_seat(events, seat=view_seat)
+        proj = projected_events_for_seat(events, seat=view_seat)
+        return (
+            "ok",
+            {
+                "kind": "REPLAY",
+                "hand_id": hand_id,
+                "seat": view_seat if view_seat is not None else -1,
+                "snapshot": snapshot,
+                "events": proj,
+                "meta": {
+                    "ruleset_id": hand.ruleset_id,
+                    "winner_seat": hand.winner_seat,
+                    "fan_total": hand.fan_total,
+                },
+            },
+        )
 
     # --- attach / spectate ---
 
