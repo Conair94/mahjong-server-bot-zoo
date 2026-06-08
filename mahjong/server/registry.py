@@ -122,6 +122,11 @@ class SeatSummary:
     occupied: bool
     user_id: str | None = None
     bot_id: str | None = None
+    # FB-05 (table-management.md): human-readable name + LIVE/HELD so the lobby
+    # can show "who" (not just a count) and mark away players. Present only on
+    # occupied human seats.
+    display_name: str | None = None
+    state: str | None = None  # "LIVE" | "HELD"
 
     def to_wire(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -131,8 +136,42 @@ class SeatSummary:
         }
         if self.kind == "human" and self.occupied and self.user_id is not None:
             out["user_id"] = self.user_id
+            if self.display_name is not None:
+                out["display_name"] = self.display_name
+            if self.state is not None:
+                out["state"] = self.state
         if self.kind == "bot" and self.bot_id is not None:
             out["bot_id"] = self.bot_id
+        return out
+
+
+@dataclasses.dataclass(frozen=True)
+class SeatHold:
+    """One seat an authenticated account currently holds, for the post-auth
+    ``AUTH_RESPONSE.seat_holds[]`` rejoin-discovery list (reconnect-rejoin.md,
+    FB-03).
+
+    ``state`` is ``"LIVE"`` (socket still attached elsewhere — a takeover
+    candidate) or ``"HELD"`` (dropped, within the hold window — rejoinable).
+    ``rejoin_deadline_ms`` is the wall-clock hold expiry, present only for
+    ``HELD``.
+    """
+
+    table_id: int
+    seat: int
+    state: str  # "LIVE" | "HELD"
+    hand_index: int
+    rejoin_deadline_ms: int | None = None
+
+    def to_wire(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "table_id": self.table_id,
+            "seat": self.seat,
+            "state": self.state,
+            "hand_index": self.hand_index,
+        }
+        if self.rejoin_deadline_ms is not None:
+            out["rejoin_deadline_ms"] = self.rejoin_deadline_ms
         return out
 
 
@@ -327,6 +366,38 @@ class TableHandle:
             return False
         return self._seats[seat].kind == "human"
 
+    def seat_holds_for(self, user_id: str) -> list[SeatHold]:
+        """Seats this table currently binds to *user_id* (LIVE or HELD).
+
+        Drives FB-03 rejoin discovery: a returning client learns which seat it
+        held without scanning the whole table list.
+        """
+        holds: list[SeatHold] = []
+        for seat in range(4):
+            session = self._sessions.seat(seat)
+            if session.user_id != user_id:
+                continue
+            if session.state is SeatState.LIVE:
+                holds.append(
+                    SeatHold(
+                        table_id=int(self._table_id),
+                        seat=seat,
+                        state="LIVE",
+                        hand_index=self._hand_index,
+                    )
+                )
+            elif session.state is SeatState.HELD:
+                holds.append(
+                    SeatHold(
+                        table_id=int(self._table_id),
+                        seat=seat,
+                        state="HELD",
+                        hand_index=self._hand_index,
+                        rejoin_deadline_ms=session.hold_deadline_ms,
+                    )
+                )
+        return holds
+
     # --- summary ---
 
     def summary(self) -> TableSummary:
@@ -352,13 +423,23 @@ class TableHandle:
         for seat in range(4):
             comp = self._seats[seat]
             if comp.kind == "human":
-                user_id = self._sessions.seat(seat).user_id
+                session = self._sessions.seat(seat)
+                user_id = session.user_id
+                occupied = user_id is not None
+                display_name: str | None = None
+                seat_state: str | None = None
+                if occupied:
+                    identity = self._human_identities.get(seat)
+                    display_name = identity.get("display") if identity else None
+                    seat_state = session.state.value  # "LIVE" | "HELD"
                 out.append(
                     SeatSummary(
                         seat=seat,
                         kind="human",
-                        occupied=user_id is not None,
+                        occupied=occupied,
                         user_id=user_id,
+                        display_name=display_name,
+                        state=seat_state,
                     )
                 )
             else:
@@ -974,6 +1055,14 @@ class TableRegistry:
     def list_tables(self) -> list[TableSummary]:
         """Snapshot of all live tables for a LIST_TABLES wire response."""
         return [h.summary() for h in self._tables.values()]
+
+    def seat_holds_for(self, user_id: str) -> list[SeatHold]:
+        """All seats *user_id* currently holds across every live table, for the
+        post-auth rejoin-discovery list (reconnect-rejoin.md, FB-03)."""
+        holds: list[SeatHold] = []
+        for handle in self._tables.values():
+            holds.extend(handle.seat_holds_for(user_id))
+        return holds
 
     def get_table(self, table_id: str) -> TableHandle:
         """Return the ``TableHandle`` for *table_id*.

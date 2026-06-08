@@ -742,6 +742,7 @@ const PHASE_LABEL_LOBBY = {
 class LobbyView extends LitElement {
   static properties = {
     tables: { type: Array },
+    seatHolds: { type: Array },          // FB-03 — seats this account can rejoin
     desiredHumans: { type: Number },
     availableBots: { type: Array },      // HELLO.bots — [{bot_id,label,description}]
     botSelections: { state: true },      // per-seat bot_id (length 4; bot seats only)
@@ -771,6 +772,20 @@ class LobbyView extends LitElement {
       color: var(--accent);
       margin: 0.75rem 0 0.4rem;
     }
+    .rejoin-block {
+      border: 1px solid var(--accent);
+      padding: 0.4rem 0.75rem 0.6rem;
+      margin-bottom: 0.75rem;
+    }
+    .rejoin-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin: 0.3rem 0;
+    }
+    .rejoin-label em { color: var(--fg-dim); font-style: normal; }
+    .rejoin-btn { white-space: nowrap; }
     .table-block {
       border: 1px solid var(--border);
       padding: 0.5rem 0.75rem;
@@ -789,6 +804,7 @@ class LobbyView extends LitElement {
     .seat-label { color: var(--fg-dim); min-width: 8ch; }
     .seat-kind { min-width: 6ch; }
     .seat-occupied { color: var(--accent); }
+    .seat-away { color: var(--fg-dim); font-style: italic; }
     .seat-open { color: var(--fg-dim); }
     .seat-bot { color: var(--fg-dim); }
     .seat-join {
@@ -1028,6 +1044,37 @@ class LobbyView extends LitElement {
     this._emit("lobby-refresh", {});
   }
 
+  _onRejoin(hold) {
+    // Emit a rejoin intent; the app turns it into an ATTACH on the held seat.
+    this._emit("lobby-rejoin", { tableId: hold.table_id, seat: hold.seat });
+  }
+
+  // FB-03 — render a prominent "rejoin / take over" block when this account
+  // holds seats it can return to.
+  _renderRejoin() {
+    const holds = Array.isArray(this.seatHolds) ? this.seatHolds : [];
+    if (holds.length === 0) return html``;
+    return html`
+      <div class="rejoin-block">
+        <div class="lobby-section-title">Rejoin a game in progress</div>
+        ${holds.map((h) => {
+          const live = h.state === "LIVE";
+          return html`
+            <div class="rejoin-row">
+              <span class="rejoin-label">
+                Table ${h.table_id} · seat ${h.seat}
+                ${live ? html`<em>(open elsewhere — take over)</em>` : html`<em>(you're away)</em>`}
+              </span>
+              <button class="lobby-btn rejoin-btn" @click=${() => this._onRejoin(h)}>
+                ${live ? "[ ▶ Take over ]" : "[ ▶ Rejoin ]"}
+              </button>
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
   _pickHumans(n) {
     this.desiredHumans = n;
   }
@@ -1042,13 +1089,18 @@ class LobbyView extends LitElement {
         </div>
       `;
     }
-    // Human seat.
+    // Human seat. FB-05: show who's seated (display name), and mark a player
+    // who dropped (HELD) as "away" so others know the seat isn't free to take.
     if (seat.occupied) {
+      const who = seat.display_name ?? seat.user_id ?? "occupied";
+      const away = seat.state === "HELD";
       return html`
         <div class="seat-row">
           <span class="seat-label">Seat ${seat.seat}</span>
           <span class="seat-kind">human</span>
-          <span class="seat-occupied">${seat.user_id ?? "occupied"}</span>
+          <span class="seat-occupied">
+            ${who}${away ? html` <em class="seat-away">(away)</em>` : ""}
+          </span>
         </div>
       `;
     }
@@ -1173,6 +1225,8 @@ class LobbyView extends LitElement {
     return html`
       <div class="lobby">
         <div class="lobby-title">── Lobby ──</div>
+
+        ${this._renderRejoin()}
 
         <div class="lobby-section-title">Active tables (${tables.length})</div>
         ${tables.length === 0
@@ -1591,6 +1645,11 @@ class ProfilePage extends LitElement {
     .win { color: var(--accent); }
     .loss { color: var(--fg-dim); }
     .empty { color: var(--fg-dim); padding: 1.5rem 0; }
+    .watch-btn {
+      background: none; border: none; color: var(--accent);
+      cursor: pointer; font-family: inherit; font-size: inherit; padding: 0;
+    }
+    .watch-btn:hover { text-decoration: underline; }
   `;
 
   render() {
@@ -1648,7 +1707,7 @@ class ProfilePage extends LitElement {
     }
     return html`
       <table class="recent">
-        <tr><th>When</th><th>Result</th><th>Points</th><th>Fan</th></tr>
+        <tr><th>When</th><th>Result</th><th>Points</th><th>Fan</th><th></th></tr>
         ${recent.map((h) => {
           const result = h.won
             ? html`<span class="win">WIN</span>`
@@ -1660,10 +1719,23 @@ class ProfilePage extends LitElement {
             <td>${result}</td>
             <td class=${h.score_delta > 0 ? "win" : "loss"}>${_signed(h.score_delta)}</td>
             <td>${h.fan_total ?? "—"}</td>
+            <td>
+              ${h.hand_id
+                ? html`<button class="watch-btn" @click=${() => this._watch(h.hand_id)}
+                    title="Watch this hand">[ ▶ watch ]</button>`
+                : ""}
+            </td>
           </tr>`;
         })}
       </table>
     `;
+  }
+
+  _watch(handId) {
+    // FB-04: ask the app shell to fetch + open a replay of this hand.
+    this.dispatchEvent(
+      new CustomEvent("profile-replay", { detail: { handId }, bubbles: true, composed: true }),
+    );
   }
 
   _back() {
@@ -1672,6 +1744,157 @@ class ProfilePage extends LitElement {
 }
 
 customElements.define("profile-page", ProfilePage);
+
+// --- <replay-view> ------------------------------------------------------
+// FB-04 (account-records-replay.md). Folds a REPLAY frame's projected event
+// stream through the *live* reducer (applyEvent) and renderer (renderTable) at
+// the user's pace — no replay-specific board code. Read-only: no prompts, no
+// actions. `cursor` is the index of the next event to apply; the board shows
+// events[0..cursor).
+class ReplayView extends LitElement {
+  static properties = {
+    replay: { type: Object },     // the REPLAY frame {seat, snapshot, events, meta}
+    cursor: { state: true },      // how many events have been applied
+    playing: { state: true },
+  };
+
+  static styles = css`
+    :host { display: block; color: var(--fg); font-family: inherit; }
+    .wrap { border: 1px solid var(--border); padding: 0.75rem 1rem 1rem; }
+    .head {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 0.5rem;
+    }
+    .who { color: var(--accent); }
+    .back { background: none; border: 1px solid var(--border); color: var(--fg);
+            cursor: pointer; font-family: inherit; padding: 0.1rem 0.5rem; }
+    pre.board { margin: 0.5rem 0; line-height: 1.15; white-space: pre; overflow-x: auto; }
+    .transport {
+      display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .transport button {
+      background: none; border: 1px solid var(--border); color: var(--fg);
+      cursor: pointer; font-family: inherit; padding: 0.15rem 0.55rem;
+    }
+    .transport button:disabled { opacity: 0.4; cursor: default; }
+    .scrub { flex: 1; min-width: 8rem; }
+    .pos { color: var(--fg-dim); font-size: 0.85em; white-space: nowrap; }
+  `;
+
+  constructor() {
+    super();
+    this.replay = null;
+    this.cursor = 0;
+    this.playing = false;
+    this._timer = null;
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._stop();
+  }
+
+  updated(changed) {
+    // A fresh replay resets the cursor to the start.
+    if (changed.has("replay") && this.replay) {
+      this._stop();
+      this.cursor = 0;
+    }
+  }
+
+  // Fold events[0..cursor) onto a deep copy of the initial snapshot.
+  _currentView() {
+    const r = this.replay;
+    if (!r) return null;
+    let view = JSON.parse(JSON.stringify(r.snapshot ?? {}));
+    const seat = r.seat;
+    const events = Array.isArray(r.events) ? r.events : [];
+    for (let i = 0; i < this.cursor && i < events.length; i++) {
+      view = applyEvent(view, events[i], seat);
+    }
+    return view;
+  }
+
+  _count() {
+    return Array.isArray(this.replay?.events) ? this.replay.events.length : 0;
+  }
+
+  _step(delta) {
+    const n = this._count();
+    this.cursor = Math.max(0, Math.min(n, this.cursor + delta));
+    if (this.cursor >= n) this._stop();
+  }
+
+  _scrub(e) {
+    this.cursor = Number(e.target.value);
+    this._stop();
+  }
+
+  _togglePlay() {
+    if (this.playing) {
+      this._stop();
+    } else {
+      if (this.cursor >= this._count()) this.cursor = 0; // replay from start
+      this.playing = true;
+      this._timer = setInterval(() => {
+        if (this.cursor >= this._count()) {
+          this._stop();
+          return;
+        }
+        this.cursor += 1;
+      }, 700);
+    }
+  }
+
+  _stop() {
+    this.playing = false;
+    if (this._timer !== null) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  }
+
+  _close() {
+    this._stop();
+    this.dispatchEvent(new CustomEvent("replay-close", { bubbles: true, composed: true }));
+  }
+
+  render() {
+    const r = this.replay;
+    if (!r) return html`<div class="wrap">No replay loaded.</div>`;
+    const view = this._currentView();
+    const seat = r.seat;
+    const n = this._count();
+    const atEnd = this.cursor >= n;
+    const board =
+      atEnd && view && view.phase === "TERMINAL"
+        ? renderHandEndSummary(view, seat)
+        : renderTable(view, seat);
+    const seatLabel = seat === -1 || seat == null ? "spectator view" : `seat ${seat}`;
+    return html`
+      <div class="wrap">
+        <div class="head">
+          <span class="who">▶ Replay · ${seatLabel} · ${r.meta?.ruleset_id ?? ""}</span>
+          <button class="back" @click=${this._close} title="Back (Esc)">[ back ]</button>
+        </div>
+        <pre class="board">${board}</pre>
+        <div class="transport">
+          <button @click=${() => this._step(-1)} ?disabled=${this.cursor === 0}>[ ◀ ]</button>
+          <button @click=${this._togglePlay}>${this.playing ? "[ ⏸ ]" : "[ ▶ ]"}</button>
+          <button @click=${() => this._step(1)} ?disabled=${atEnd}>[ ▶| ]</button>
+          <input
+            class="scrub" type="range" min="0" max=${n} .value=${String(this.cursor)}
+            @input=${this._scrub}
+          />
+          <span class="pos">${this.cursor} / ${n}</span>
+        </div>
+      </div>
+    `;
+  }
+}
+
+customElements.define("replay-view", ReplayView);
 
 // --- <mahjong-app> ------------------------------------------------------
 
@@ -1864,6 +2087,12 @@ class MahjongApp extends LitElement {
       text-align: center;
       padding: 0.5rem;
     }
+    .rejoin-notice {
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+      padding: 0.4rem 0.75rem;
+      border: 1px solid var(--accent);
+    }
     .auth-form-row {
       display: flex;
       flex-direction: column;
@@ -1959,6 +2188,14 @@ class MahjongApp extends LitElement {
     this._settingsOpen = false;
     this._profile = null;
     this._serverFeatures = [];
+    // Replay viewer (FB-04). Set from a REPLAY frame; cleared on close.
+    this._replay = null;
+    this._replayReturnView = "profile";  // where [back] returns to
+    // FB-03 rejoin (reconnect-rejoin.md): seats this account holds, learned
+    // from AUTH_RESPONSE.seat_holds[]. A single HELD hold auto-rejoins; more
+    // than one (or a LIVE takeover candidate) renders rows in the lobby.
+    this._seatHolds = [];
+    this._rejoinNotice = null;                  // transient "Reconnected…" toast text
   }
 
   connectedCallback() {
@@ -2089,6 +2326,27 @@ class MahjongApp extends LitElement {
     this._view = "lobby";
   }
 
+  _onProfileReplay(e) {
+    // FB-04: a "watch" click on a profile recent-games row. Fetch the replay;
+    // the REPLAY frame handler flips the view to the viewer. [back] returns
+    // here to the profile.
+    const handId = e.detail?.handId;
+    if (!handId) return;
+    this._replayReturnView = "profile";
+    this._lobbyError = null;
+    try {
+      this._conn.send({ kind: "GET_REPLAY", hand_id: handId });
+    } catch (err) {
+      console.warn("GET_REPLAY send failed:", err);
+    }
+  }
+
+  _closeReplay() {
+    this._replay = null;
+    this._view = this._replayReturnView || "lobby";
+    if (this._view === "profile") this._openProfile();  // refresh profile data
+  }
+
   firstUpdated() {
     const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/socket`;
     this._conn = new ConnectionManager(wsUrl);
@@ -2144,6 +2402,9 @@ class MahjongApp extends LitElement {
             storeSessionToken(this._sessionToken); // Spec 29 Bug A: survive reload
             this._authState = "authed";
             this._authError = null;
+            // FB-03: seats this account still holds (rejoinable). Captured
+            // before _enterLobby so it can auto-rejoin a lone HELD seat.
+            this._seatHolds = Array.isArray(frame.seat_holds) ? frame.seat_holds : [];
             this._enterLobby();
           } else {
             // Server allows up to 3 attempts on the same connection; keep the
@@ -2168,6 +2429,20 @@ class MahjongApp extends LitElement {
         if (frame.kind === "PROFILE") {
           this._profile = frame;
           if (this._view !== "profile") this._view = "profile";
+          return;
+        }
+
+        // --- Replay (FB-04) ------------------------------------------------
+        if (frame.kind === "REPLAY") {
+          this._replay = frame;
+          this._view = "replay";
+          return;
+        }
+        if (frame.kind === "ERROR" &&
+            ["hand_not_found", "not_authorized", "replay_unavailable", "history_error"]
+              .includes(frame.code)) {
+          // Replay/history fetch failed — stay where we are, surface a hint.
+          this._lobbyError = frame.message || `Replay unavailable (${frame.code}).`;
           return;
         }
 
@@ -2403,6 +2678,7 @@ class MahjongApp extends LitElement {
   _enterLobby() {
     this._view = "lobby";
     this._lobbyError = null;
+    this._rejoinNotice = null;
     // Reset any stale attach state — lobby is the "between-tables" view.
     this._attachedTableId = null;
     this._attachedSeat = null;
@@ -2418,10 +2694,40 @@ class MahjongApp extends LitElement {
         if (this._view === "lobby") this._doTableDiscovery();
       }, 2000);
     }
+    // FB-03: if the account holds a seat, either auto-rejoin (unambiguous) or
+    // leave the holds for the lobby to render as "▶ Rejoin" rows.
+    this._maybeAutoRejoin();
+  }
+
+  _maybeAutoRejoin() {
+    const holds = Array.isArray(this._seatHolds) ? this._seatHolds : [];
+    const held = holds.filter((h) => h && h.state === "HELD");
+    // Exactly one hold, and it's HELD → rejoin without asking. Anything
+    // ambiguous (>1 hold, or a LIVE takeover candidate) goes to the lobby
+    // rows so the player chooses.
+    if (holds.length === 1 && held.length === 1) {
+      const h = held[0];
+      this._seatHolds = [];
+      this._rejoinNotice = `Reconnecting to your game (table ${h.table_id})…`;
+      this._lobbyTargetSeat = { tableId: h.table_id, seat: h.seat };
+      this._doAttach(h.table_id, h.seat);
+    }
+  }
+
+  _onLobbyRejoin(e) {
+    // A rejoin row was clicked — it's just an ATTACH to a held seat (the
+    // server routes a same-user ATTACH on a HELD seat to its resume path).
+    const { tableId, seat } = e.detail || {};
+    if (tableId == null || seat == null) return;
+    this._seatHolds = [];
+    this._lobbyError = null;
+    this._lobbyTargetSeat = { tableId, seat };
+    this._doAttach(tableId, seat);
   }
 
   _enterTableView() {
     this._view = "table";
+    this._rejoinNotice = null;  // landed in the game — drop the reconnect toast
     if (this._lobbyAutoRefresh !== null) {
       clearInterval(this._lobbyAutoRefresh);
       this._lobbyAutoRefresh = null;
@@ -2565,6 +2871,7 @@ class MahjongApp extends LitElement {
     // Show the auth form when the server requires auth and we haven't authed yet.
     const showAuth =
       this._authRequired && this._authState !== "authed" && !showResuming;
+    const showReplay = !showAuth && !showResuming && this._view === "replay";
     const showLobby = !showAuth && !showResuming && this._view === "lobby";
     const showProfile = !showAuth && !showResuming && this._view === "profile";
     // Profile needs the server to persist history; gate the button on the
@@ -2613,11 +2920,16 @@ class MahjongApp extends LitElement {
             ${this._lobbyError
               ? html`<div class="auth-error">${this._lobbyError}</div>`
               : ""}
+            ${this._rejoinNotice
+              ? html`<div class="rejoin-notice">${this._rejoinNotice}</div>`
+              : ""}
             <lobby-view
               .tables=${this._lobbyTables}
+              .seatHolds=${this._seatHolds}
               .desiredHumans=${this._lobbyHumans}
               .availableBots=${this._availableBots}
               @lobby-join=${this._onLobbyJoin.bind(this)}
+              @lobby-rejoin=${this._onLobbyRejoin.bind(this)}
               @lobby-create=${this._onLobbyCreate.bind(this)}
               @lobby-refresh=${this._onLobbyRefresh.bind(this)}
             ></lobby-view>
@@ -2627,12 +2939,19 @@ class MahjongApp extends LitElement {
         ? html`<profile-page
             .profile=${this._profile}
             @profile-back=${this._closeProfile}
+            @profile-replay=${this._onProfileReplay.bind(this)}
           ></profile-page>`
+        : ""}
+      ${showReplay
+        ? html`<replay-view
+            .replay=${this._replay}
+            @replay-close=${this._closeReplay.bind(this)}
+          ></replay-view>`
         : ""}
       <table-page
         .panes=${this.panes}
         .tileStyle=${this.tileStyle}
-        ?hidden=${showLobby || showAuth || showProfile || showResuming}
+        ?hidden=${showLobby || showAuth || showProfile || showResuming || showReplay}
       ></table-page>
       ${this._settingsOpen
         ? html`<settings-menu

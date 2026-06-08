@@ -174,8 +174,10 @@ def load_config_from_env(
         ),
         data_dir=data_dir,
         seat_hold_seconds=_parse_int(
+            # 180s (was 60s): long enough for a deliberate refresh + re-auth +
+            # rejoin, not just a Wi-Fi blip (reconnect-rejoin.md, FB-03).
             "MAHJONG_SEAT_HOLD_SECONDS",
-            e.get("MAHJONG_SEAT_HOLD_SECONDS", "60"),
+            e.get("MAHJONG_SEAT_HOLD_SECONDS", "180"),
         ),
         heartbeat_interval_s=_parse_int(
             "MAHJONG_HEARTBEAT_INTERVAL_SECONDS",

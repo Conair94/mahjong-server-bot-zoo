@@ -54,6 +54,10 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "FEEDBACK_ACK",
         "GET_PROFILE",
         "PROFILE",
+        "GET_HISTORY",
+        "HISTORY",
+        "GET_REPLAY",
+        "REPLAY",
     }
 )
 
@@ -112,6 +116,10 @@ class AuthResponseOk(TypedDict):
     display_name: str
     session_token: str
     expires_at_ms: int
+    # Seats this account currently holds, for FB-03 rejoin discovery
+    # (reconnect-rejoin.md). Each entry: {table_id, seat, state, hand_index,
+    # rejoin_deadline_ms?}. Omitted when the account holds no seats.
+    seat_holds: NotRequired[list[dict[str, Any]]]
 
 
 class AuthResponseFail(TypedDict):
@@ -154,6 +162,34 @@ class Profile(TypedDict):
     stats: dict[str, Any]
     recent: list[dict[str, Any]]
     series: list[dict[str, Any]]
+
+
+class GetHistory(TypedDict):
+    kind: Literal["GET_HISTORY"]
+    before_hand_id: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class History(TypedDict):
+    kind: Literal["HISTORY"]
+    seq: int
+    hands: list[dict[str, Any]]
+    next_before_hand_id: str | None
+
+
+class GetReplay(TypedDict):
+    kind: Literal["GET_REPLAY"]
+    hand_id: str
+
+
+class Replay(TypedDict):
+    kind: Literal["REPLAY"]
+    seq: int
+    hand_id: str
+    seat: int  # viewing seat; -1 for the public (admin / non-participant) view
+    snapshot: dict[str, Any]
+    events: list[dict[str, Any]]
+    meta: dict[str, Any]
 
 
 class Attach(TypedDict):
