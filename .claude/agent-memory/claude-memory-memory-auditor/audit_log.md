@@ -5,6 +5,19 @@ metadata:
   type: reference
 ---
 
+## 2026-06-09
+
+Memory set scanned: project memory dir (33 entries via MEMORY.md index). Focus: FB-01..07 / Specs 29-33 ground-truth shift.
+
+Finding counts: STALE: 0, CONTRADICT: 1, MERGE: 0, DATE_FIX: 0
+
+Contradicted:
+1. `project_public_deployment.md` (~line 87) — lists "seat re-attach after reconnect (currently returns to lobby, not the table/seat)" as a deferred follow-up. FB-03 / Spec 31 (commit 01c03ff "feat(reconnect): rejoin a held seat from the lobby") implemented exactly this. Deferral is resolved.
+
+Verified clean: all paths in priority targets exist (mux.py, registry.py, seat_bots.py, scoring.py, rotation.py, bots/v0.py, adapters/v0.py V0Adapter). KNOWN_KINDS allow-list memory holds — GET_HISTORY/HISTORY/GET_REPLAY/REPLAY all registered (codec.py:57-60) with round-trip tests (test_codec.py:368-370). Two-phase-handler memory NOT contradicted: GET_HISTORY/GET_REPLAY are lobby/pre-ATTACH only (orchestrator.py:316-321, client sends from profile view), so absence from mux.py handle_inbound is correct. All 5 Spec 29 bugs + settings fix verified landed (apply_event.js CLAIM_RESOLUTION authoritative, app.js localStorage RESUME, wire/server.py ETag/no-cache, state.py GANG_CONCEALED redaction, FEEDBACK_ACK, reactive props). v0/seat_bots specifics all accurate.
+
+Pattern noted: deferred-follow-up lists inside otherwise-merged project memories are a staleness hot-spot — each "deferred"/"remaining" bullet is a checkable claim that later specs (FB-xx) quietly close. Cross-check deferral bullets against subsequent feature commits.
+
 ## 2026-05-25
 
 Memory set scanned: `/Users/connorlockhart/.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/` (19 files, 24 entries via MEMORY.md index)

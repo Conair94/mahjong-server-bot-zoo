@@ -2,6 +2,20 @@
 
 ## Run history
 
+### 2026-06-09 — Sessions f274d10c, a0f21890 (+scanned 6b569780, c192dd79, fee1cbb0, bdf243da, b648c74f, 399034fe, 0b2add49, a7d6a30d, c9979b5e)
+- Scanned 12 sessions (2026-06-03 to 2026-06-07), all mahjong-server-bot-zoo. Focus: FB-03/04/05 (PR #15) + the FB-01/02/06/07 feedback-backlog session (PR #14).
+- Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 2, NOISE: many
+- Accepted candidates (both written to project memory):
+  - FILL_GAP: `feedback_guard_hand_loop_crashes` — async `_run_hand_loop` must except+log+teardown, not bare try/finally; FB-01 "hang" was a silently-dying hand task (whole offline path proven sound). Truncated mid-hand record => dying task, not game logic.
+  - FILL_GAP: `feedback_mirror_both_hand_loops` — WebOrchestrator + live TableHandle `_run_hand_loop` are near-duplicates; FB-01 guard was incomplete until applied to both. Ties to existing project_multi_table_architecture (intentional duplication).
+- Discarded as NOISE / already-captured:
+  - "verify-spec-premise pays off; FB-03/04/05 backends already built, specs were client-surface" — caller flagged as already noted; verify_spec_premise + read_spec_before_framing_choice already cover it; no sharper angle.
+  - Admin plane bypasses game-codec KNOWN_KINDS — already captured in project_admin_console.md (lines 54-56).
+  - seat_holds belongs on AUTH_RESPONSE not HELLO (HELLO is pre-auth) — one-off field-placement incident, derivable from codec.
+  - Replay viewer folds recorded stream through the LIVE reducer/renderer — reuse pattern derivable from code; not a durable surprise.
+  - FB-02 ready-gate / READY wire kind, FB-06 synthesized audio cues — feature implementation detail, derivable.
+  - Reproduce-first on FB-01 (seeded record as smoking gun) — already covered by tdd_and_rl_verification (deterministic rollout / verification artifact).
+
 ### 2026-05-21 — Sessions 95f2c9b9, 7b9d8b26
 - Scanned 2 sessions (2026-05-21), both in mahjong-server-bot-zoo.
 - Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 3, NOISE: 2
