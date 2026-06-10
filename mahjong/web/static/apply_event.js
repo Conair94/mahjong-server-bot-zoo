@@ -61,7 +61,9 @@ function cloneSeatView(view) {
       ...s,
       // concealed is a list (own) or {count} (opponent); copy both shapes.
       concealed: Array.isArray(s.concealed) ? [...s.concealed] : { ...s.concealed },
-      melds: s.melds.map((m) => ({ ...m, tiles: [...m.tiles] })),
+      // An opponent's hidden concealed kong (Spec 29 Bug D) carries no `tiles`
+      // — its identity is masked until settlement — so guard the spread.
+      melds: s.melds.map((m) => ({ ...m, tiles: Array.isArray(m.tiles) ? [...m.tiles] : m.tiles })),
       discards: [...s.discards],
       flowers: [...s.flowers],
     })),

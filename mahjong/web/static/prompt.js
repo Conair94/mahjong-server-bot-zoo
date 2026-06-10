@@ -125,6 +125,20 @@ function findFirst(arr, pred) {
   return null;
 }
 
+/**
+ * All CHI options in the prompt, in the server's order. A single discard can
+ * admit up to three distinct sequences (e.g. B4 → B2B3, B3B5, B5B6); the
+ * server emits one CHI action per sequence. Returns [] when none are legal.
+ *
+ * The keystroke layer uses this to drive the staged chooser: pressing C with
+ * 2+ options enters a sub-mode where a digit key picks which run to take,
+ * instead of silently always taking the first (the pre-fix behaviour).
+ */
+export function chiOptions(prompt) {
+  if (!prompt) return [];
+  return (prompt.legal_actions ?? []).filter((a) => a.type === "CHI");
+}
+
 // --- rendering ---
 
 /**
@@ -144,12 +158,30 @@ export function isClaimAvailable(prompt) {
   return (prompt.legal_actions ?? []).some((a) => a.type !== "PASS");
 }
 
-export function renderPromptBar(prompt) {
+export function renderPromptBar(prompt, chiChoosing = null) {
   if (!prompt) return null;
   const legal = prompt.legal_actions ?? [];
   const plays = legal.filter((a) => a.type === "PLAY");
-  const others = legal.filter((a) => a.type !== "PLAY");
+  const chis = legal.filter((a) => a.type === "CHI");
+  // CHI is rendered as its own collapsed chip below — exclude it from `others`
+  // so multiple sequences don't each emit a misleading "[C]" chip.
+  const others = legal.filter((a) => a.type !== "PLAY" && a.type !== "CHI");
   const barClass = isClaimAvailable(prompt) ? "prompt-bar claim-active" : "prompt-bar";
+
+  // Staged chooser: once the player presses C with 2+ sequences available, each
+  // option is numbered so they pick which run to take (Esc backs out).
+  if (chiChoosing && chiChoosing.length > 0) {
+    return html`
+      <div class=${barClass}>
+        <span class="prompt-bar-label">Which chi? —</span>
+        ${chiChoosing.map(
+          (a, i) =>
+            html`<span class="prompt-action">[<kbd>${i + 1}</kbd>] ${actionLabel(a)}</span>`,
+        )}
+        <span class="prompt-action">[<kbd>Esc</kbd>] cancel</span>
+      </div>
+    `;
+  }
 
   return html`
     <div class=${barClass}>
@@ -158,6 +190,11 @@ export function renderPromptBar(prompt) {
         (a) =>
           html`<span class="prompt-action">[<kbd>${keyForAction(a)}</kbd>] ${actionLabel(a)}</span>`,
       )}
+      ${chis.length === 1
+        ? html`<span class="prompt-action">[<kbd>C</kbd>] ${actionLabel(chis[0])}</span>`
+        : chis.length > 1
+          ? html`<span class="prompt-action">[<kbd>C</kbd>] Chi… (${chis.length} options)</span>`
+          : ""}
       ${plays.length > 0
         ? html`<span class="prompt-action prompt-play"
             >[<kbd>1-=[]</kbd>] Play tile · [<kbd>Enter</kbd>] confirm</span

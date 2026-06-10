@@ -24,7 +24,13 @@ import { LitElement, html, css } from "lit";
 import { renderTable, renderPinwheel, renderHandEndSummary, renderScoreGraph } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { audioCues, cueForEvent, cueForPrompt } from "/static/audio.js";
-import { renderPromptBar, actionForKey, tileIndexForKeyCode, isClaimAvailable } from "/static/prompt.js";
+import {
+  renderPromptBar,
+  actionForKey,
+  chiOptions,
+  tileIndexForKeyCode,
+  isClaimAvailable,
+} from "/static/prompt.js";
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
 
@@ -162,6 +168,7 @@ class GamePane extends LitElement {
     showLog: { state: true },
     currentPrompt: { state: true },
     selectedTile: { state: true },
+    chiChoosing: { state: true },
     illegalBanner: { state: true },
     readySent: { state: true },
   };
@@ -464,6 +471,7 @@ class GamePane extends LitElement {
     this.showLog = false;
     this.currentPrompt = null;
     this.selectedTile = null;
+    this.chiChoosing = null; // CHI sequences when picking which run to take
     this.illegalBanner = null;
     this._illegalBannerTimer = null;
     this.readySent = false; // FB-02: has the local human acked this HAND_END?
@@ -499,12 +507,14 @@ class GamePane extends LitElement {
     // banner from the previous attempt.
     this.currentPrompt = prompt;
     this.selectedTile = null;
+    this.chiChoosing = null;
     this._clearIllegalBanner();
   }
 
   clearPrompt() {
     this.currentPrompt = null;
     this.selectedTile = null;
+    this.chiChoosing = null;
   }
 
   showIllegalBanner(message) {
@@ -549,6 +559,43 @@ class GamePane extends LitElement {
     // (theme/tile-style). Ctrl/Meta likewise reserved for browser shortcuts.
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (!this.currentPrompt) return;
+
+    // Staged CHI chooser: after pressing C with multiple sequences, a digit
+    // key picks which run; Esc backs out. Any other key cancels the chooser
+    // and is then handled normally (so Space still passes, etc.).
+    if (this.chiChoosing) {
+      const pick = tileIndexForKeyCode(e.code);
+      if (pick !== null) {
+        if (pick >= 0 && pick < this.chiChoosing.length) {
+          e.preventDefault();
+          const action = this.chiChoosing[pick];
+          this.chiChoosing = null;
+          this._submitAction(action);
+        }
+        return; // a digit out of range is ignored; stay in the chooser
+      }
+      if (e.code === "Escape") {
+        e.preventDefault();
+        this.chiChoosing = null;
+        return;
+      }
+      this.chiChoosing = null; // fall through to normal handling for other keys
+    }
+
+    // C enters the chooser when there are 2+ chi sequences, or submits the
+    // sole option directly. (Routed here so multiple CHI options are reachable
+    // — the old actionForKey path always took the first.)
+    if (e.code === "KeyC") {
+      const chis = chiOptions(this.currentPrompt);
+      if (chis.length === 0) return; // no chi available — no-op per spec
+      e.preventDefault();
+      if (chis.length === 1) {
+        this._submitAction(chis[0]);
+      } else {
+        this.chiChoosing = chis;
+      }
+      return;
+    }
 
     // Tile-selection keys set the cursor; arrow keys nudge it; Enter
     // confirms PLAY. All other keys dispatch to actionForKey.
@@ -644,7 +691,7 @@ class GamePane extends LitElement {
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
           : ""}
-        ${this.currentPrompt ? renderPromptBar(this.currentPrompt) : ""}
+        ${this.currentPrompt ? renderPromptBar(this.currentPrompt, this.chiChoosing) : ""}
 
         <button class="log-toggle" @click=${this._toggleLog}>
           ${this.showLog ? "▼" : "▶"} wire log (${this.frames.length} frame${this.frames.length === 1 ? "" : "s"})
