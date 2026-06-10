@@ -79,6 +79,28 @@ def _prompt_three_actions(prompt_id: str = "p_0_5_CLAIM_WINDOW") -> dict[str, An
     }
 
 
+def _prompt_multi_chi(prompt_id: str = "p_0_5_CLAIM_WINDOW") -> dict[str, Any]:
+    """A CLAIM_WINDOW where the discard admits three distinct chi runs — the
+    server emits one CHI action per sequence (e.g. discard B4)."""
+    return {
+        "kind": "PROMPT",
+        "seq": 3,
+        "table_id": 1,
+        "hand_index": 0,
+        "seat": 0,
+        "phase": "CLAIM_WINDOW",
+        "legal_actions": [
+            {"type": "PASS"},
+            {"type": "CHI", "tiles": ["B2", "B3", "B4"]},
+            {"type": "CHI", "tiles": ["B3", "B4", "B5"]},
+            {"type": "CHI", "tiles": ["B4", "B5", "B6"]},
+        ],
+        "default_action": {"type": "PASS"},
+        "deadline_ms": int(time.time() * 1000) + 30_000,
+        "prompt_id": prompt_id,
+    }
+
+
 async def _wait_for_attached(page: Page) -> None:
     await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible(timeout=5000)
 
@@ -168,6 +190,76 @@ async def test_alt_chord_does_not_fire_action(page: Page, fake_wire_server: Fake
     assert actions == [], actions
     # The prompt stays open (pane toggle did fire, but the bar is in game-pane).
     await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible()
+
+
+# --- staged CHI selection (multiple sequences on one discard) ---
+
+
+async def test_single_chi_press_c_sends_immediately(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """With exactly one CHI option, C submits it directly — no chooser step."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
+
+    await page.keyboard.press("c")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["action"] == {"type": "CHI", "tiles": ["W3", "W4", "W5"]}, action_msg
+
+
+async def test_multi_chi_staged_pick_sends_chosen_sequence(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """With 2+ CHI options, C opens a numbered chooser and a digit picks which
+    sequence — the second option here, not the first (the pre-fix behaviour)."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    prompt_id = "p_0_5_CLAIM_WINDOW"
+    await fake_wire_server.send(_prompt_multi_chi(prompt_id=prompt_id))
+    bar = page.locator("game-pane").locator(".prompt-bar")
+    await expect(bar).to_be_visible(timeout=5000)
+
+    # C enters the chooser — no ACTION yet, the bar switches to "Which chi?".
+    await page.keyboard.press("c")
+    await expect(bar).to_contain_text("Which chi?")
+    await asyncio.sleep(0.2)
+    assert [m for m in fake_wire_server.inbound if m.get("kind") == "ACTION"] == []
+
+    # Digit 2 → the second sequence.
+    await page.keyboard.press("2")
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["prompt_id"] == prompt_id, action_msg
+    assert action_msg["action"] == {"type": "CHI", "tiles": ["B3", "B4", "B5"]}, action_msg
+
+
+async def test_multi_chi_escape_cancels_chooser(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Esc backs out of the chooser without sending, and other keys still work."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_multi_chi())
+    bar = page.locator("game-pane").locator(".prompt-bar")
+    await expect(bar).to_be_visible(timeout=5000)
+
+    await page.keyboard.press("c")
+    await expect(bar).to_contain_text("Which chi?")
+    await page.keyboard.press("Escape")
+    await expect(bar).not_to_contain_text("Which chi?")
+
+    # Space still passes after cancelling.
+    await page.keyboard.press("Space")
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["action"] == {"type": "PASS"}, action_msg
 
 
 # --- fixture 9: illegal-action banner ---
