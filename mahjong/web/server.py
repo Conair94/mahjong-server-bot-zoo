@@ -357,8 +357,10 @@ class WebOrchestrator:
             # failure is post-mortem-able (CLAUDE.md "log enough to post-mortem"),
             # then tear the table down gracefully so seated clients receive a
             # DETACH instead of hanging forever.
+            # [DEF-01] parked investigation: see docs/specs/feedback-backlog.md.
+            # This stack trace is exactly what that ledger row is waiting for.
             _logger.exception(
-                "hand_loop_crashed hand_id=%s seed=%s hand_index=%s",
+                "hand_loop_crashed [DEF-01] hand_id=%s seed=%s hand_index=%s",
                 self._hand_id_for_hand(self._hand_index),
                 self._seed + self._hand_index,
                 self._hand_index,

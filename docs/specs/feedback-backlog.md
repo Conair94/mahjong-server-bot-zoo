@@ -46,6 +46,34 @@ Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
 ---
 
+## Deferred ledger (DEF-NN)
+
+Work consciously parked — punted features, browser-verify-owed UI, and
+**instrument-and-defer** root causes. Per the project working agreement
+([CLAUDE.md § Deferring work](../../CLAUDE.md)), this table is what makes a deferral
+*discoverable*; the linked spec can hold the detail. Every row names **what / why /
+revive-trigger**. An instrument-and-defer row also pins the **exact log string to grep**
+— when that string appears in a real run, the parked investigation resumes with the
+stack trace it was waiting for.
+
+| ID | What's parked | Why deferred | Revive trigger | Grep / ref |
+| --- | --- | --- | --- | --- |
+| DEF-01 | FB-01 concealed-gang hang **root trigger** (the precise exception). Fix converted the silent hang into a logged teardown in *both* hand loops; the original cause is offline-clean and unreproducible. | Replay logic steps cleanly; no deterministic repro. Instrument-and-defer is the honest fix. | The log string appears in a real run → read the traceback, fix the trigger directly. | `hand_loop_crashed` ([web/server.py:360](../../mahjong/web/server.py#L360), [server/registry.py:815](../../mahjong/server/registry.py#L815)) |
+| DEF-02 | FB-04 leftovers: paginated "my games" view (`GET_HISTORY` wired+tested, no "load more" UI), match-replay, public-replays config. | Profile recent-20 covers the common case. | A player asks for older games / match replay. | [account-records-replay.md](account-records-replay.md) |
+| DEF-03 | FB-05 leftovers: lobby server-push-on-change, start-authority reason chip, bot↔human mid-lobby seat conversion. | 2 s lobby poll keeps the list fresh; multi-human is rare today. | Lag complaint, or a 2nd+ human table becomes common. | [table-management.md](table-management.md) |
+| DEF-04 | **Browser-verify owed** on the deployed build: FB-06 audio, FB-07 console, FB-08 (Spec 29 token/profile), Spec 22 §22.x UI, Spec 25 admin tunnel/feedback/training panes, cardinal pinwheel. | Unit/Playwright-green; real-device pass not yet run. | Next live deploy / play session — flip each to `verified`. | (this doc + Spec 22/25) |
+| DEF-05 | Auth: real auth-targeted rate limiter (e.g. 10 failures/IP/hr); RESUME token rotation. | Friends-and-family + connection-wide cap suffices pre-S7. | S7 ops hardening, or a public-abuse signal. | [auth.md:23](auth.md), [auth.md:294](auth.md) |
+| DEF-06 | Late-join **replay-from-record** (catch a mid-hand joiner up). | Refusal gate (Spec 20) is enough; needs per-table replay-lock design. | Someone actually requests mid-hand late-join. | [late-join-replay.md:133](late-join-replay.md) |
+| DEF-07 | Decide-timeout heartbeat extension (`PROMPT_HEARTBEAT`: keep an engaged human's clock alive). | Needs wire + client + timer-reset work; fixed timeout OK for now. | Players report being timed out while actively deciding. | [human-decide-timeout.md:94](human-decide-timeout.md) |
+| DEF-08 | Scoring-config false-mahjong penalty. | Declared in config schema but unreachable in-engine today. | The engine can produce an illegal-declared-win state. | [scoring-config.md](scoring-config.md) |
+| DEF-09 | Admin-console: control-plane login + network bind; `systemd` supervisor switch. | v1 ships the script + token-gated status. | Production Linux deploy. | [admin-console.md:35](admin-console.md), [admin-console.md:383](admin-console.md) |
+| DEF-10 | Feedback-tracking: status filter + auto-archive of `implemented`/`wontfix` rows. | Nice-to-have; backlog is short. | Pane gets noisy enough to need it. | [feedback-tracking.md:137](feedback-tracking.md) |
+
+When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
+does the work — same rule as the FB table above.
+
+---
+
 ## FB-01 — Concealed-gang hang / concealed tiles not displayed
 
 - **Report(s):** `20260606_000643_bug.txt` (ConnorL, 2026-06-06).
