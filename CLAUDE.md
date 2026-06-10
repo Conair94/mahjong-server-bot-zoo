@@ -65,3 +65,11 @@ Default to whatever standard already exists in the surrounding ecosystem (Botzon
 - The plans in `docs/` are the source of truth for what we're building. If you find yourself about to add a feature not in a plan, stop and update the plan first.
 - Walking skeleton before depth: end-to-end "ugly but working" path (server ↔ bot ↔ replay) beats a polished rule engine with no surrounding system.
 - No speculative abstractions. Three concrete bots before a `BotInterface`. One trained model before a `ModelRegistry`.
+
+## Deferring work
+
+The canonical ledger for *anything parked* — punted features, browser-verify-owed UI, and instrument-and-defer follow-ups — is the **Deferred ledger** section of [docs/specs/feedback-backlog.md](docs/specs/feedback-backlog.md). Player-reported items keep their `FB-NN` ids; everything else gets a `DEF-NN` id in the same doc.
+
+Every entry names **what / why / revive-trigger** (see the global working agreement's "Deferring work"). Don't leave a deferral as a bare paragraph in a spec — the spec can hold the detail, but the one-line ledger row is what makes it discoverable.
+
+**Instrument-and-defer is load-bearing here** because the project's verification rule forbids silent failure. When a fix converts a silent failure into a logged one and parks the root cause (the FB-01 `hand_aborted` guard is the template), the ledger row records the **exact log string to grep** and the log line records the `DEF-NN`. When that string appears in a run, the parked investigation resumes with the stack trace it was waiting for.

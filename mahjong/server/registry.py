@@ -811,8 +811,10 @@ class TableHandle:
             # the *live* multi-table path. An unhandled exception here used to kill
             # the task silently — clients frozen, no HAND_END, record truncated
             # mid-hand. Log with full context, then tear the table down gracefully.
+            # [DEF-01] parked investigation: see docs/specs/feedback-backlog.md.
+            # This stack trace is exactly what that ledger row is waiting for.
             _logger.exception(
-                "hand_loop_crashed table=%s hand_id=%s seed=%s hand_index=%s",
+                "hand_loop_crashed [DEF-01] table=%s hand_id=%s seed=%s hand_index=%s",
                 self._table_id,
                 self._hand_id_for_hand(self._hand_index),
                 self._seed + self._hand_index,
