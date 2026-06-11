@@ -45,7 +45,7 @@ def _attached(own_seat: int = 0) -> dict[str, Any]:
 
 
 async def _wait_for_attached(page: Page) -> None:
-    await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(timeout=5000)
 
 
 async def test_leave_button_absent_in_lobby(page: Page, fake_wire_server: FakeWireServer) -> None:
@@ -70,7 +70,7 @@ async def test_leave_button_two_step_returns_to_lobby(
     # First click only arms the confirm — still in the table, nothing sent.
     await leave_btn.click()
     await expect(leave_btn).to_contain_text("leave?")
-    await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible()
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible()
 
     # Second click leaves: a DETACH frame goes out and the lobby renders
     # without any server ack (optimistic — the hung-table escape).
