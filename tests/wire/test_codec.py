@@ -254,6 +254,21 @@ _PROMPT: dict[str, Any] = {
     "prompt_id": "p_17_0_23",
 }
 
+_CHAT: dict[str, Any] = {
+    "kind": "CHAT",
+    "text": "nice kong",
+}
+
+_CHAT_MESSAGE: dict[str, Any] = {
+    "kind": "CHAT_MESSAGE",
+    "seq": 41,
+    "table_id": 3,
+    "hand_index": 2,
+    "seat": 1,
+    "ts": "2026-06-11T22:10:00.000Z",
+    "text": "nice kong",
+}
+
 _ACTION: dict[str, Any] = {
     "kind": "ACTION",
     "ref": 23,
@@ -383,6 +398,8 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("EVENT", _EVENT),
     ("PROMPT", _PROMPT),
     ("ACTION", _ACTION),
+    ("CHAT", _CHAT),
+    ("CHAT_MESSAGE", _CHAT_MESSAGE),
     ("HAND_END", _HAND_END),
     ("CREATE_TABLE", _CREATE_TABLE),
     ("TABLE_CREATED", _TABLE_CREATED),

@@ -44,6 +44,8 @@ KNOWN_KINDS: frozenset[str] = frozenset(
         "PROMPT",
         "ACTION",
         "HAND_END",
+        "CHAT",
+        "CHAT_MESSAGE",
         "CREATE_TABLE",
         "TABLE_CREATED",
         "CLOSE_TABLE",
