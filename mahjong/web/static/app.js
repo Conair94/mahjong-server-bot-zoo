@@ -2078,6 +2078,7 @@ class MahjongApp extends LitElement {
     _settingsOpen: { state: true }, // settings overlay visibility
     _profile: { state: true },      // PROFILE payload (null while loading)
     _serverFeatures: { state: true },// HELLO.features — gates profile button, etc.
+    _leaveArmed: { state: true },   // FB-14 leave button two-step confirm
   };
 
   static styles = css`
@@ -2111,6 +2112,8 @@ class MahjongApp extends LitElement {
     }
     .theme-btn:hover { color: var(--accent); border-color: var(--accent); }
     .theme-btn .hint { color: var(--fg-dim); margin-left: 0.5rem; }
+    /* FB-14: armed "leave?" state reads as a warning. */
+    .leave-btn.armed { color: var(--accent-red); border-color: var(--accent-red); }
 
     /* --- Auth form (Step 8.5) ------------------------------------------- */
     .auth-overlay {
@@ -2243,6 +2246,9 @@ class MahjongApp extends LitElement {
     // than one (or a LIVE takeover candidate) renders rows in the lobby.
     this._seatHolds = [];
     this._rejoinNotice = null;                  // transient "Reconnected…" toast text
+    // FB-14: in-game "leave table" escape hatch (two-step confirm).
+    this._leaveArmed = false;
+    this._leaveArmTimer = null;
   }
 
   connectedCallback() {
@@ -2726,6 +2732,7 @@ class MahjongApp extends LitElement {
     this._view = "lobby";
     this._lobbyError = null;
     this._rejoinNotice = null;
+    this._disarmLeave();
     // Reset any stale attach state — lobby is the "between-tables" view.
     this._attachedTableId = null;
     this._attachedSeat = null;
@@ -2775,10 +2782,45 @@ class MahjongApp extends LitElement {
   _enterTableView() {
     this._view = "table";
     this._rejoinNotice = null;  // landed in the game — drop the reconnect toast
+    this._disarmLeave();
     if (this._lobbyAutoRefresh !== null) {
       clearInterval(this._lobbyAutoRefresh);
       this._lobbyAutoRefresh = null;
     }
+  }
+
+  // --- FB-14: leave table → back to the main menu -------------------------
+
+  _disarmLeave() {
+    this._leaveArmed = false;
+    if (this._leaveArmTimer !== null) {
+      clearTimeout(this._leaveArmTimer);
+      this._leaveArmTimer = null;
+    }
+  }
+
+  _onLeaveTable() {
+    // Two-step confirm: first click arms ("[ leave? ]"), second click within
+    // 4s actually leaves. Avoids forfeiting a seat on a stray click.
+    if (!this._leaveArmed) {
+      this._leaveArmed = true;
+      this._leaveArmTimer = setTimeout(() => this._disarmLeave(), 4000);
+      return;
+    }
+    this._disarmLeave();
+    // Tell the server we're leaving (releases the seat; the orchestrator
+    // returns this connection to its lobby loop). Sent before _enterLobby's
+    // LIST_TABLES so the server processes them in that order.
+    try {
+      this._conn.send({ kind: "DETACH", reason: "leaving" });
+    } catch (err) {
+      console.warn("DETACH send failed:", err);
+    }
+    // Switch views optimistically — the escape hatch must work even if the
+    // server never acks (that's the hung-table case this exists for).
+    const pane = this.renderRoot.querySelector("table-page")?.gamePane;
+    if (pane) pane.clearPrompt();
+    this._enterLobby();
   }
 
   _onLobbyJoin(e) {
@@ -2931,6 +2973,15 @@ class MahjongApp extends LitElement {
  ║   Mahjong / 麻将        — web client                     ║
  ╚══════════════════════════════════════════════════════════╝</pre>
         <div class="controls">
+          ${this._view === "table" && !showAuth
+            ? html`<button
+                class="theme-btn leave-btn ${this._leaveArmed ? "armed" : ""}"
+                @click=${this._onLeaveTable}
+                title="Leave the table and return to the main menu"
+              >
+                ${this._leaveArmed ? "[ leave? ]" : "[ ⌂ menu ]"}
+              </button>`
+            : ""}
           ${!showAuth && profileSupported
             ? html`<button
                 class="theme-btn"

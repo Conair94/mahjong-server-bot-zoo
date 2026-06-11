@@ -271,6 +271,12 @@ class MultiTableOrchestrator:
         Phase 0 (auth):       client sends AUTH_REQUEST or RESUME (if required).
         Phase 1 (pre-attach): loop reading admin / discovery messages.
         Phase 2 (attached):   forward inbound to the table's SessionMux.
+
+        Phases 1↔2 cycle (FB-14): leaving a table — a seated client's DETACH,
+        or a spectator's STOP_SPECTATING — returns the connection to the
+        Phase 1 lobby loop instead of requiring a socket drop, so a player can
+        always get back to the menu (even out of a hung hand: this dispatch
+        runs in the connection read loop, independent of the hand task).
         """
         await self._send_hello(conn)
 
@@ -280,79 +286,97 @@ class MultiTableOrchestrator:
             if not authed:
                 return
 
-        # Phase 1 — admin / discovery loop
-        table: TableHandle | None = None
-        try:
-            timeout = FIRST_FRAME_TIMEOUT_S
-            while True:
-                try:
-                    msg = await asyncio.wait_for(conn.recv(), timeout=timeout)
-                except TimeoutError:
-                    return
-                except Exception:
-                    return
-
-                kind = msg.get("kind")
-                timeout = ADMIN_FRAME_TIMEOUT_S  # relax after first message
-
-                if kind == "LIST_TABLES":
-                    await self._handle_list_tables(conn)
-
-                elif kind == "CREATE_TABLE":
-                    ok = await self._handle_create_table(conn, msg)
-                    if not ok:
-                        # Error sent inside; continue so client can retry or disconnect
-                        pass
-
-                elif kind == "CLOSE_TABLE":
-                    await self._handle_close_table(conn, msg)
-
-                elif kind == "FEEDBACK":
-                    await self._handle_feedback(conn, msg)
-
-                elif kind == "GET_PROFILE":
-                    await self._handle_get_profile(conn)
-
-                elif kind == "GET_HISTORY":
-                    await self._handle_get_history(conn, msg)
-
-                elif kind == "GET_REPLAY":
-                    await self._handle_get_replay(conn, msg)
-
-                elif kind == "ATTACH":
-                    table = await self._handle_attach(conn, msg)
-                    if table is None:
+        timeout = FIRST_FRAME_TIMEOUT_S
+        while True:
+            # Phase 1 — admin / discovery loop
+            table: TableHandle | None = None
+            # The only kind that legitimately ends Phase 2 for this role: a
+            # seat leaves with DETACH, a spectator with STOP_SPECTATING.  The
+            # mismatched kind is a no-op in the mux, and breaking out on it
+            # would strand a still-subscribed connection in the lobby.
+            leave_kind = "DETACH"
+            try:
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(conn.recv(), timeout=timeout)
+                    except TimeoutError:
                         return
-                    break  # enter inbound loop
-
-                elif kind == "SPECTATE":
-                    table = await self._handle_spectate(conn, msg)
-                    if table is None:
+                    except Exception:
                         return
-                    break  # enter inbound loop
 
-                else:
-                    with contextlib.suppress(Exception):
-                        await conn.send({"kind": "ERROR", "code": "unexpected_kind"})
-                    return
-        except Exception:
-            return
+                    kind = msg.get("kind")
+                    timeout = ADMIN_FRAME_TIMEOUT_S  # relax after first message
 
-        # Phase 2 — inbound loop for attached / spectating connection
-        if table is not None:
+                    if kind == "LIST_TABLES":
+                        await self._handle_list_tables(conn)
+
+                    elif kind == "CREATE_TABLE":
+                        ok = await self._handle_create_table(conn, msg)
+                        if not ok:
+                            # Error sent inside; continue so client can retry or disconnect
+                            pass
+
+                    elif kind == "CLOSE_TABLE":
+                        await self._handle_close_table(conn, msg)
+
+                    elif kind == "FEEDBACK":
+                        await self._handle_feedback(conn, msg)
+
+                    elif kind == "GET_PROFILE":
+                        await self._handle_get_profile(conn)
+
+                    elif kind == "GET_HISTORY":
+                        await self._handle_get_history(conn, msg)
+
+                    elif kind == "GET_REPLAY":
+                        await self._handle_get_replay(conn, msg)
+
+                    elif kind == "ATTACH":
+                        table = await self._handle_attach(conn, msg)
+                        if table is None:
+                            return
+                        leave_kind = "DETACH"
+                        break  # enter inbound loop
+
+                    elif kind == "SPECTATE":
+                        table = await self._handle_spectate(conn, msg)
+                        if table is None:
+                            return
+                        leave_kind = "STOP_SPECTATING"
+                        break  # enter inbound loop
+
+                    else:
+                        with contextlib.suppress(Exception):
+                            await conn.send({"kind": "ERROR", "code": "unexpected_kind"})
+                        return
+            except Exception:
+                return
+
+            # Phase 2 — inbound loop for attached / spectating connection
+            left_table = False
             try:
                 async for msg in conn:
+                    kind = msg.get("kind")
                     # FEEDBACK is a connection-level concern (it writes to
                     # data_dir/reports), not a table action.  Intercept it here so
                     # the in-game feedback button still works once attached —
                     # otherwise the table session replies ERROR unknown_kind and
                     # the client's feedback modal hangs waiting for an ACK.
-                    if msg.get("kind") == "FEEDBACK":
+                    if kind == "FEEDBACK":
                         await self._handle_feedback(conn, msg)
                         continue
                     await table.handle_inbound(conn, msg)
+                    if kind == leave_kind:
+                        # The mux has acked (DETACHED) and released the seat /
+                        # spectator slot; this connection is in the lobby again.
+                        left_table = True
+                        break
             finally:
-                await table.on_socket_dropped(conn)
+                if not left_table:
+                    await table.on_socket_dropped(conn)
+            if not left_table:
+                return
+            # Loop back to Phase 1 with the lobby read timeout.
 
     # --- auth phase ---
 
