@@ -21,7 +21,13 @@
 //   human at the same table got there first); treat as silent no-op.
 
 import { LitElement, html, css } from "lit";
-import { renderTable, renderPinwheel, renderHandEndSummary, renderScoreGraph } from "/static/render.js";
+import {
+  renderTable,
+  renderMinimal,
+  renderPinwheel,
+  renderHandEndSummary,
+  renderScoreGraph,
+} from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { audioCues, cueForEvent, cueForPrompt } from "/static/audio.js";
 import {
@@ -175,6 +181,7 @@ class GamePane extends LitElement {
     seatView: { state: true },
     ownSeat: { state: true },
     tileStyle: { type: String },
+    viewMode: { type: String },
     frames: { state: true },
     showLog: { state: true },
     currentPrompt: { state: true },
@@ -469,6 +476,150 @@ class GamePane extends LitElement {
         border: 1px solid var(--error);
         color: var(--error);
       }
+
+      /* --- Minimal view (minimal-play-view.md). Large print, decluttered:
+       * only whose-turn, the large last discard, each player's melds +
+       * flowers + score, a combined discard pond, and your own hand. */
+      .minimal-wrap {
+        margin: 0.25rem 0 0.75rem;
+        font-size: 1.1rem; /* large print baseline; tiles scale via em */
+      }
+      .mv {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      /* Whose-turn banner — the headline cue. */
+      .mv-turn {
+        font-size: 1.5em;
+        font-weight: 600;
+        text-align: center;
+        padding: 0.3rem 0;
+        letter-spacing: 0.04em;
+        color: var(--fg-dim);
+      }
+      .mv-turn-you {
+        color: var(--accent);
+        border: 1px solid var(--accent);
+      }
+      /* Most-recent discard, shown large. */
+      .mv-lastdiscard {
+        text-align: center;
+        padding: 0.25rem 0;
+        border-top: 1px dashed var(--border);
+        border-bottom: 1px dashed var(--border);
+      }
+      .mv-lastdiscard.mv-ld-empty {
+        color: var(--fg-dim);
+        font-style: italic;
+      }
+      .mv-ld-label {
+        color: var(--fg-dim);
+        font-size: 0.85em;
+        margin-bottom: 0.15rem;
+      }
+      .mv-ld-tile .tile {
+        font-size: 3.4em;
+      }
+      .mv-ld-tile .tile.dragon,
+      .mv-ld-tile .tile.face-down {
+        font-size: 3.4em;
+      }
+      /* Per-player roster rows: name (wind) · score · melds · flowers. */
+      .mv-roster {
+        display: flex;
+        flex-direction: column;
+      }
+      .mv-row,
+      .mv-own-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.15rem 1.1rem;
+        padding: 0.25rem 0;
+        border-bottom: 1px dashed var(--border);
+      }
+      .mv-name {
+        color: var(--accent);
+        min-width: 9ch;
+        font-weight: 600;
+      }
+      .mv-name.mv-you {
+        color: var(--accent-red);
+      }
+      .mv-wind {
+        color: var(--fg-dim);
+        font-weight: 400;
+      }
+      .mv-bot {
+        color: var(--fg-dim);
+        font-size: 0.8em;
+        margin-left: 0.25em;
+      }
+      .mv-score {
+        color: var(--fg-dim);
+        min-width: 4ch;
+      }
+      .mv-score::before {
+        content: "♦ ";
+      }
+      .mv-melds .tile,
+      .mv-flowers .tile {
+        font-size: 1.3em;
+      }
+      .mv-noflower {
+        color: var(--fg-dim);
+      }
+      /* Combined discard pond (chronological). High-frequency background
+       * info, so smaller than the hand; the latest tile is highlighted to
+       * tie back to the large last-discard. */
+      .mv-pond {
+        padding: 0.25rem 0;
+      }
+      .mv-pond-label {
+        color: var(--fg-dim);
+        font-size: 0.85em;
+        margin-bottom: 0.15rem;
+      }
+      .mv-pond-tiles {
+        line-height: 1.7;
+      }
+      .mv-pond-tiles .tile {
+        font-size: 1.3em;
+      }
+      .pond-latest {
+        background-color: color-mix(in srgb, var(--accent) 20%, transparent);
+        border-radius: 0.15em;
+        padding: 0 0.1em;
+      }
+      /* Your own block: roster head + the large concealed hand. */
+      .mv-own {
+        border-top: 1px solid var(--border);
+        padding-top: 0.4rem;
+      }
+      .mv-own-hand {
+        margin-top: 0.4rem;
+        line-height: 2;
+      }
+      .mv-own-hand .tile {
+        font-size: 2.4em;
+      }
+      .mv-own-hand .tile.dragon,
+      .mv-own-hand .tile.face-down {
+        font-size: 2.6em;
+      }
+
+      /* Prominent claim banner in minimal mode (the small chip becomes a
+       * full-width alert so a claim window can't be missed). */
+      .claim-chip.mv-claim {
+        margin: 0.25rem 0 0.5rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 1.4em;
+        text-align: center;
+        border: 2px solid var(--accent-red);
+        border-radius: 3px;
+        letter-spacing: 0.08em;
+      }
     `,
   ];
 
@@ -478,6 +629,7 @@ class GamePane extends LitElement {
     this.seatView = null;
     this.ownSeat = null;
     this.tileStyle = "ascii";
+    this.viewMode = "minimal";
     this.frames = [];
     this.showLog = false;
     this.currentPrompt = null;
@@ -659,32 +811,42 @@ class GamePane extends LitElement {
   render() {
     // selectedTile threaded into renderTable so the renderer can mark the
     // cursor tile with .selected — see §1 of layer8-closeout.md.
+    // Minimal is the default; classic is the original stat-rich table. The
+    // pinwheel is classic-only — the minimal view carries its own whose-turn
+    // banner and large last-discard, so the pinwheel would just be clutter.
+    const isMinimal = this.viewMode !== "classic";
+    const renderFn = isMinimal ? renderMinimal : renderTable;
     const tableContent = this.seatView
-      ? renderTable(this.seatView, this.ownSeat, {
+      ? renderFn(this.seatView, this.ownSeat, {
           tileStyle: this.tileStyle,
           selectedTile: this.selectedTile,
         })
       : null;
-    const pinwheel = this.seatView
-      ? renderPinwheel(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
-      : null;
+    const pinwheel =
+      !isMinimal && this.seatView
+        ? renderPinwheel(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
+        : null;
     const handEndSummary = this.seatView?.terminal
       ? renderHandEndSummary(this.seatView, this.ownSeat, { tileStyle: this.tileStyle })
       : null;
 
     const claimAvailable = isClaimAvailable(this.currentPrompt);
     return html`
-      <div class="pane">
+      <div class="pane ${isMinimal ? "minimal" : "classic"}">
         ${paneHeader("Game pane", null, null)}
         ${claimAvailable
-          ? html`<div class="claim-chip">[ CLAIM AVAILABLE ]</div>`
+          ? html`<div class="claim-chip ${isMinimal ? "mv-claim" : ""}">
+              ${isMinimal ? "⚠ CLAIM AVAILABLE" : "[ CLAIM AVAILABLE ]"}
+            </div>`
           : ""}
         <div class="status ${this.status}">Connection: ${this.status}</div>
         ${tableContent !== null
-          ? html`<div class="table-ascii pinwheel-wrap">
-              ${pinwheel}
-              ${tableContent}
-            </div>`
+          ? isMinimal
+            ? html`<div class="minimal-wrap">${tableContent}</div>`
+            : html`<div class="table-ascii pinwheel-wrap">
+                ${pinwheel}
+                ${tableContent}
+              </div>`
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
 
         ${handEndSummary ?? ""}
@@ -1368,6 +1530,7 @@ class TablePage extends LitElement {
   static properties = {
     panes: { type: Object },
     tileStyle: { type: String },
+    viewMode: { type: String },
   };
 
   static styles = css`
@@ -1486,7 +1649,7 @@ class TablePage extends LitElement {
         </span>
       </div>
       <div class=${gridClasses.join(" ")}>
-        <div class="slot-game"><game-pane .tileStyle=${this.tileStyle}></game-pane></div>
+        <div class="slot-game"><game-pane .tileStyle=${this.tileStyle} .viewMode=${this.viewMode}></game-pane></div>
         ${!sideEmpty
           ? html`
               <div class="slot-side">
@@ -1968,6 +2131,12 @@ const THEMES = ["dark", "light"];
 const TILE_STYLE_STORAGE_KEY = "mahjong-tile-style";
 const TILE_STYLES = ["ascii", "unicode"];
 
+// Play-view layout: "minimal" (decluttered, large-print — the default while
+// it's the focus of iteration) vs "classic" (the original stat-rich table,
+// slated to grow into the stats-heavy view). Persisted like theme/tile-style.
+const VIEW_MODE_STORAGE_KEY = "mahjong-view-mode";
+const VIEW_MODES = ["minimal", "classic"];
+
 const SOUND_STORAGE_KEY = "mahjong-sound"; // "on" | "off" (FB-06)
 
 // Spec 29 Bug A: the session token is persisted so a full page reload restores
@@ -2012,6 +2181,16 @@ function loadInitialTileStyle() {
     // ignore.
   }
   return "ascii";
+}
+
+function loadInitialViewMode() {
+  try {
+    const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (VIEW_MODES.includes(stored)) return stored;
+  } catch {
+    // ignore.
+  }
+  return "minimal"; // minimal is the default play view
 }
 
 // FB-06: sound on by default; persisted as "off" when the user mutes.
@@ -2074,6 +2253,7 @@ class MahjongApp extends LitElement {
     panes: { state: true },
     theme: { state: true },
     tileStyle: { state: true },
+    viewMode: { state: true },
     muted: { state: true },
     // Auth state — driven by HELLO.features and AUTH_RESPONSE.
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
@@ -2224,6 +2404,7 @@ class MahjongApp extends LitElement {
     this.panes = { chat: false, stats: false, spectator: false };
     this.theme = loadInitialTheme();
     this.tileStyle = loadInitialTileStyle();
+    this.viewMode = loadInitialViewMode();
     this.muted = loadInitialMuted();
     audioCues.setMuted(this.muted);
     this._conn = null;
@@ -2301,13 +2482,17 @@ class MahjongApp extends LitElement {
         return;
       }
     }
-    // Alt+T toggles theme; Alt+U toggles tile style; Alt+, opens settings.
+    // Alt+T toggles theme; Alt+M toggles view (minimal/classic); Alt+U toggles
+    // tile style; Alt+, opens settings.
     // Other Alt-chords belong to <table-page>; we early-return to avoid
     // double-handling.
     if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.code === "KeyT") {
       e.preventDefault();
       this._toggleTheme();
+    } else if (e.code === "KeyM") {
+      e.preventDefault();
+      this._toggleViewMode();
     } else if (e.code === "KeyU") {
       e.preventDefault();
       this._toggleTileStyle();
@@ -2335,6 +2520,15 @@ class MahjongApp extends LitElement {
     }
   }
 
+  _toggleViewMode() {
+    this.viewMode = this.viewMode === "minimal" ? "classic" : "minimal";
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, this.viewMode);
+    } catch {
+      // ignore — non-fatal.
+    }
+  }
+
   _toggleSound() {
     this.muted = !this.muted;
     audioCues.setMuted(this.muted);
@@ -2351,6 +2545,7 @@ class MahjongApp extends LitElement {
   _settingsValues() {
     return {
       theme: this.theme,
+      "view-mode": this.viewMode,
       "tile-style": this.tileStyle,
       "pane-chat": this.panes.chat ? "on" : "off",
       "pane-stats": this.panes.stats ? "on" : "off",
@@ -2363,6 +2558,8 @@ class MahjongApp extends LitElement {
     const key = e.detail?.key;
     if (key === "theme") {
       this._toggleTheme();
+    } else if (key === "view-mode") {
+      this._toggleViewMode();
     } else if (key === "tile-style") {
       this._toggleTileStyle();
     } else if (key === "sound") {
@@ -3066,6 +3263,7 @@ class MahjongApp extends LitElement {
       <table-page
         .panes=${this.panes}
         .tileStyle=${this.tileStyle}
+        .viewMode=${this.viewMode}
         ?hidden=${showLobby || showAuth || showProfile || showResuming || showReplay}
       ></table-page>
       ${this._settingsOpen

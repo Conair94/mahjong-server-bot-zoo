@@ -180,17 +180,17 @@ async def test_settings_pane_rows_disabled_in_lobby(
     await _mount_settings(
         page,
         fake_wire_server,
-        {"theme": "dark", "tile-style": "ascii", "sound": "on", "pane-chat": "off", "pane-stats": "off", "pane-spectator": "off"},
+        {"theme": "dark", "view-mode": "minimal", "tile-style": "ascii", "sound": "on", "pane-chat": "off", "pane-stats": "off", "pane-spectator": "off"},
         table_active=False,
     )
-    # .val buttons order matches SETTINGS: [theme, tiles, sound, chat, stats, spectator].
-    # The first three are global (enabled); the pane rows are table-scoped (disabled).
+    # .val buttons order matches SETTINGS: [theme, view, tiles, sound, chat, stats, spectator].
+    # The first four are global (enabled); the pane rows are table-scoped (disabled).
     disabled = await page.evaluate(
         """Array.from(
             document.getElementById('__sm').shadowRoot.querySelectorAll('.val')
         ).map((b) => b.disabled)"""
     )
-    assert disabled == [False, False, False, True, True, True]
+    assert disabled == [False, False, False, False, True, True, True]
 
 
 # ---------------------------------------------------------------------------

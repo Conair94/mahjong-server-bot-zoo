@@ -70,7 +70,59 @@ function cloneSeatView(view) {
     last_discard: view.last_discard ? { ...view.last_discard } : null,
     pending_claims: view.pending_claims ? [...view.pending_claims] : [],
     terminal: view.terminal ? { ...view.terminal } : null,
+    // Global discard timeline ({seat, tile} in play order) for the minimal
+    // view's combined pond. Deep-copied so a handler's push doesn't mutate the
+    // previous view (which would corrupt history and defeat the renderer's
+    // identity-based change detection). Carried as-is when absent.
+    discard_pond: Array.isArray(view.discard_pond)
+      ? view.discard_pond.map((e) => ({ ...e }))
+      : undefined,
   };
+}
+
+// Best-effort global discard order from the per-seat discard piles. Used to
+// SEED `discard_pond` the first time a discard is applied to a view that
+// doesn't carry one yet. On a hand watched from the start this seeds at
+// exactly one tile (the order is then exact going forward); on a mid-hand
+// reconnect the snapshot has many discards but no global order, so we
+// approximate by interleaving the piles round-robin from the dealer. The
+// pond self-heals to exact order as subsequent discards append. (Exact
+// reconnect ordering parked — see DEF-15 in the deferred ledger.)
+function _seedPond(view) {
+  const seats = view.seats ?? [];
+  const piles = seats.map((s) => ({ seat: s.seat, tiles: [...(s.discards ?? [])] }));
+  const dealer = view.dealer_seat ?? 0;
+  // Walk seats in counter-clockwise play order from the dealer, popping one
+  // tile per round until every pile is drained.
+  const order = [0, 1, 2, 3].map((i) => piles.find((p) => p.seat === (dealer + i) % 4)).filter(Boolean);
+  const pond = [];
+  let remaining = order.reduce((n, p) => n + p.tiles.length, 0);
+  const cursor = new Map(order.map((p) => [p.seat, 0]));
+  while (remaining > 0) {
+    for (const p of order) {
+      const idx = cursor.get(p.seat);
+      if (idx < p.tiles.length) {
+        pond.push({ seat: p.seat, tile: p.tiles[idx] });
+        cursor.set(p.seat, idx + 1);
+        remaining -= 1;
+      }
+    }
+  }
+  return pond;
+}
+
+// Remove the most recent {seat, tile} entry from the pond — mirrors
+// `pullCalledTileOffDiscarder`, which lifts a claimed tile back off the
+// discarder's pile so it doesn't double-count once it joins a meld.
+function pullCalledTileOffPond(view, tile, fromSeat) {
+  if (!Array.isArray(view.discard_pond) || fromSeat == null || !tile) return;
+  for (let i = view.discard_pond.length - 1; i >= 0; i--) {
+    const e = view.discard_pond[i];
+    if (e.seat === fromSeat && e.tile === tile) {
+      view.discard_pond.splice(i, 1);
+      return;
+    }
+  }
 }
 
 function isOwnConcealed(seatBlock) {
@@ -170,6 +222,17 @@ function applyDiscard(view, event, _ownSeat) {
   // the from_hand flag only matters for the renderer's tsumogiri tag.
   removeOneFromConcealed(seat, event.tile);
   seat.discards.push(event.tile);
+
+  // Global discard timeline for the combined pond. A pre-existing pond gets
+  // the new tile appended in arrival order; an absent pond is seeded from the
+  // per-seat piles (which already include the just-pushed tile, so no extra
+  // append). cloneSeatView deep-copies the pond, so this never mutates the
+  // previous view.
+  if (Array.isArray(view.discard_pond)) {
+    view.discard_pond.push({ seat: event.seat, tile: event.tile });
+  } else {
+    view.discard_pond = _seedPond(view);
+  }
 
   view.last_discard = {
     seat: event.seat,
@@ -288,6 +351,10 @@ function applyClaimResolution(view, event, _ownSeat) {
   // still-intact last_discard for CHI (and older servers).
   const calledTile = event.called_tile ?? view.last_discard?.tile;
   const fromSeat = view.last_discard?.seat;
+
+  // A claimed tile leaves the discard pile to join a meld, so lift it off the
+  // combined pond too (mirrors pullCalledTileOffDiscarder for the per-seat pile).
+  pullCalledTileOffPond(view, calledTile, fromSeat);
 
   if (claim === "PENG") {
     if (!calledTile) return view;

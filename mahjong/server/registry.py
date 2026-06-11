@@ -456,7 +456,48 @@ class TableHandle:
     # --- snapshot provider (for TableSessions) ---
 
     def _snapshot_provider(self, seat: int | None) -> dict[str, Any]:
-        return cast(dict[str, Any], project_state(self._initial_state, seat))
+        snapshot = cast(dict[str, Any], project_state(self._initial_state, seat))
+        self._annotate_seat_names(snapshot)
+        return snapshot
+
+    def _seat_name_map(self) -> dict[int, dict[str, Any]]:
+        """seat index -> ``{"name": str | None, "is_bot": bool}`` from the roster.
+
+        ``name`` is ``None`` for an unoccupied human seat (the client falls
+        back to wind+seat). Bots are named by their ``bot_id``.
+        """
+        out: dict[int, dict[str, Any]] = {}
+        for seat in range(4):
+            comp = self._seats[seat]
+            if comp.kind == "human":
+                session = self._sessions.seat(seat)
+                if session.user_id is not None:
+                    identity = self._human_identities.get(seat)
+                    display = (identity.get("display") if identity else None) or session.user_id
+                    out[seat] = {"name": display, "is_bot": False}
+                else:
+                    out[seat] = {"name": None, "is_bot": False}
+            else:
+                out[seat] = {"name": comp.bot_id or DEFAULT_BOT_ID, "is_bot": True}
+        return out
+
+    def _annotate_seat_names(self, snapshot: dict[str, Any]) -> None:
+        """Splice the table-roster display name onto each projected seat.
+
+        Player names are a server/registry concept, not engine state, so the
+        pure projection (``project_state``) never carries them. We decorate the
+        snapshot here — the one boundary that holds both the projection and the
+        seat composition — so the web client can label seats by player rather
+        than only by wind+seat. The client reducer (``apply_event.js``
+        ``cloneSeatView``) preserves these extra fields across events, so the
+        single ATTACHED enrichment is enough for the whole hand.
+        """
+        name_map = self._seat_name_map()
+        for seat_view in snapshot.get("seats", []):
+            info = name_map.get(seat_view.get("seat"))
+            if info is not None:
+                seat_view["name"] = info["name"]
+                seat_view["is_bot"] = info["is_bot"]
 
     # --- per-hand path helpers ---
 

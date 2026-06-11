@@ -14,6 +14,7 @@
 //                       the row is disabled (with a hint) in the lobby/profile.
 export const SETTINGS = [
   { key: "theme", label: "Theme", values: ["dark", "light"], hotkey: "Alt+T", scope: "global" },
+  { key: "view-mode", label: "View", values: ["minimal", "classic"], hotkey: "Alt+M", scope: "global" },
   { key: "tile-style", label: "Tiles", values: ["ascii", "unicode"], hotkey: "Alt+U", scope: "global" },
   { key: "sound", label: "Sound", values: ["on", "off"], hotkey: "", scope: "global" },
   { key: "pane-chat", label: "Chat pane", values: ["off", "on"], hotkey: "Alt+C", scope: "table" },
