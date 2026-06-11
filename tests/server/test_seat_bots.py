@@ -42,6 +42,18 @@ def test_build_unknown_bot_raises() -> None:
         build_bot_adapter("nope")
 
 
+def test_v1_is_registered_but_not_default() -> None:
+    # v1 joins the picker; v0 stays the default until the v1-vs-v0 eval
+    # artifact justifies a flip (Spec 35 § Adapter, registry, website).
+    assert "v1" in SEAT_BOTS
+    assert is_known_bot("v1")
+    assert DEFAULT_BOT_ID == "v0"
+    a = build_bot_adapter("v1")
+    assert a.kind == "bot"
+    assert a.identity["bot_id"] == "v1"
+    assert any(b["bot_id"] == "v1" for b in available_bots_wire())
+
+
 def test_available_bots_wire_shape() -> None:
     bots = available_bots_wire()
     assert isinstance(bots, list)

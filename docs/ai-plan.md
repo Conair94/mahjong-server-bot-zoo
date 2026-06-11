@@ -213,7 +213,9 @@ v0 is a **walking skeleton / tracer bullet**: the thinnest end-to-end slice (per
 
 ### v1: rule-based
 
-Components 1–4 (recall component 5 is now Stage B of component 1) wired together with hand-tuned weights — i.e. v0 plus opponent modeling (2), defense (3), and the Stage B belief refinement. No learning. Should decisively beat random, the fan-blind greedy baseline, and v0 itself. Useful as:
+Components 1–4 (recall component 5 is now Stage B of component 1) wired together with hand-tuned weights — i.e. v0 plus opponent modeling (2), defense (3), and the Stage B belief refinement. No learning. Should decisively beat random, the fan-blind greedy baseline, and v0 itself.
+
+**Shipped 2026-06-11 as a deliberate subset** ([Spec 35](specs/v1-rule-bot.md)): Stage A hard accounting (`mahjong/bots/belief.py`), a lite threat heuristic (meld count + lateness + flush commitment) in place of the full archetype forecaster, a heuristic deal-in danger model with push/fold, and tenpai-only payout-weighted wait EV. Stage B, the full forecaster, and the archetype planner stay on the build order (steps 3–6) — at the 3-fan floor, not-dealing-in and not-waiting-on-dead-tiles dominate archetype targeting, which is an 8-fan necessity. Useful as:
 - The first occupant of the always-on spectator table.
 - A strong sparring partner for learned bots.
 - A baseline to detect regressions in the engine itself (its win rate vs. a fixed opponent should be stable across engine versions).
@@ -279,11 +281,11 @@ Reordered from the component order so the first deliverable is an end-to-end *pl
 
 0. **Configurable scoring core** — *(landed; [Spec 26](specs/scoring-config.md).)* drive the `fan_cliff` and the fan→points conversion from ruleset config (the cliff was already enforced, just hard-coded — see *Engine status*), via one shared `scoring.score_delta` so live house-rules play and the training reward can't skew. Config-driven renchan (`next_dealer`). Ships `mcr-house-3fan` (3-fan floor + convex payout). False-mahjong is declared-but-deferred (unreachable through our legality gate). Test-first.
 1. **MVP offense bot (v0)** + a real decision adapter replacing `CannedAdapter`-PASS → the server becomes solo-playable; debuts at the 3-fan floor. Needs (0) but only Stage A of the belief module. *(Landed; [Spec 27](specs/v0-offense-bot.md).)* Offense-only, k=1 greedy on **fan-aware distance** (shanten toward a *ron-feasible* archetype, not any completion); always HU/GANG, PENG/CHI on strict improvement. Pure policy in `mahjong/bots/v0.py`, `V0Adapter` in `mahjong/adapters/v0.py`. 100-game 4×v0 self-play (mcr-house-3fan): 100% hands reach HU, avg winning fan 6.0, balanced ~25%/seat. Surfaced + fixed two latent engine bugs (claim-HU dropped `HAND_END`; replay couldn't reconstruct winning claims / HU terminals).
-2. **Belief-state module, Stage A** (tile-location hard accounting) → ships as the always-on "tiles out" overlay.
+2. **Belief-state module, Stage A** (tile-location hard accounting) → ships as the always-on "tiles out" overlay. *(Module landed with [Spec 35](specs/v1-rule-bot.md) as `mahjong/bots/belief.py`; the overlay UI is still owed.)*
 3. **Hand-shape forecaster** (component 2) → ships as the "opponent hand analyzer" overlay (inference → restricted; see below).
 4. **Belief-state module, Stage B** (archetype reweighting, the former component 5) → upgrades the wall distribution silently; no new UI.
 5. **Deal-in risk** (component 3) → per-discard danger indicator (inference → restricted).
-6. **Payout-weighted ukeire** (component 4) → "possible outs with fan" overlay. Components (1)–(4) wired together = **rule-based v1**, the always-on spectator-table occupant.
+6. **Payout-weighted ukeire** (component 4) → "possible outs with fan" overlay. Components (1)–(4) wired together = **rule-based v1**, the always-on spectator-table occupant. *(A lite subset — Stage A + threat heuristic + deal-in defense + tenpai wait EV — shipped early as the v1 bot, [Spec 35](specs/v1-rule-bot.md); this step's full scope remains for the overlays and 8-fan play.)*
 7. **Value head** (component 6, supervised on the MCR DB).
 8. **Imitation-learned bot (v2).**
 9. **Self-play RL bot (v3).**
