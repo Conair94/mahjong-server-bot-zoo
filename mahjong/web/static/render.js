@@ -74,14 +74,37 @@ function windNameFromSeat(seatIndex) {
   return SEAT_WIND_NAME[seatIndex] ?? `Seat ${seatIndex + 1}`;
 }
 
-// Combined label: "East (Seat 1)" — wind comes from the seat's current
-// seat_wind (rotates between hands), seat number is the fixed 1-indexed
-// table position. We look up the wind from the view so the seat number
-// stays correct across hands where the dealer has rotated.
+function seatByIndex(view, seatIndex) {
+  return view?.seats?.find((s) => s.seat === seatIndex);
+}
+
+// Player display name for a seat, threaded onto the snapshot by the server
+// (TableHandle._snapshot_provider) — the engine projection itself never
+// carries names. Returns null when absent (older snapshots, hand-rolled test
+// views, or an unoccupied human seat) so callers fall back to wind+seat.
+function seatPlayerName(view, seatIndex) {
+  const n = seatByIndex(view, seatIndex)?.name;
+  return typeof n === "string" && n.length > 0 ? n : null;
+}
+
+function seatIsBot(view, seatIndex) {
+  return Boolean(seatByIndex(view, seatIndex)?.is_bot);
+}
+
+function seatWindLetter(view, seatIndex) {
+  return WIND_LETTER[seatByIndex(view, seatIndex)?.seat_wind] ?? "?";
+}
+
+// Combined label: prefers the player name ("Alice (East)") when the roster is
+// present, otherwise falls back to "East (Seat 1)" — wind from the seat's
+// current seat_wind (rotates between hands), seat number the fixed 1-indexed
+// table position. Looking the wind up from the view keeps the seat number
+// correct across hands where the dealer has rotated.
 function fullSeatName(view, seatIndex) {
-  const seat = view?.seats?.find((s) => s.seat === seatIndex);
+  const seat = seatByIndex(view, seatIndex);
   const wind = seat ? (WIND_NAME[seat.seat_wind] ?? "?") : "?";
-  return `${wind} (Seat ${seatIndex + 1})`;
+  const name = seatPlayerName(view, seatIndex);
+  return name ? `${name} (${wind})` : `${wind} (Seat ${seatIndex + 1})`;
 }
 
 function parseTile(token) {
@@ -199,10 +222,15 @@ function renderDiscards(discards, options) {
   return html`<span class="discard-row">${out}</span>`;
 }
 
-function seatHeader(seat, positionLabel) {
+function seatHeader(seat, positionLabel, view) {
   const wind = WIND_NAME[seat.seat_wind] ?? "?";
   const seatNum = seat.seat + 1;
-  return html`<span class="seat-label">${wind} (Seat ${seatNum})</span> <span class="seat-position">(${positionLabel})</span> Score: ${seat.score}`;
+  const name = view ? seatPlayerName(view, seat.seat) : null;
+  const isBot = view ? seatIsBot(view, seat.seat) : false;
+  const label = name
+    ? `${name}${isBot ? " ·bot" : ""} — ${wind} (Seat ${seatNum})`
+    : `${wind} (Seat ${seatNum})`;
+  return html`<span class="seat-label">${label}</span> <span class="seat-position">(${positionLabel})</span> Score: ${seat.score}`;
 }
 
 // Flowers are public-knowledge tiles (state-schema.md: flowers are not
@@ -214,9 +242,9 @@ function renderFlowers(flowers, options) {
   return joinTiles(flowers, " ", options);
 }
 
-function renderOpponent(seat, positionLabel, options) {
+function renderOpponent(seat, positionLabel, view, options) {
   const count = seat.concealed?.count ?? 0;
-  return html`${seatHeader(seat, positionLabel)}
+  return html`${seatHeader(seat, positionLabel, view)}
    Hand:      ${joinFaceDown(count, " ", options)}
    Melds:     ${renderMelds(seat.melds, options)}
    Flowers:   ${renderFlowers(seat.flowers, options)}
@@ -304,7 +332,7 @@ export function renderOwnConcealedTiles(seat, view, ownSeat, options = {}) {
 }
 
 function renderOwn(seat, view, ownSeat, options) {
-  return html`${seatHeader(seat, "— YOU")}
+  return html`${seatHeader(seat, "— YOU", view)}
    Concealed: ${renderOwnConcealedTiles(seat, view, ownSeat, options)}
    Melds:     ${renderMelds(seat.melds, options)}
    Flowers:   ${renderFlowers(seat.flowers, options)}
@@ -350,7 +378,7 @@ function seatBlock(seat, positionLabel, view, ownSeat, options) {
   // `last_drawn` to offset the just-drawn tile (§1 hand-display polish).
   return seat.seat === ownSeat && Array.isArray(seat.concealed)
     ? renderOwn(seat, view, ownSeat, options)
-    : renderOpponent(seat, positionLabel, options);
+    : renderOpponent(seat, positionLabel, view, options);
 }
 
 // --- Pinwheel widget (Step 8.9, cardinal-ui.md) ----------------------------
@@ -487,6 +515,143 @@ ${seatBlock(positions.bottom, "you", seatView, ownSeat, options)}</pre
     <hr class="ascii-rule" />
     <pre class="section">${renderHeader(seatView)}</pre>
   `;
+}
+
+// --- Minimal view (minimal-play-view.md) ----------------------------------
+//
+// A decluttered alternative to renderTable: large print, only the
+// information a player needs to act — whose turn it is, the most recent
+// discard (large), each player's melds + flowers + score, a combined
+// chronological discard pond, and your own hand. Face-down hand counts and
+// the verbose metadata strip are dropped. Player names (seat.name, threaded
+// onto the snapshot server-side) headline every seat. The prominent
+// claim-window cue is owned by <game-pane> (the .claim-chip becomes a banner
+// in minimal mode via CSS) so it survives the player glancing away.
+
+// Whose-turn banner. Deliberately does NOT special-case CLAIM_WINDOW: surfacing
+// "a claim window is open" is an information leak (Spec 22 § 22.1 — the same
+// reason the pinwheel arrow ignores CLAIM_WINDOW). Whether/when a claim window
+// lingers is a body-language tell a player only has at a physical table; the
+// digital phase must not broadcast it. During a claim window `current_actor`
+// still points at the discarder (the reducer leaves it untouched), so falling
+// through keeps the banner stable on the prior turn — no flicker, no tell. Your
+// OWN claim opportunity is still surfaced (the prompt bar + prominent claim
+// banner), which is information you're entitled to. (Auto-claim, which removes
+// the window entirely, is the future fix.)
+function _minimalTurn(view, ownSeat) {
+  if (view.phase === "TERMINAL") {
+    return html`<div class="mv-turn mv-turn-over">Hand complete</div>`;
+  }
+  const actor = view.current_actor ?? 0;
+  if (actor === ownSeat) {
+    return html`<div class="mv-turn mv-turn-you">● YOUR TURN ●</div>`;
+  }
+  return html`<div class="mv-turn">${fullSeatName(view, actor)}'s turn</div>`;
+}
+
+// The most-recent discard, shown large — the single most useful "what just
+// happened" cue. Tiles honour the player's tile-style; size comes from CSS.
+function _minimalLastDiscard(view, options) {
+  const ld = view.last_discard;
+  if (!ld || ld.tile == null) {
+    return html`<div class="mv-lastdiscard mv-ld-empty">No discards yet</div>`;
+  }
+  return html`<div class="mv-lastdiscard">
+    <div class="mv-ld-label">Last discard — ${fullSeatName(view, ld.seat)}</div>
+    <div class="mv-ld-tile">${tile(ld.tile, options)}</div>
+  </div>`;
+}
+
+// Compact flowers cell: the tiles when present (flowers are public), else a
+// dim em-dash so the column still reads as "none".
+function _minimalFlowers(flowers, options) {
+  if (!flowers || flowers.length === 0) {
+    return html`<span class="mv-noflower">—</span>`;
+  }
+  return joinTiles(flowers, " ", options);
+}
+
+// One roster line for a seat: name (wind) · score · melds · flowers. Used for
+// the three opponents; the own seat gets its own block with the hand.
+function _minimalSeatRow(view, seatIndex, options) {
+  const seat = seatByIndex(view, seatIndex);
+  if (!seat) return "";
+  const name = seatPlayerName(view, seatIndex) ?? `Seat ${seatIndex + 1}`;
+  const wind = seatWindLetter(view, seatIndex);
+  const isBot = seatIsBot(view, seatIndex);
+  return html`<div class="mv-row">
+    <span class="mv-name"
+      >${name}${isBot ? html`<span class="mv-bot">·bot</span>` : ""}
+      <span class="mv-wind">(${wind})</span></span
+    >
+    <span class="mv-score">${seat.score ?? 0}</span>
+    <span class="mv-melds">${renderMelds(seat.melds, options)}</span>
+    <span class="mv-flowers">${_minimalFlowers(seat.flowers, options)}</span>
+  </div>`;
+}
+
+// The combined discard pond (decision: combined chronological, not per-seat).
+// Reads the reducer-maintained global timeline (view.discard_pond); falls back
+// to a per-seat concatenation only when the timeline is absent (a pre-pond
+// snapshot at mid-hand attach). The latest tile is marked so it ties back to
+// the large last-discard above.
+function _minimalPond(view, options) {
+  const pond = Array.isArray(view.discard_pond) ? view.discard_pond : null;
+  const tiles = pond
+    ? pond.map((e) => e.tile)
+    : (view.seats ?? []).flatMap((s) => s.discards ?? []);
+  if (tiles.length === 0) {
+    return html`<div class="mv-pond mv-pond-empty">
+      <span class="mv-pond-label">Discards</span>
+      <span class="empty">(none yet)</span>
+    </div>`;
+  }
+  const out = [];
+  tiles.forEach((t, i) => {
+    if (i > 0) out.push(" ");
+    out.push(
+      html`<span class=${i === tiles.length - 1 ? "pond-tile pond-latest" : "pond-tile"}
+        >${tile(t, options)}</span
+      >`,
+    );
+  });
+  return html`<div class="mv-pond">
+    <div class="mv-pond-label">Discards (${tiles.length})</div>
+    <div class="mv-pond-tiles">${out}</div>
+  </div>`;
+}
+
+// The own seat: roster line + the concealed hand (large), reusing
+// renderOwnConcealedTiles for the selection / just-drawn / suit-break cues.
+function _minimalOwn(view, ownSeat, options) {
+  const seat = seatByIndex(view, ownSeat);
+  if (!seat) return "";
+  const name = seatPlayerName(view, ownSeat) ?? "You";
+  const wind = seatWindLetter(view, ownSeat);
+  return html`<div class="mv-own">
+    <div class="mv-own-head">
+      <span class="mv-name mv-you">YOU · ${name} <span class="mv-wind">(${wind})</span></span>
+      <span class="mv-score">${seat.score ?? 0}</span>
+      <span class="mv-melds">${renderMelds(seat.melds, options)}</span>
+      <span class="mv-flowers">${_minimalFlowers(seat.flowers, options)}</span>
+    </div>
+    <div class="mv-own-hand">${renderOwnConcealedTiles(seat, view, ownSeat, options)}</div>
+  </div>`;
+}
+
+export function renderMinimal(seatView, ownSeat, options = {}) {
+  if (!seatView) {
+    return html`<span class="empty">(no snapshot — waiting for ATTACHED)</span>`;
+  }
+  // Opponents in counter-clockwise play order from you (next-to-act first).
+  const opponents = [1, 2, 3].map((off) => (ownSeat + off) % 4);
+  return html`<div class="mv">
+    ${_minimalTurn(seatView, ownSeat)} ${_minimalLastDiscard(seatView, options)}
+    <div class="mv-roster">
+      ${opponents.map((i) => _minimalSeatRow(seatView, i, options))}
+    </div>
+    ${_minimalPond(seatView, options)} ${_minimalOwn(seatView, ownSeat, options)}
+  </div>`;
 }
 
 // --- Hand-end summary (§22.9) ---------------------------------------------

@@ -105,7 +105,7 @@ def _hand_end_draw() -> dict[str, Any]:
 
 
 async def _wait_for_attached(page: Page) -> None:
-    await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(timeout=5000)
 
 
 async def test_no_summary_before_hand_end(page: Page, fake_wire_server: FakeWireServer) -> None:
