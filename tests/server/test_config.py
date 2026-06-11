@@ -20,7 +20,8 @@ def test_defaults_load_cleanly() -> None:
     assert cfg.data_dir.is_absolute()
     assert cfg.seat_hold_seconds == 180  # raised from 60 for FB-03 rejoin (reconnect-rejoin.md)
     assert cfg.session_lifetime_hours == 336
-    assert cfg.default_ruleset == "mcr-2006"
+    # House default is the 3-fan floor; official MCR (mcr-2006) opt-in via env (FB-10).
+    assert cfg.default_ruleset == "mcr-house-3fan"
     assert cfg.log_format == "json"
     assert unknown == []
 

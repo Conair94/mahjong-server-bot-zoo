@@ -34,6 +34,17 @@ import {
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
 
+// True when the keydown originated in an editable element (text input,
+// textarea, contentEditable) — so global game shortcuts can stand down and let
+// the user type. composedPath()[0] pierces shadow DOM: at window level e.target
+// is retargeted to the host, but the real focused node is first in the path.
+function isEditableTarget(e) {
+  const node = e.composedPath?.()[0] ?? e.target;
+  if (!node || node.nodeType !== 1) return false;
+  const tag = node.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || node.isContentEditable === true;
+}
+
 // --- ConnectionManager --------------------------------------------------
 
 const SUBPROTOCOL = "mahjong-v1";
@@ -555,6 +566,12 @@ class GamePane extends LitElement {
   }
 
   _handleKeydown(e) {
+    // Never hijack keystrokes meant for a text field (bug-report box, chat,
+    // any input) — Space/H/Enter/letters are game shortcuts, so typing in one
+    // would pass, declare HU, or discard a tile (player report 025210). The
+    // bug-report textarea lives in a shadow root, so at window level e.target
+    // is the retargeted host; composedPath()[0] is the real focused element.
+    if (isEditableTarget(e)) return;
     // Alt-chords belong to <table-page> (pane toggles) and <mahjong-app>
     // (theme/tile-style). Ctrl/Meta likewise reserved for browser shortcuts.
     if (e.altKey || e.ctrlKey || e.metaKey) return;
