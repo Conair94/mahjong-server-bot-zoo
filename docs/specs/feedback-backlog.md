@@ -69,7 +69,7 @@ stack trace it was waiting for.
 | DEF-01 | FB-01 concealed-gang hang **root trigger** (the precise exception). Fix converted the silent hang into a logged teardown in *both* hand loops; the original cause is offline-clean and unreproducible. | Replay logic steps cleanly; no deterministic repro. Instrument-and-defer is the honest fix. | The log string appears in a real run → read the traceback, fix the trigger directly. | `hand_loop_crashed` ([web/server.py:360](../../mahjong/web/server.py#L360), [server/registry.py:815](../../mahjong/server/registry.py#L815)) |
 | DEF-02 | FB-04 leftovers: paginated "my games" view (`GET_HISTORY` wired+tested, no "load more" UI), match-replay, public-replays config. | Profile recent-20 covers the common case. | A player asks for older games / match replay. | [account-records-replay.md](account-records-replay.md) |
 | DEF-03 | FB-05 leftovers: lobby server-push-on-change, start-authority reason chip, bot↔human mid-lobby seat conversion. | 2 s lobby poll keeps the list fresh; multi-human is rare today. | Lag complaint, or a 2nd+ human table becomes common. | [table-management.md](table-management.md) |
-| DEF-04 | **Browser-verify owed** on the deployed build: FB-06 audio, FB-07 console, FB-08 (Spec 29 token/profile), Spec 22 §22.x UI, Spec 25 admin tunnel/feedback/training panes, cardinal pinwheel, **PR #16 chi-picker + opponent-concealed-kong render** (2026-06-10 session ran pre-PR-16 code — reports `20260610_002312`, `20260611_004346` are stale-build, not regressions), **Spec 34 minimal play view + in-game player names** (default view flipped to minimal; large-print legibility, claim banner, `Alt+M` toggle — Playwright-green, visual pass owed). | Unit/Playwright-green; real-device pass not yet run. | Next live deploy / play session — flip each to `verified`. | (this doc + Spec 22/25/34) |
+| DEF-04 | **Browser-verify owed** on the deployed build: FB-06 audio (**re-fixed 2026-06-11** — declaration cues + AudioContext unlock; was silent before, so this verify is now load-bearing: confirm the alert on your own claim window and the chi/peng/gang/hu declaration tones actually sound), FB-07 console, FB-08 (Spec 29 token/profile), Spec 22 §22.x UI, Spec 25 admin tunnel/feedback/training panes, cardinal pinwheel, **PR #16 chi-picker + opponent-concealed-kong render** (2026-06-10 session ran pre-PR-16 code — reports `20260610_002312`, `20260611_004346` are stale-build, not regressions), **Spec 34 minimal play view + in-game player names** (default view flipped to minimal; large-print legibility, claim banner, `Alt+M` toggle — Playwright-green, visual pass owed). | Unit/Playwright-green; real-device pass not yet run. | Next live deploy / play session — flip each to `verified`. | (this doc + Spec 22/25/34) |
 | DEF-05 | Auth: real auth-targeted rate limiter (e.g. 10 failures/IP/hr); RESUME token rotation. | Friends-and-family + connection-wide cap suffices pre-S7. | S7 ops hardening, or a public-abuse signal. | [auth.md:23](auth.md), [auth.md:294](auth.md) |
 | DEF-06 | Late-join **replay-from-record** (catch a mid-hand joiner up). | Refusal gate (Spec 20) is enough; needs per-table replay-lock design. | Someone actually requests mid-hand late-join. | [late-join-replay.md:133](late-join-replay.md) |
 | DEF-07 | Decide-timeout heartbeat extension (`PROMPT_HEARTBEAT`: keep an engaged human's clock alive). | Needs wire + client + timer-reset work; fixed timeout OK for now. | Players report being timed out while actively deciding. | [human-decide-timeout.md:94](human-decide-timeout.md) |
@@ -299,25 +299,57 @@ start-authority reason chip; bot↔human mid-lobby seat conversion (Spec 33 open
   > notification when you have a chi peng gang or hu opportunity... different sounds of
   > increasing intensity to build the hype."
 - **Priority:** P2 — player-facing polish; client-only.
-- **Status:** triaged.
+- **Status:** **implemented** (initial pass landed silent; re-fixed 2026-06-11 — see below).
 
 ### Shape (implemented)
 
 Client-only ([mahjong/web/static/audio.js](../../mahjong/web/static/audio.js)): **synthesized**
-Web Audio tones (no binary assets — build-free client) — a soft blip on the local human's own
-DRAW, and an **escalating** tone on a claim window (CHI < PENG < GANG < HU). Pure cue-selection
-(`cueForEvent` / `cueForPrompt`) + a side-effecting `audioCues.play` that no-ops when muted or
-when Web Audio is blocked (records `lastCue` for tests). Wired into app.js's EVENT/PROMPT
-dispatch; a **Sound on/off** row added to the Settings menu (Spec 28), persisted to
-`localStorage` (`mahjong-sound`). No server/wire change — the claim window is already signalled
-(existing `isClaimAvailable` visual chip stays); this is the audio layer.
+Web Audio tones (no binary assets — build-free client), in two families:
 
-### Verification (all green)
+1. A **private "your turn to decide" notification** (`alert`, a bright rising ding) — fired only
+   on the local human's own `CLAIM_WINDOW` prompt with a real (non-PASS) claim. Tells *you* to
+   call or pass; leaks nothing to opponents (only the prompt owner hears it).
+2. **Public declaration cues**, heard by *every* seat the instant a claim lands, escalating in
+   importance **chi < peng < gang < hu**. A `PENG`/`CHI`/exposed-`GANG` rides the authoritative
+   `CLAIM_RESOLUTION` (so a losing contender never double-fires); a self-declared concealed/added
+   kong rides its `CLAIM_DECISION` (no resolution exists); a winning `HU` rides the `HAND_END`
+   frame (`cueForTerminal`). Plus the original soft `draw` blip on your own DRAW.
 
-- [tests/web/test_audio_cues.py](../../tests/web/test_audio_cues.py): real `<mahjong-app>` over
-  the fake wire — own DRAW → `lastCue == "draw"`; a PENG claim prompt → `"peng"`; muting
-  suppresses the cue. Full fast suite 1078 passed (+ the settings-rows test updated for the new
-  Sound row). **Actual audio is browser-verify-owed** (headless Web Audio needs a user gesture).
+Pure cue-selection (`cueForEvent` / `cueForPrompt` / `cueForTerminal`) + a side-effecting
+`audioCues.play` that no-ops when muted or when Web Audio is blocked (records `lastCue` for tests).
+Wired into app.js's EVENT / PROMPT / HAND_END dispatch; a **Sound on/off** row in the Settings menu
+(Spec 28), persisted to `localStorage` (`mahjong-sound`). No server/wire change.
+
+### Why the first pass was silent (re-fixed 2026-06-11)
+
+The user reported audio "raised in the past but not working." Three compounding causes, all fixed:
+
+1. **Suspended AudioContext.** Browsers start a context created *outside* a user gesture in the
+   `suspended` state. Ours was created lazily inside `play()` — triggered by an inbound websocket
+   frame, never a gesture — so it stayed suspended and **every cue was silent**. Fix: an
+   idempotent `AudioCues.unlock()` called on the first `pointerdown`/`keydown` (app.js
+   `connectedCallback`), plus a `ctx.resume()` on the suspended context inside `play()`. This is
+   the standard Web Audio autoplay-policy unlock dance.
+2. **Declaration cues never existed.** The original `cueForEvent` only blipped on your own DRAW;
+   there was *no* sound when a chi/peng/gang/hu was actually declared. Added the resolution /
+   self-gang / terminal hooks above.
+3. **The tests were vacuous.** `_wait_for_cue` polled `import('/static/audio.js').then(...)` inside
+   `wait_for_function`, which treats the returned **Promise object as truthy** and resolves on the
+   first poll without ever comparing the cue — so the suite was green while the feature did
+   nothing. Fixed by stashing the module on `window.__cues` and polling a *synchronous* value
+   predicate. (This is the [test-the-wire→UI-seam] failure mode in a new disguise.)
+
+### Verification (all green + negative control)
+
+- [tests/web/test_audio_cues.py](../../tests/web/test_audio_cues.py): real `<mahjong-app>` over the
+  fake wire — own DRAW → `"draw"`; own claim prompt → `"alert"`; an **opponent's** PENG resolution
+  → `"peng"` (public); a concealed kong → `"gang"`; a winning HAND_END → `"hu"`; an exhaustive
+  draw → silent; muting suppresses everything. **7 passed.**
+- **Negative control:** with the source reverted (test expectations kept), the 4 new
+  notification/declaration assertions **fail** (timeout) and pass only with the fix — a genuine
+  fail-without/pass-with artifact, per the project verification rule. Full fast web suite: 133
+  passed.
+- **Browser-verify still owed** (headless Web Audio can't actually sound; tracked in DEF-04).
 
 ---
 
