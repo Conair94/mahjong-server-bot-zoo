@@ -66,3 +66,35 @@ async def test_v0_records_replay_to_runtime_final_state(tmp_path: Path) -> None:
     # test would silently stop covering the regression it exists for.
     assert "HU/DISCARD" in seen, f"no discard-win (ron) in sample: {seen}"
     assert "HU/SELF_DRAW" in seen, f"no self-draw win in sample: {seen}"
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_replay_reconstructs_rotated_dealer_hands(tmp_path: Path) -> None:
+    """DEF-11: any hand after the first (a rotated dealer) must replay.
+
+    ``replay()`` used to rebuild the deal with ``initial_state``'s default
+    ``dealer_seat=0``. For a non-zero dealer the reconstructed seat winds and
+    starting actor disagreed with the record, so the *first* recorded discard
+    was attempted against the wrong actor and raised
+    ``IllegalAction(legal_count=0)`` — breaking the FB-04 replay viewer on every
+    hand but the match's first. The fix recovers the dealer (the F1 seat) from
+    the HEADER. Dealer 0 covers the backwards-compatible path; the non-zero
+    ``hand_index_in_match`` also pins that header metadata (which never reaches
+    the engine state) does not perturb the reconstruction.
+    """
+    for dealer in range(4):
+        out = tmp_path / f"hand_dealer{dealer}.jsonl"
+        final = await mgr.run_hand(
+            adapters=[cast(SeatAdapter, V0Adapter()) for _ in range(4)],
+            ruleset=MCR_REF,
+            seed=20 + dealer,
+            hand_id=f"replay-rot{dealer}-0000-0000-0000-000000000000"[:36],
+            record_path=out,
+            server_info=SERVER,
+            dealer_seat=dealer,
+            hand_index_in_match=dealer,  # exercise a non-zero index alongside
+        )
+        states = list(replay(read_record(out)))
+        assert state_hash(states[-1]) == state_hash(final), (
+            f"dealer {dealer}: replay final state diverged from runtime"
+        )
