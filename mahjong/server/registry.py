@@ -805,7 +805,16 @@ class TableHandle:
                 )
                 await self._sessions.begin_next_hand()
         except asyncio.CancelledError:
-            raise  # normal shutdown / drain — never swallow cancellation
+            # Normal shutdown / drain — never swallow cancellation. But DO log
+            # it: an unrequested cancel looks exactly like FB-13's silent
+            # mid-hand dead-stop (no HAND_END, no FOOTER, nothing in the log).
+            _logger.info(
+                "hand_loop_cancelled table=%s hand_id=%s hand_index=%s",
+                self._table_id,
+                self._hand_id_for_hand(self._hand_index),
+                self._hand_index,
+            )
+            raise
         except Exception:
             # FB-01: same silent-hang guard as WebOrchestrator._run_hand_loop, on
             # the *live* multi-table path. An unhandled exception here used to kill

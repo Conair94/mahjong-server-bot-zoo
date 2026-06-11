@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,101 @@ from mahjong.records.writer import RecordWriter
 # Failure-mode marker returned alongside the chosen Action from a decide call.
 # Empty dict means the adapter's response was accepted as-is.
 FailureMeta = dict[str, Any]
+
+_logger = logging.getLogger(__name__)
+
+
+class HandStepStalled(RuntimeError):
+    """A single phase step exceeded the stall cap (FB-13 / DEF-12).
+
+    Raised by ``run_hand``'s per-step watchdog so the orchestrator crash
+    guards (the FB-01 ``hand_loop_crashed`` path) tear the table down
+    gracefully instead of leaving clients frozen on a hand that will never
+    advance.
+    """
+
+
+def _stall_cap_seconds(decide_timeouts: DecideTimeouts) -> float:
+    """Hard wall-clock cap for one phase step.
+
+    4 × the largest configured decide deadline (a claim step can prompt
+    several seats back-to-back) + 60 s grace for observes/pacing. Scales with
+    operator config so raised human timeouts never cause spurious aborts.
+    """
+    largest = max(
+        decide_timeouts.human_discard_s,
+        decide_timeouts.human_claim_s,
+        decide_timeouts.bot_s,
+    )
+    return 4.0 * largest + 60.0
+
+
+def _pending_stack_summary(task: asyncio.Task[Any], limit: int = 6) -> str:
+    """Best-effort 'where is this task suspended?' chain for the stall log.
+
+    Walks the coroutine await chain (``cr_await``) rather than
+    ``Task.get_stack()`` so the innermost pending await is named — that one
+    line is the artifact the DEF-12 investigation needs from a live stall.
+    """
+    parts: list[str] = []
+    obj: Any = task.get_coro()
+    while obj is not None and len(parts) < limit:
+        frame = getattr(obj, "cr_frame", None) or getattr(obj, "gi_frame", None)
+        if frame is None:
+            parts.append(type(obj).__name__)
+            break
+        parts.append(f"{frame.f_code.co_qualname}:{frame.f_lineno}")
+        obj = getattr(obj, "cr_await", None) or getattr(obj, "gi_await", None)
+    return " -> ".join(parts) or "<no frames>"
+
+
+async def _guarded_step(
+    step: Awaitable["GameState"],
+    *,
+    cap_seconds: float,
+    hand_id: str,
+    phase: str,
+    actor: int | None,
+    turn_index: int,
+    next_seq: int,
+) -> GameState:
+    """Run one phase step under the stall watchdog.
+
+    Uses ``asyncio.wait`` (not ``wait_for``): ``wait_for`` awaits the inner
+    task's *cancellation* unboundedly, so a step that swallows
+    ``CancelledError`` — the suspected shape of the 2026-06-11 live freeze —
+    would wedge the watchdog itself. Here the stall is logged before any
+    cancellation is attempted, and an uncancellable step is abandoned (logged)
+    rather than waited on forever.
+    """
+    task = asyncio.ensure_future(step)
+    done, pending = await asyncio.wait({task}, timeout=cap_seconds)
+    if not pending:
+        return task.result()
+
+    _logger.error(
+        "hand_step_stalled [DEF-12] hand_id=%s phase=%s actor=%s turn_index=%s "
+        "next_seq=%s cap_s=%.1f stuck_at=%s",
+        hand_id,
+        phase,
+        actor,
+        turn_index,
+        next_seq,
+        cap_seconds,
+        _pending_stack_summary(task),
+    )
+    task.cancel()
+    _, still_pending = await asyncio.wait({task}, timeout=min(10.0, cap_seconds))
+    if still_pending:
+        _logger.error(
+            "hand_step_stall_uncancellable [DEF-12] hand_id=%s — step task ignored "
+            "cancellation; abandoning it",
+            hand_id,
+        )
+    raise HandStepStalled(
+        f"hand {hand_id}: {phase} step (actor={actor}, turn={turn_index}) "
+        f"exceeded the {cap_seconds:.1f}s stall cap"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,6 +269,7 @@ async def run_hand(
     decide_timeouts: DecideTimeouts | None = None,
     observe_timeout_seconds: float = 0.5,
     seated_timeout_seconds: float = 1.0,
+    step_stall_seconds: float | None = None,
     strike_limit: int = 3,
     meta: dict[str, Any] | None = None,
     event_callback: EventCallback | None = None,
@@ -194,12 +291,17 @@ async def run_hand(
     - ``decide_timeouts``: per-(seat-kind, prompt-kind) deadline table (spec
       19). When ``None``, falls back to a uniform ``decide_timeout_seconds``
       across every adapter / prompt — the pre-spec-19 behaviour.
+    - ``step_stall_seconds``: hard wall-clock cap per phase step (FB-13 /
+      DEF-12 stall watchdog). ``None`` derives a generous cap from
+      ``decide_timeouts`` via ``_stall_cap_seconds``.
     """
     if len(adapters) != 4:
         raise ValueError(f"expected 4 adapters, got {len(adapters)}")
 
     if decide_timeouts is None:
         decide_timeouts = DecideTimeouts.uniform(decide_timeout_seconds)
+    if step_stall_seconds is None:
+        step_stall_seconds = _stall_cap_seconds(decide_timeouts)
 
     state = initial_state(ruleset, seed=seed, dealer_seat=dealer_seat)
     writer = RecordWriter(record_path)
@@ -253,7 +355,7 @@ async def run_hand(
     # --- main loop ---
     while not is_terminal(state):
         if state["phase"] == "DISCARD":
-            state = await _step_discard(
+            step = _step_discard(
                 state,
                 adapters,
                 writer,
@@ -264,7 +366,7 @@ async def run_hand(
                 event_callback,
             )
         elif state["phase"] == "CLAIM_WINDOW":
-            state = await _step_claim_window(
+            step = _step_claim_window(
                 state,
                 adapters,
                 writer,
@@ -276,6 +378,15 @@ async def run_hand(
             )
         else:
             raise AssertionError(f"unexpected phase in run_hand: {state['phase']!r}")
+        state = await _guarded_step(
+            step,
+            cap_seconds=step_stall_seconds,
+            hand_id=hand_id,
+            phase=state["phase"],
+            actor=state["current_actor"],
+            turn_index=state["turn_index"],
+            next_seq=writer.seq,
+        )
 
     # --- left ---
     await asyncio.gather(
@@ -557,4 +668,4 @@ async def _decide_or_default(adapter: SeatAdapter, prompt: Prompt) -> tuple[Acti
     return action, {}
 
 
-__all__ = ["DecideTimeouts", "EventCallback", "run_hand"]
+__all__ = ["DecideTimeouts", "EventCallback", "HandStepStalled", "run_hand"]

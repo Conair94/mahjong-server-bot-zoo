@@ -48,6 +48,10 @@ class RecordWriter:
         full = {**payload, "seq": self._seq}
         line = canonical_jsonl_line(full)
         self._fh.write(line)
+        # Flush per event: the record is the primary forensics artifact when a
+        # hand task wedges or the process dies (FB-13) — a tail buffered until
+        # close() vanishes exactly when the record matters most.
+        self._fh.flush()
         self._hash.update(line)
         self._seq += 1
 

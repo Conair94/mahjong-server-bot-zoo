@@ -41,6 +41,11 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-06 | feat | Audio cues + clearer claim-opportunity notifications | P2 | implemented | (this doc) |
 | FB-07 | meta | Feedback-tracking system (this backlog + admin console) | P0 (enabler) | implemented | [feedback-tracking.md](feedback-tracking.md) |
 | FB-08 | bug | Profile page unreachable / re-login on refresh | — | implemented | [live-play-bugfixes.md](live-play-bugfixes.md) (Spec 29 Bug A/E) |
+| FB-09 | bug | Scoring awards concealed fans (Fully Concealed / Concealed Pungs / Concealed Kong) to hands with claimed melds; Self-Drawn fan missing | **P0** (wrong winners/payments) | triaged | (this doc) |
+| FB-10 | bug | Fan→point conversion "wrong" (−20/loser) — live tables run `mcr-2006` payment, not the house ruleset | P1 | triaged | (this doc; [scoring-config.md](scoring-config.md)) |
+| FB-11 | feat | Mobile-friendly client + a way to quit a game | P2 | triaged | — |
+| FB-12 | feat | Minimalist UI mode (discards + melds + own tiles only) | P2 | triaged | — |
+| FB-13 | bug | Mid-hand table freeze — hand task dead-stops at a pending prompt, no timeout, nothing logged | **P0** (game-breaking) | in-progress | (this doc — stall watchdog) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
@@ -61,13 +66,16 @@ stack trace it was waiting for.
 | DEF-01 | FB-01 concealed-gang hang **root trigger** (the precise exception). Fix converted the silent hang into a logged teardown in *both* hand loops; the original cause is offline-clean and unreproducible. | Replay logic steps cleanly; no deterministic repro. Instrument-and-defer is the honest fix. | The log string appears in a real run → read the traceback, fix the trigger directly. | `hand_loop_crashed` ([web/server.py:360](../../mahjong/web/server.py#L360), [server/registry.py:815](../../mahjong/server/registry.py#L815)) |
 | DEF-02 | FB-04 leftovers: paginated "my games" view (`GET_HISTORY` wired+tested, no "load more" UI), match-replay, public-replays config. | Profile recent-20 covers the common case. | A player asks for older games / match replay. | [account-records-replay.md](account-records-replay.md) |
 | DEF-03 | FB-05 leftovers: lobby server-push-on-change, start-authority reason chip, bot↔human mid-lobby seat conversion. | 2 s lobby poll keeps the list fresh; multi-human is rare today. | Lag complaint, or a 2nd+ human table becomes common. | [table-management.md](table-management.md) |
-| DEF-04 | **Browser-verify owed** on the deployed build: FB-06 audio, FB-07 console, FB-08 (Spec 29 token/profile), Spec 22 §22.x UI, Spec 25 admin tunnel/feedback/training panes, cardinal pinwheel. | Unit/Playwright-green; real-device pass not yet run. | Next live deploy / play session — flip each to `verified`. | (this doc + Spec 22/25) |
+| DEF-04 | **Browser-verify owed** on the deployed build: FB-06 audio, FB-07 console, FB-08 (Spec 29 token/profile), Spec 22 §22.x UI, Spec 25 admin tunnel/feedback/training panes, cardinal pinwheel, **PR #16 chi-picker + opponent-concealed-kong render** (2026-06-10 session ran pre-PR-16 code — reports `20260610_002312`, `20260611_004346` are stale-build, not regressions). | Unit/Playwright-green; real-device pass not yet run. | Next live deploy / play session — flip each to `verified`. | (this doc + Spec 22/25) |
 | DEF-05 | Auth: real auth-targeted rate limiter (e.g. 10 failures/IP/hr); RESUME token rotation. | Friends-and-family + connection-wide cap suffices pre-S7. | S7 ops hardening, or a public-abuse signal. | [auth.md:23](auth.md), [auth.md:294](auth.md) |
 | DEF-06 | Late-join **replay-from-record** (catch a mid-hand joiner up). | Refusal gate (Spec 20) is enough; needs per-table replay-lock design. | Someone actually requests mid-hand late-join. | [late-join-replay.md:133](late-join-replay.md) |
 | DEF-07 | Decide-timeout heartbeat extension (`PROMPT_HEARTBEAT`: keep an engaged human's clock alive). | Needs wire + client + timer-reset work; fixed timeout OK for now. | Players report being timed out while actively deciding. | [human-decide-timeout.md:94](human-decide-timeout.md) |
 | DEF-08 | Scoring-config false-mahjong penalty. | Declared in config schema but unreachable in-engine today. | The engine can produce an illegal-declared-win state. | [scoring-config.md](scoring-config.md) |
 | DEF-09 | Admin-console: control-plane login + network bind; `systemd` supervisor switch. | v1 ships the script + token-gated status. | Production Linux deploy. | [admin-console.md:35](admin-console.md), [admin-console.md:383](admin-console.md) |
 | DEF-10 | Feedback-tracking: status filter + auto-archive of `implemented`/`wontfix` rows. | Nice-to-have; backlog is short. | Pane gets noisy enough to need it. | [feedback-tracking.md:137](feedback-tracking.md) |
+| DEF-11 | **Replay divergence**: `records/replay.py` cannot re-apply the live record `t1/hand_0000_1.jsonl` (2026-06-11) — raises `IllegalAction(seat=1, PLAY B4, legal_count=0)` mid-record, so the FB-04 replay viewer breaks on hands with claim choices. Suspect the CHI-with-chosen-tiles event→action translation. | FB-13 forensics took priority; viewer works for most records. | A player hits a broken replay, or before any forensic replay of a live record is trusted again. | the record file + `replay(` in [records/replay.py](../../mahjong/records/replay.py) |
+| DEF-12 | **FB-13 root cause** (the exact await where the live hand task wedged). The watchdog converts any future stall into a logged, position-stamped abort with the pending coroutine chain; the underlying trigger is still unidentified (see FB-13 section: every decide/observe await is provably bounded, yet two tables dead-stopped). Also determine the live `MAHJONG_DECIDE_TIMEOUT_*` env (observed behavior implies ≫ defaults). | No deterministic repro; all bounded-await candidates ruled out offline. Instrument-and-defer per the FB-01 template. | `hand_step_stalled [DEF-12]` or an unexpected `hand_loop_cancelled` appears in a run → the `stuck_at=` chain names the wedged await; fix it directly. | `hand_step_stalled` ([table/manager.py](../../mahjong/table/manager.py) `_guarded_step`), `hand_loop_cancelled` (both hand loops) |
+| DEF-13 | **Persistence/record collisions across server restarts**: table ids restart at `t1`, so `hand_index.record_path` UNIQUE fails (`persistence.reserve_hand_failed`, 3× on 2026-06-11) — those hands are invisible to history/replay — and the new run **overwrote** the old `t1/hand_0000.jsonl` record (the original FB-01 evidence file is gone). | Needs a per-boot uniqueness scheme (boot-scoped record dir or id offset) — small design decision, not a hotfix. | Next `persistence.reserve_hand_failed` in a log, or before any analysis that assumes records are immutable. | `persistence.reserve_hand_failed` ([server/registry.py](../../mahjong/server/registry.py) `_reserve_hand_row`) |
 
 When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
 does the work — same rule as the FB table above.
@@ -326,6 +334,110 @@ status overlay + admin-console UI so the product owner can triage from the runni
   Bug A (token → `localStorage`, refresh auto-`RESUME`s; profile reachable again) + Bug E
   (single-submit + auto-close). Merged PR #13.
 - **Owed:** browser-verify on the deployed build (`verified` status pending a live check).
+
+---
+
+## FB-09 — Concealed fans awarded to an exposed hand; Self-Drawn fan missing
+
+- **Report(s):** `20260611_003958_bug.txt` (ConnorL, 2026-06-11).
+  > "There is a bug with concealed Pung and concealed Kong, I was playing and south won a
+  > hand and was not supposed to have gotten a concealed hand, concealed pung concealed
+  > kong. Also there was no extra fan for self drawn."
+- **Priority:** P0 — wrong fan totals change winners' payments every hand.
+- **Status:** triaged.
+
+**Captured fixture** (the regression test, ready to pin): the winning `HAND_END` of
+`records/t1/hand_0000.jsonl` (hand_id `t1-h0`, seed `1781137498`, ts 00:38:25Z). Seat 1's
+melds are `GANG_EXPOSED` (T1 **called from seat 0**) and `PENG` (T7, claimed) — an
+unambiguously exposed hand — yet the fan list awards **Fully Concealed Hand (4)**, **Two
+Concealed Pungs (2)** and **Concealed Kong (2)**, and `win_type: SELF_DRAW` earns no
+Self-Drawn fan (in MCR, Fully Concealed Hand subsumes Self-Drawn — so once the
+concealment misclassification is fixed, the Self-Drawn fan should appear instead). The
+fan evaluator appears to ignore meld exposure (`called_from_seat` / meld type) when
+classifying concealment. Note this hand's `fan_total: 12` also drove the FB-10 report.
+
+## FB-10 — Fan→point conversion: live tables run `mcr-2006`, not the house ruleset
+
+- **Report(s):** `20260611_004040_bug.txt` (ConnorL).
+  > "Fan to point conversion is broken, should not be be negative twenty"
+- **Priority:** P1.
+- **Status:** triaged.
+
+The arithmetic is actually *correct for the ruleset the table ran*: the record header says
+`ruleset: mcr-2006`, and the −20/+60 split is standard MCR table payment
+(self-draw: each loser pays 8 + fan = 8 + 12 = 20). Two real issues hide under the report:
+(1) the inflated `fan_total` comes from FB-09; (2) the Spec-26 house ruleset
+(`mcr-house-3fan.json`, the zero-sum fan→points contract) is **not what live tables
+play** — `CREATE_TABLE` has no ruleset selection and the server default is `mcr-2006`.
+The fix is ruleset plumbing (default config or per-table choice), not conversion math.
+
+## FB-11 / FB-12 — Mobile + quit-game; minimalist UI mode
+
+- **Report(s):** `20260610_005659_feature.txt`, `20260610_005730_feature.txt`
+  (tectoskepsis): mobile-friendly layout; no way to quit a game (on mobile at least).
+  `20260611_003128_feature.txt` (ConnorL): "a minimalist UI which only shows discards,
+  melds for other players and your tiles."
+- **Priority:** P2 (client-only polish).
+- **Status:** triaged — likely one spec: a compact/minimalist pane doubles as the mobile
+  layout, and a "leave table" control falls out of the same menu work. Not started.
+
+## FB-13 — Mid-hand table freeze at a pending prompt (2026-06-11 session)
+
+- **Report(s):** `20260611_004828_bug.txt` (ConnorL):
+  > "It seems when a bot or player gets a concealed gang, the replacement tile does not
+  > work and the game freezes."
+  Plus `20260610_003239_bug.txt` (Lillian, "help i cannot play the game") from the same
+  evening. (The "concealed gang / replacement tile" framing turned out to be the player's
+  read of the symptom; neither frozen record contains a GANG event near the stop.)
+- **Priority:** P0 — game-breaking.
+- **Status:** in-progress — stall watchdog + forensics fixes on `fix/hand-stall-watchdog`;
+  root cause parked as **DEF-12**.
+
+### Investigation (2026-06-11, from live records + the admin-console log ring)
+
+Two tables froze in one evening, **both dead-stopping at the same game position**:
+
+- `t1/hand_0000_1.jsonl` (seed `1781137499`): last event `seq 79, DRAW, seat 1 (human),
+  tile T5, turn 32` at 00:46:04Z — then nothing. No timeout default ever fired (>1 h).
+- `t2/hand_0000.jsonl` (**same seed** — per-table seeds collided too): last event
+  `seq 79, DRAW, seat 1 (v0 bot), tile T5, turn 32` at 00:54:50Z. A *bot* seat — no human
+  input, pacing ≤10 s, decide bounded at 30 s — yet nothing for 22+ min while the process
+  stayed responsive (HTTP answered; CPU flat, so no spin — a parked await or a vanished task).
+
+Ruled out by direct offline probing of the reconstructed frozen state: engine legality
+(10 legal PLAYs for the actor), `project`/`_build_prompt`/`_default_action` (all clean),
+v0 `decide` (returns instantly), `run_hand` awaits (every decide/observe is
+`wait_for`-bounded; PacedAdapter clamps under the deadline), external cancellation (no
+caller closes tables mid-hand). A full 4-bot `run_hand` on the same seed terminates
+normally. No `hand_loop_crashed` line in the captured log ring — this is a **different
+failure mode than FB-01** (DEF-01 stays open, unfired).
+
+Confirmed config anomaly: t2's human DISCARD default fired at **267 s with
+`crashed: true`** (= socket-drop + 180 s seat-hold expiry), not at the 60 s default with
+`timeout: true` — so the live decide timeouts are overridden well above defaults, which is
+how a zombie-but-connected client (TCP alive, page wedged) can hold a prompt open
+near-indefinitely. That fully explains the *t1* freeze; the *t2 bot-turn* stop remains
+unexplained → DEF-12.
+
+### Fix (this branch) — contain the class, instrument the instance
+
+1. **Per-step stall watchdog** in `run_hand` (`_guarded_step`): no phase step may exceed
+   `4 × max(decide deadlines) + 60 s` (override: `step_stall_seconds`). On breach it logs
+   `hand_step_stalled [DEF-12]` with hand_id/phase/actor/turn/next_seq **and the pending
+   coroutine chain** (`stuck_at=` — the artifact DEF-12 waits for), then raises
+   `HandStepStalled` so the existing FB-01 guards tear the table down gracefully (clients
+   get a DETACH, not an eternal freeze). Deliberately uses `asyncio.wait`, not `wait_for`:
+   a step that swallows cancellation cannot wedge the watchdog itself.
+2. **`RecordWriter` flushes per event** — both frozen records were only readable up to the
+   last 8 KiB flush boundary; records are the primary forensics artifact and must be
+   durable line-by-line.
+3. **`hand_loop_cancelled` logged in both hand loops** before re-raising — an unrequested
+   cancel previously looked identical to this silent dead-stop.
+
+**Verification:** [tests/table/test_step_stall_watchdog.py](../../tests/table/test_step_stall_watchdog.py)
+(stall → logged + raised; cancellation-swallowing stall → still aborts, escalation logged;
+cap derivation pinned; happy path unaffected) and the writer durability test in
+[tests/records/test_writer.py](../../tests/records/test_writer.py). Full fast suite: 1120 passed.
 
 ---
 
