@@ -43,9 +43,11 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-08 | bug | Profile page unreachable / re-login on refresh | — | implemented | [live-play-bugfixes.md](live-play-bugfixes.md) (Spec 29 Bug A/E) |
 | FB-09 | bug | Scoring awards concealed fans (Fully Concealed / Concealed Pungs / Concealed Kong) to hands with claimed melds; Self-Drawn fan missing | **P0** (wrong winners/payments) | triaged | (this doc) |
 | FB-10 | bug | Fan→point conversion "wrong" (−20/loser) — live tables run `mcr-2006` payment, not the house ruleset | P1 | triaged | (this doc; [scoring-config.md](scoring-config.md)) |
-| FB-11 | feat | Mobile-friendly client + a way to quit a game | P2 | triaged | — |
+| FB-11 | feat | Mobile-friendly client + a way to quit a game | P2 | triaged | — (quit-game half delivered by FB-14; mobile layout remains) |
 | FB-12 | feat | Minimalist UI mode (discards + melds + own tiles only) | P2 | triaged | — |
 | FB-13 | bug | Mid-hand table freeze — hand task dead-stops at a pending prompt, no timeout, nothing logged | **P0** (game-breaking) | in-progress | (this doc — stall watchdog) |
+| FB-14 | bug | No way back to the main menu from a game — fatal when combined with a hung table (FB-13) + auto-rejoin (FB-03) | **P0** (game-breaking with FB-13) | implemented | (this doc — leave-table escape hatch) |
+| FB-15 | bug | Missed a mahjong (HU) on a discard of 9B — claim window not offered? | P1 | open | (this doc) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
@@ -76,6 +78,7 @@ stack trace it was waiting for.
 | DEF-11 | **Replay divergence**: `records/replay.py` cannot re-apply the live record `t1/hand_0000_1.jsonl` (2026-06-11) — raises `IllegalAction(seat=1, PLAY B4, legal_count=0)` mid-record, so the FB-04 replay viewer breaks on hands with claim choices. Suspect the CHI-with-chosen-tiles event→action translation. | FB-13 forensics took priority; viewer works for most records. | A player hits a broken replay, or before any forensic replay of a live record is trusted again. | the record file + `replay(` in [records/replay.py](../../mahjong/records/replay.py) |
 | DEF-12 | **FB-13 root cause** (the exact await where the live hand task wedged). The watchdog converts any future stall into a logged, position-stamped abort with the pending coroutine chain; the underlying trigger is still unidentified (see FB-13 section: every decide/observe await is provably bounded, yet two tables dead-stopped). Also determine the live `MAHJONG_DECIDE_TIMEOUT_*` env (observed behavior implies ≫ defaults). | No deterministic repro; all bounded-await candidates ruled out offline. Instrument-and-defer per the FB-01 template. | `hand_step_stalled [DEF-12]` or an unexpected `hand_loop_cancelled` appears in a run → the `stuck_at=` chain names the wedged await; fix it directly. | `hand_step_stalled` ([table/manager.py](../../mahjong/table/manager.py) `_guarded_step`), `hand_loop_cancelled` (both hand loops) |
 | DEF-13 | **Persistence/record collisions across server restarts**: table ids restart at `t1`, so `hand_index.record_path` UNIQUE fails (`persistence.reserve_hand_failed`, 3× on 2026-06-11) — those hands are invisible to history/replay — and the new run **overwrote** the old `t1/hand_0000.jsonl` record (the original FB-01 evidence file is gone). | Needs a per-boot uniqueness scheme (boot-scoped record dir or id offset) — small design decision, not a hotfix. | Next `persistence.reserve_hand_failed` in a log, or before any analysis that assumes records are immutable. | `persistence.reserve_hand_failed` ([server/registry.py](../../mahjong/server/registry.py) `_reserve_hand_row`) |
+| DEF-14 | **Flaky test**: `test_fixture_21a_disconnect_and_reconnect_within_hold_window` fails ~1-in-3 full-suite runs **on clean main** (reproduced 2026-06-11 while building FB-14; not introduced by it). Timing-sensitive hold-window assertion suspected. | Pre-existing; unrelated to the FB-14 branch that surfaced it. | Next CI/local failure of this test, or any change to seat-hold timing in `sessions/mux.py`. | `pytest tests/server/test_multi_human_e2e.py::test_fixture_21a_disconnect_and_reconnect_within_hold_window` |
 
 When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
 does the work — same rule as the FB table above.
@@ -438,6 +441,73 @@ unexplained → DEF-12.
 (stall → logged + raised; cancellation-swallowing stall → still aborts, escalation logged;
 cap derivation pinned; happy path unaffected) and the writer durability test in
 [tests/records/test_writer.py](../../tests/records/test_writer.py). Full fast suite: 1120 passed.
+
+## FB-14 — No way back to the main menu from a game — IMPLEMENTED
+
+- **Report(s):** `20260611_022044_bug.txt` (ConnorL, 2026-06-11):
+  > "Cannot go to main menu, there is no back feature."
+  Corroborated by two same-evening frustration reports from a hung game
+  (`20260611_020435`, `20260611_020523` — Lillian, not separately actionable).
+- **Priority:** P0 — on its own this is the FB-11 quit-game gap (P2), but combined
+  with a hung table (FB-13) it became a trap: the in-game loop had no exit, and on
+  refresh the FB-03 auto-rejoin re-attached the lone HELD seat **straight back into
+  the hung table**. The only escape was staying logged out for the 180 s hold expiry.
+- **Status:** implemented (this branch).
+
+### Root cause
+
+Two halves, both "missing exit", not broken code:
+
+1. **Server:** `MultiTableOrchestrator._handler` Phase 2 (attached) forwarded every
+   frame to the table and only exited on socket drop. A client `DETACH` *did* release
+   the seat (the mux acks `DETACHED`), but the connection stayed glued to the table —
+   every lobby message thereafter got `ERROR unknown_kind`. There was no path back to
+   the Phase 1 lobby loop.
+2. **Client:** no UI sent `DETACH {reason: "leaving"}` at all — the wire kind existed
+   since the session-mux spec but nothing triggered it (the FB-11 report's "no way to
+   quit" half).
+
+### Fix
+
+- **Server** ([server/orchestrator.py](../../mahjong/server/orchestrator.py) `_handler`):
+  Phases 1↔2 now cycle. Phase 2 returns the connection to the lobby loop after the
+  leave kind matching how it entered — `DETACH` for a seated connection,
+  `STOP_SPECTATING` for a spectator. The mismatched kind deliberately does **not**
+  escape (the mux no-ops it; breaking out would strand a still-subscribed connection
+  in the lobby). Works mid-hang: the dispatch runs in the connection read loop,
+  independent of the (possibly wedged) hand task.
+- **Client** ([web/static/app.js](../../mahjong/web/static/app.js)): a `[ ⌂ menu ]`
+  header button in table view; first click arms (`[ leave? ]`, 4 s window — two-step
+  confirm against stray clicks), second click sends `DETACH {reason: "leaving"}` and
+  enters the lobby **optimistically** — no waiting on a server ack, because the whole
+  point is escaping a server that may never answer. Leaving releases the seat
+  (UNBOUND, not HELD), so the FB-03 auto-rejoin trap disarms itself.
+
+### Verification
+
+- [tests/server/test_leave_table.py](../../tests/server/test_leave_table.py) — 4 fixtures:
+  DETACH → lobby usable again (re-LIST, re-ATTACH on the same connection); DETACH
+  **mid-PROMPT** escapes (the hung-hand shape); spectator STOP_SPECTATING → lobby;
+  role-mismatched kind does NOT escape. Reproduce-first: the first fixture failed
+  with `ERROR unknown_kind` before the router change.
+- [tests/web/test_leave_table_button.py](../../tests/web/test_leave_table_button.py) —
+  real `<mahjong-app>` over the fake wire: button absent in lobby; two-step confirm;
+  second click emits exactly `DETACH {reason: "leaving"}` and the lobby renders with
+  no server ack.
+- **Browser-verify owed** on the deployed build (→ DEF-04 bucket): click the button in
+  a live game, land in the lobby, join a new table.
+
+## FB-15 — Missed a mahjong (HU) on a discard of 9B
+
+- **Report(s):** `20260611_015746_bug.txt` (Lillian, 2026-06-11):
+  > "missed a mahjong with a discard of nine b"
+- **Priority:** P1 — if real, a missing claim-HU window is a rules-engine defect.
+- **Status:** open — not yet investigated. Two prior hypotheses to check first:
+  (1) the hand may simply have been under the 8-fan MCR floor on that win tile
+  (legitimately not HU — HU legality maximizes fan over all win-tile choices, so
+  probe that before calling it a bug; see the FB-09 fixture's fan-floor interplay);
+  (2) the FB-09 concealment misclassification distorting fan totals near the floor.
+  Needs the hand record from that evening's session to reconstruct the claim window.
 
 ---
 
