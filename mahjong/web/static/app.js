@@ -29,7 +29,7 @@ import {
   renderScoreGraph,
 } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
-import { audioCues, cueForEvent, cueForPrompt } from "/static/audio.js";
+import { audioCues, cueForEvent, cueForPrompt, cueForTerminal } from "/static/audio.js";
 import {
   renderPromptBar,
   actionForKey,
@@ -704,10 +704,20 @@ class GamePane extends LitElement {
     super.connectedCallback();
     this._onKeydown = (e) => this._handleKeydown(e);
     window.addEventListener("keydown", this._onKeydown);
+    // FB-06: browsers keep an AudioContext suspended until a user gesture, so
+    // cues created off the websocket are silent. Warm/resume it on the first
+    // interaction (`once` auto-removes); `unlock` is idempotent if both fire.
+    this._unlockAudio = () => audioCues.unlock();
+    window.addEventListener("pointerdown", this._unlockAudio, { once: true });
+    window.addEventListener("keydown", this._unlockAudio, { once: true });
   }
 
   disconnectedCallback() {
     if (this._onKeydown) window.removeEventListener("keydown", this._onKeydown);
+    if (this._unlockAudio) {
+      window.removeEventListener("pointerdown", this._unlockAudio);
+      window.removeEventListener("keydown", this._unlockAudio);
+    }
     super.disconnectedCallback();
   }
 
@@ -2807,6 +2817,7 @@ class MahjongApp extends LitElement {
             pane.ownSeat,
           );
           pane.setSnapshot(next, pane.ownSeat);
+          audioCues.play(cueForTerminal(frame.terminal)); // FB-06: win flourish for all
         } else if (frame.kind === "PROMPT") {
           pane.setPrompt(frame);
           audioCues.play(cueForPrompt(frame)); // FB-06: escalating claim cue

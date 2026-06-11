@@ -1,62 +1,117 @@
 // FB-06: Web Audio cues. Synthesized (no binary assets, in keeping with the
 // build-free client) but voiced richly — detuned-oscillator chorus + ADSR
-// envelopes, brightening timbre, and a triad flourish for `hu` — so a tile draw
-// gives a soft blip and a claim opportunity an escalating, satisfying tone:
-// chi < peng < gang < hu. Respects a mute toggle (Settings). The cue-selection
-// functions are pure (and unit-tested); `AudioCues.play` is the only
-// side-effecting part and no-ops silently when muted or when Web Audio is
-// unavailable.
+// envelopes, brightening timbre, and a triad flourish for `hu`. There are two
+// distinct families of cue:
+//
+//   1. A private "your turn to decide" NOTIFICATION (`alert`) — fired only on
+//      the local human's own CLAIM_WINDOW prompt, telling YOU to call or pass.
+//   2. Public DECLARATION cues — fired for *everyone* the moment a claim
+//      actually lands, escalating in importance chi < peng < gang < hu. A
+//      physical table hears "Peng!"/"Hu!"; so does this one.
+//
+// Plus a soft private `draw` blip on your own draw.
+//
+// The cue-selection functions (`cueForEvent` / `cueForPrompt` / `cueForTerminal`)
+// are pure and unit-tested; `AudioCues.play` is the only side-effecting part and
+// no-ops silently when muted or when Web Audio is unavailable.
+//
+// "Not working" history: a browser starts an AudioContext created *outside* a
+// user gesture in the `suspended` state, and ours was created lazily on the
+// first inbound frame (a network event, not a gesture) — so it stayed suspended
+// and every cue was silent. The fix is `unlock()` (called on the first user
+// gesture, see app.js) plus a `resume()` on the suspended context inside
+// `play()`. This is the standard Web Audio autoplay-policy unlock dance.
 
+// Claim types in descending importance — also the set we treat as "a real
+// claim" (a PASS-only window is not worth alerting on).
 const CLAIM_PRIORITY = ["HU", "GANG", "PENG", "CHI"];
 
-// Which cue (if any) an inbound record EVENT should play for the local seat.
-// Only the local human's own draw blips — opponents' draws would be noise.
+// Which cue (if any) an inbound record EVENT should play.
+//   - DRAW for the local seat → a soft private blip (opponents' draws would be
+//     noise, and you shouldn't hear when others draw).
+//   - CLAIM_RESOLUTION (outcome CLAIMED) → the winning chi/peng/gang, heard by
+//     EVERYONE. This is the authoritative single winner of a claim window, so
+//     a losing contender never double-fires.
+//   - A self-declared kong (CONCEALED / ADDED) carries no resolution event — it
+//     lands on the CLAIM_DECISION — so catch the gang there. Also public.
 export function cueForEvent(event, ownSeat) {
   if (!event) return null;
-  if (event.event === "DRAW" && event.seat === ownSeat && event.tile) return "draw";
-  return null;
-}
-
-// The highest-intensity claim a CLAIM_WINDOW prompt offers the local human, or
-// null (PASS-only / non-claim prompts make no sound).
-export function cueForPrompt(prompt) {
-  if (!prompt || prompt.phase !== "CLAIM_WINDOW") return null;
-  const types = new Set((prompt.legal_actions ?? []).map((a) => a.type));
-  for (const t of CLAIM_PRIORITY) {
-    if (types.has(t)) return t.toLowerCase();
+  const etype = event.event ?? event.kind;
+  if (etype === "DRAW") {
+    return event.seat === ownSeat && event.tile ? "draw" : null;
+  }
+  if (etype === "CLAIM_RESOLUTION" && event.outcome === "CLAIMED") {
+    const claim = String(event.winning_claim ?? "").toLowerCase();
+    return claim in VOICES ? claim : null;
+  }
+  if (
+    etype === "CLAIM_DECISION" &&
+    event.decision === "GANG" &&
+    (event.kind === "CONCEALED" || event.kind === "ADDED")
+  ) {
+    return "gang";
   }
   return null;
 }
 
+// The local human's claim-window prompt → a single attention-grabbing
+// NOTIFICATION ("you must call or pass"), regardless of which claims are on
+// offer. The specific call escalation belongs to the public declaration, not
+// to this private nudge. PASS-only / non-claim prompts make no sound. Only ever
+// fired for the seat that owns the prompt, so it leaks nothing to opponents.
+export function cueForPrompt(prompt) {
+  if (!prompt || prompt.phase !== "CLAIM_WINDOW") return null;
+  const types = new Set((prompt.legal_actions ?? []).map((a) => a.type));
+  return CLAIM_PRIORITY.some((t) => types.has(t)) ? "alert" : null;
+}
+
+// HAND_END is its own wire frame (not EVENT-wrapped), so a winning HU surfaces
+// here, not through cueForEvent. A win → the triumphant `hu`, heard by everyone;
+// an exhaustive draw / abort (no winner) → silence.
+export function cueForTerminal(terminal) {
+  if (!terminal) return null;
+  const w = terminal.winner;
+  const winners = Array.isArray(w) ? w : w != null ? [w] : [];
+  return winners.length > 0 ? "hu" : null;
+}
+
 // Per-cue "score": each cue is a waveform + a list of notes (freq Hz, start
-// offset s, duration s). Richer than a single sine — every note is voiced by a
-// detuned oscillator pair (chorus) under an ADSR envelope, the timbre brightens
-// with intensity (triangle → sawtooth), and `hu` is a rising arpeggio into a
+// offset s, duration s). Every note is voiced by a detuned oscillator pair
+// (chorus) under an ADSR envelope; the timbre brightens with intensity
+// (sine → triangle → sawtooth) and `hu` is a rising arpeggio into a
 // triad-with-octave-shimmer flourish. Still synthesized: no binary assets.
-const G5 = 783.99, B5 = 987.77, D6 = 1174.66, G6 = 1567.98;
+const C6 = 1046.5, E6 = 1318.51, G6 = 1567.98;
+const G5 = 783.99, B5 = 987.77, D6 = 1174.66;
 const VOICES = {
-  draw: { wave: "triangle", notes: [{ f: 440, t: 0, d: 0.09 }] },
-  chi: { wave: "triangle", notes: [{ f: 523.25, t: 0, d: 0.13 }] },
+  // Soft private blip on your own draw.
+  draw: { wave: "sine", notes: [{ f: 587.33, t: 0, d: 0.09 }] },
+  // Bright rising "ding" — your turn to call or pass. Distinct from any call.
+  alert: {
+    wave: "triangle",
+    notes: [{ f: 880.0, t: 0, d: 0.08 }, { f: E6, t: 0.07, d: 0.2 }],
+  },
+  // Declarations, escalating chi < peng < gang in pitch, note-count and edge.
+  chi: { wave: "triangle", notes: [{ f: C6, t: 0, d: 0.14 }] },
   peng: {
-    wave: "sawtooth",
-    notes: [{ f: 587.33, t: 0, d: 0.07 }, { f: 659.25, t: 0.06, d: 0.16 }],
+    wave: "triangle",
+    notes: [{ f: C6, t: 0, d: 0.08 }, { f: E6, t: 0.07, d: 0.18 }],
   },
   gang: {
     wave: "sawtooth",
     notes: [
-      { f: 659.25, t: 0, d: 0.07 },
-      { f: 783.99, t: 0.06, d: 0.07 },
-      { f: 880.0, t: 0.12, d: 0.2 },
+      { f: C6, t: 0, d: 0.08 },
+      { f: E6, t: 0.07, d: 0.08 },
+      { f: G6, t: 0.14, d: 0.22 },
     ],
   },
+  // The grand finale: a rising arpeggio resolving into a held G-major triad
+  // with an octave shimmer on top.
   hu: {
     wave: "sawtooth",
     notes: [
-      // rising arpeggio …
       { f: G5, t: 0.0, d: 0.1 },
       { f: B5, t: 0.08, d: 0.1 },
       { f: D6, t: 0.16, d: 0.1 },
-      // … resolving into a held triad + an octave shimmer on top.
       { f: G5, t: 0.24, d: 0.5 },
       { f: B5, t: 0.24, d: 0.5 },
       { f: D6, t: 0.24, d: 0.5 },
@@ -76,6 +131,21 @@ export class AudioCues {
     this.muted = !!muted;
   }
 
+  // Create (if needed) and resume the AudioContext from within a real user
+  // gesture. Browsers refuse to start audio until then; calling this on the
+  // first pointerdown/keydown is what makes every later cue audible. Idempotent
+  // and safe to call when muted (we still want the context warm if unmuted).
+  unlock() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      this._ctx = this._ctx || new Ctx();
+      if (this._ctx.state === "suspended") this._ctx.resume();
+    } catch {
+      // No Web Audio / blocked — non-fatal, stay silent.
+    }
+  }
+
   // Play `cue` unless muted/unknown. Records `lastCue` only when it actually
   // plays, so a muted session leaves `lastCue` null (asserted in tests).
   play(cue) {
@@ -85,6 +155,10 @@ export class AudioCues {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
       this._ctx = this._ctx || new Ctx();
+      // If we were created outside a gesture (suspended), try to resume now;
+      // by the time gameplay frames arrive the user has almost always clicked
+      // something, so the resume succeeds and the cue is heard.
+      if (this._ctx.state === "suspended") this._ctx.resume();
       const voice = VOICES[cue];
       const t0 = this._ctx.currentTime;
       for (const note of voice.notes) {
