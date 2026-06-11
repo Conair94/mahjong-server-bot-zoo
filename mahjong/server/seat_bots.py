@@ -22,6 +22,7 @@ from typing import Any, cast
 
 from mahjong.adapters.base import SeatAdapter
 from mahjong.adapters.v0 import V0Adapter
+from mahjong.adapters.v1 import V1Adapter
 
 
 @dataclasses.dataclass(frozen=True)
@@ -61,6 +62,16 @@ SEAT_BOTS: dict[str, SeatBot] = {
         # ``kind = "bot"`` class attr infers as ``str`` not the Literal the
         # Protocol declares — the same cast the table loop has always used.
         factory=lambda: cast(SeatAdapter, V0Adapter()),
+    ),
+    "v1": SeatBot(
+        bot_id="v1",
+        label="v1 — offense + defense",
+        description=(
+            "Rule-based bot: v0's fan-aware offense plus tile counting "
+            "(ignores exhausted waits) and deal-in defense (folds against "
+            "visible threats, avoids dangerous discards)."
+        ),
+        factory=lambda: cast(SeatAdapter, V1Adapter()),
     ),
 }
 
