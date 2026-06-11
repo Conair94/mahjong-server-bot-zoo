@@ -62,3 +62,16 @@
   - `crashed` flag as the strike-path breadcrumb in wire records — derivable from reading the code.
   - Layer 8 status/browser-verify memory already current (updated by the 2026-06-01 session itself).
   - HAND_END `next_hand_seq` always null (known limitation noted in status file already).
+
+---
+
+### 2026-06-11 — Sessions a6822540, e033cf26, bde3ed93
+
+- Scanned 8-session window (2026-06-10 to 2026-06-11); 3 substantive in-project sessions analyzed: FB-09 scorer + 3-fan default flip (a6822540), FB-13 stall watchdog (e033cf26), deferred-ledger convention + /ledger skill + audio polish (bde3ed93).
+- Candidate counts: UPDATE: 1, FILL_GAP: 2 new, CONTRADICT: 0, NOISE: 4
+- Candidates surfaced to caller (awaiting accept/decline):
+  - UPDATE `project_data_dir_xdg` — add reports/records triage paths (`<data_dir>/reports/*.txt`, `records/t<N>/hand_*.jsonl`), CLAIM_WINDOW.opportunities as authoritative claim list, table-id collision/overwrite (DEF-13).
+  - FILL_GAP `feedback_bug_triage_from_reports` — recurring workflow: read reports+records → triage into FB/DEF ledger → fix named must-fix → verify against the recorded hand; reports often mis-attribute cause.
+  - FILL_GAP `feedback_keydown_guard_composed_path` — FB-16: window-level keydown handler needs editable-target guard via `e.composedPath()[0]` not `e.target` (shadow-DOM retargeting collapses target to host).
+- Not proposed (already covered): 3-fan default product decision (project_house_ruleset_conversion STATUS); `.so` empirical-toggling probe method (feedback_mahjonggb_pack_offer).
+- Discarded as NOISE: audio synth rewrite (derivable from audio.js); /ledger skill + two-altitude CLAUDE.md deferral notes (authoritative in those files); per-table seed collision (in fb13-freeze-investigation); DEF-13 path collision (folded into the data_dir UPDATE).

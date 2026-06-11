@@ -333,6 +333,9 @@ async def _mount_game_pane(
           const el = document.createElement('game-pane');
           el.id = '__gp_test';
           el.tileStyle = tile_style;
+          // These fixtures assert on the *classic* renderer's DOM (.tile-mod,
+          // .discard-row); minimal is the default, so pin classic here.
+          el.viewMode = 'classic';
           document.body.appendChild(el);
           el.setSnapshot(view, own_seat);
           if (selected_tile !== null) el.selectedTile = selected_tile;

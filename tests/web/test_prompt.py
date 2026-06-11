@@ -102,7 +102,7 @@ def _prompt_multi_chi(prompt_id: str = "p_0_5_CLAIM_WINDOW") -> dict[str, Any]:
 
 
 async def _wait_for_attached(page: Page) -> None:
-    await expect(page.locator("game-pane").locator(".table-ascii")).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(timeout=5000)
 
 
 # --- fixture 7: PROMPT renders legal action bar ---
