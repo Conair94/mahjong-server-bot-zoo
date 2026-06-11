@@ -1830,6 +1830,13 @@ function _signed(n) {
   return n > 0 ? `+${n}` : String(n);
 }
 
+// Spec 39: 8-cell ASCII progress bar for unearned achievements.
+function _achBar(progress, target) {
+  const cells = 8;
+  const filled = target > 0 ? Math.min(cells, Math.floor((progress / target) * cells)) : 0;
+  return `[${"█".repeat(filled)}${"░".repeat(cells - filled)}]`;
+}
+
 class ProfilePage extends LitElement {
   static properties = {
     profile: { type: Object }, // PROFILE payload, or null while loading
@@ -1887,6 +1894,20 @@ class ProfilePage extends LitElement {
       cursor: pointer; font-family: inherit; font-size: inherit; padding: 0;
     }
     .watch-btn:hover { text-decoration: underline; }
+    /* Spec 39: achievements — earned bright, in-progress dimmed with an
+     * ASCII progress bar (terminal aesthetic; no images). */
+    .ach-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 0.5rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .ach { color: var(--fg-dim); }
+    .ach .ach-name { margin-left: 0.35rem; }
+    .ach .ach-progress { margin-left: 0.5rem; font-size: 0.85em; }
+    .ach .ach-desc { display: block; font-size: 0.8em; margin-left: 1.4rem; }
+    .ach.earned, .ach.earned .ach-name { color: var(--accent); }
+    .ach.earned .ach-badge { color: var(--accent-red); }
   `;
 
   render() {
@@ -1926,9 +1947,30 @@ class ProfilePage extends LitElement {
 
               <div class="section-title">─ Recent games ─</div>
               ${this._recentTable(p.recent ?? [])}
+
+              ${Array.isArray(p.achievements) && p.achievements.length
+                ? html`
+                    <div class="section-title">─ Achievements ─</div>
+                    ${this._achievements(p.achievements)}
+                  `
+                : ""}
             `}
       </div>
     `;
+  }
+
+  // Spec 39: one row per catalog entry, in wire order — earned rows bright
+  // with a filled star, in-progress rows dimmed with an ASCII bar.
+  _achievements(list) {
+    return html`<div class="ach-grid">
+      ${list.map(
+        (a) => html`<div class="ach ${a.earned ? "earned" : ""}">
+          <span class="ach-badge">${a.earned ? "★" : "☆"}</span><span class="ach-name">${a.name}</span>
+          <span class="ach-progress">${a.earned ? "" : `${_achBar(a.progress, a.target)} ${a.progress}/${a.target}`}</span>
+          <span class="ach-desc">${a.desc}</span>
+        </div>`,
+      )}
+    </div>`;
   }
 
   _stat(label, value) {
