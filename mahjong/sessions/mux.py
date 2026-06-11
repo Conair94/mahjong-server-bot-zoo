@@ -103,6 +103,9 @@ class SeatPrompt:
     default_action: dict[str, Any]
     deadline: float  # asyncio loop monotonic time
     deadline_ms: int  # wire-format absolute deadline
+    # Spec 37: optional decision-time analysis (shanten/waits/fan/remaining).
+    # None → the PROMPT frame carries no `stats` key (pre-Spec-37 shape).
+    stats: dict[str, Any] | None = None
 
 
 class SeatHoldExpired(Exception):
@@ -580,6 +583,8 @@ class SeatSession:
             "deadline_ms": prompt.deadline_ms,
             "prompt_id": prompt.prompt_id,
         }
+        if prompt.stats is not None:
+            msg["stats"] = prompt.stats
         try:
             await self._outbound.sink.send(msg)
         except Exception:

@@ -19,8 +19,9 @@ persists across hands (going UNBOUND at hand end if no client lingers).
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from mahjong.adapters.base import (
     HumanIdentity,
@@ -32,6 +33,13 @@ from mahjong.adapters.base import (
 from mahjong.engine.types import Action, SeatView
 from mahjong.sessions import SeatHoldExpired, SeatPrompt, SeatSession
 
+logger = logging.getLogger(__name__)
+
+# Spec 37: decision-time analysis hook. Called with (prompt, seat); the
+# returned payload rides the PROMPT frame as `stats`. Bound at the
+# composition root so this module never imports pymj/analysis.
+StatsProvider = Callable[[Prompt, int], dict[str, Any] | None]
+
 
 class HumanAdapter:
     """SeatAdapter wrapping a single seat of a `SessionMux` (concretely, one
@@ -40,10 +48,17 @@ class HumanAdapter:
     identity: HumanIdentity
     kind = "human"
 
-    def __init__(self, *, session: SeatSession, identity: HumanIdentity) -> None:
+    def __init__(
+        self,
+        *,
+        session: SeatSession,
+        identity: HumanIdentity,
+        stats_provider: StatsProvider | None = None,
+    ) -> None:
         self._session = session
         self.identity = identity
         self._ctx: SeatContext | None = None
+        self._stats_provider = stats_provider
 
     async def seated(self, ctx: SeatContext) -> None:
         # The session is already attached; `ATTACHED` was sent at bind time.
@@ -108,6 +123,21 @@ class HumanAdapter:
         remaining = max(0.0, prompt["deadline"] - loop.time())
         deadline_ms = int(time.time() * 1000 + remaining * 1000)
 
+        # Spec 37 § Failure containment: stats are garnish — any provider
+        # failure is logged and the prompt goes out without them. The decide
+        # path must never be blocked by analysis.
+        stats: dict[str, Any] | None = None
+        if self._stats_provider is not None:
+            try:
+                stats = self._stats_provider(prompt, seat)
+            except Exception:
+                logger.warning(
+                    "hand_stats_failed prompt_id=%s seat=%d — sending prompt without stats",
+                    prompt_id,
+                    seat,
+                    exc_info=True,
+                )
+
         return SeatPrompt(
             prompt_id=prompt_id,
             phase=prompt["kind"],
@@ -115,6 +145,7 @@ class HumanAdapter:
             default_action=dict(prompt["default_action"]),
             deadline=prompt["deadline"],
             deadline_ms=deadline_ms,
+            stats=stats,
         )
 
 
