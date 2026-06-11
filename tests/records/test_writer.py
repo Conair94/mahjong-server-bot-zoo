@@ -179,3 +179,17 @@ def test_writer_rejects_missing_required_event_fields(tmp_path: Path) -> None:
     w = RecordWriter(tmp_path / "rec.jsonl")
     with pytest.raises(ValueError, match="event"):
         w.write_event({"turn_index": 0, "phase": "DEAL", "ts": TS})
+
+
+def test_write_event_is_durable_immediately(tmp_path: Path) -> None:
+    """Each written event must be readable from disk before close.
+
+    Records are the primary forensics artifact for a wedged/killed hand task
+    (FB-13): a buffered tail that only flushes at close() vanishes exactly
+    when the record matters most. Pin flush-per-event.
+    """
+    w = RecordWriter(tmp_path / "rec.jsonl")
+    w.write_event(_header_payload())
+    on_disk = (tmp_path / "rec.jsonl").read_bytes()
+    assert on_disk.endswith(b"\n")
+    assert json.loads(on_disk.splitlines()[0])["event"] == "HEADER"
