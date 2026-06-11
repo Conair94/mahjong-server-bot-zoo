@@ -36,7 +36,6 @@
 import { html } from "lit";
 
 const WIND_NAME = { F1: "East", F2: "South", F3: "West", F4: "North" };
-const SEAT_WIND_NAME = ["East", "South", "West", "North"]; // by seat index
 
 const PHASE_LABEL = {
   DEAL: "Deal",
@@ -69,10 +68,6 @@ const WIND_LETTER = { F1: "E", F2: "S", F3: "W", F4: "N" };
 
 const FACE_DOWN_ASCII = "▒▒";
 const FACE_DOWN_UNICODE = "🀫";
-
-function windNameFromSeat(seatIndex) {
-  return SEAT_WIND_NAME[seatIndex] ?? `Seat ${seatIndex + 1}`;
-}
 
 function seatByIndex(view, seatIndex) {
   return view?.seats?.find((s) => s.seat === seatIndex);
@@ -184,22 +179,29 @@ function emptyMarker() {
 }
 
 function renderMelds(melds, options) {
+  // Tiles only — no type label, no "from <wind>" provenance. A run is
+  // visibly a chi, a triplet a pung, four a kong, and who fed it is
+  // re-derivable from the pond; the labels were pure clutter (user
+  // feedback, 2026-06-11). The one distinction the tiles alone can't
+  // carry is concealed-vs-exposed kong (they score differently), so an
+  // own concealed kong uses the physical-table convention: back, face,
+  // face, back.
   if (!melds || melds.length === 0) return emptyMarker();
   const out = [];
   melds.forEach((m, i) => {
     if (i > 0) out.push("  ");
     out.push("[");
-    out.push(m.type);
-    out.push(" ");
     if (m.hidden) {
       // An opponent's concealed kong — tile identity is private until
       // settlement (Spec 29 Bug D), so show four face-down tiles.
       out.push(...joinFaceDown(4, " ", options));
+    } else if (m.type === "GANG_CONCEALED") {
+      const ts = m.tiles ?? [];
+      out.push(faceDown(options), " ");
+      out.push(...joinTiles(ts.slice(1, 3), " ", options));
+      out.push(" ", faceDown(options));
     } else {
       out.push(...joinTiles(m.tiles ?? [], " ", options));
-    }
-    if (m.called_from_seat !== undefined && m.called_from_seat !== null) {
-      out.push(` from ${windNameFromSeat(m.called_from_seat)}`);
     }
     out.push("]");
   });
