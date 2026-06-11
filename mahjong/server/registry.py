@@ -22,8 +22,10 @@ import hashlib
 import json
 import logging
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 from mahjong.adapters.autopass import AutoPassAdapter
 from mahjong.adapters.base import HumanIdentity, SeatAdapter
@@ -44,6 +46,16 @@ from mahjong.table.manager import DecideTimeouts
 from mahjong.table.rotation import next_dealer
 
 _logger = logging.getLogger(__name__)
+
+
+def _new_boot_id() -> str:
+    """A unique, sortable namespace for one server process's records + ids.
+
+    Sortable UTC timestamp (find a run's records by start time) plus a short
+    random suffix so two boots in the same second can't collide. See
+    ``TableRegistry.__init__`` for the DEF-13 rationale.
+    """
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:6]
 
 
 def _ruleset_config_hash(ruleset: RuleSetRef) -> str:
@@ -234,6 +246,7 @@ class TableHandle:
         seed: int,
         hand_id: str,
         record_path: Path,
+        boot_id: str = "",
         server_info: dict[str, Any],
         canned_seat_actions: dict[int, list[Action]] | None = None,
         decide_timeout_seconds: float = 30.0,
@@ -271,7 +284,10 @@ class TableHandle:
         self._bot_pacing_enabled = bot_pacing_enabled
         self._bot_min_delay_s = bot_min_delay_s
         self._bot_max_delay_s = bot_max_delay_s
-        self._match_id = f"match_t{table_id}"
+        # Boot-scope the match id too (DEF-13) so cross-restart hands with the
+        # same table id don't group together in find_hands_by_match. Empty
+        # boot_id keeps the legacy format for direct-construction tests.
+        self._match_id = f"match-{boot_id}-t{table_id}" if boot_id else f"match_t{table_id}"
         # Step 8.7: composition drives per-seat adapter construction and the
         # ATTACH-permission check.  ``None`` falls back to single-human legacy.
         self._seats: SeatsTuple = seats if seats is not None else DEFAULT_COMPOSITION
@@ -1023,11 +1039,21 @@ class TableRegistry:
     Spec: docs/specs/server-lifecycle.md § Table registry.
     """
 
-    def __init__(self, persistence: Persistence | None = None) -> None:
+    def __init__(
+        self, persistence: Persistence | None = None, *, boot_id: str | None = None
+    ) -> None:
         self._tables: dict[str, TableHandle] = {}
         self._next_id: int = 1
         self._accepting_new: bool = True
         self._persistence = persistence
+        # Per-process namespace for record paths + hand/match ids. Table ids
+        # restart at 1 each boot, so without this the second boot's first table
+        # reused records/t1/hand_0000.jsonl — overwriting the prior record file
+        # and tripping the hand_index PK(hand_id)/UNIQUE(record_path), which hid
+        # those hands from history/replay (DEF-13). A fresh id per process makes
+        # every derived identifier boot-unique. Injectable for deterministic
+        # restart tests.
+        self._boot_id: str = boot_id or _new_boot_id()
         # Monotonic timestamp set when drain begins; read by /health to report
         # drain_remaining_s.  None until drain_all() is called.
         self.drain_started_monotonic: float | None = None
@@ -1072,8 +1098,11 @@ class TableRegistry:
         self._next_id += 1
 
         ruleset_id = ruleset.get("id", "mcr-2006")
-        hand_id = f"t{table_id}-h0"
-        records_dir = data_dir / "records" / f"t{table_id}"
+        # Boot-scope the record path + hand id so a restart (table ids reset to
+        # 1) can't overwrite a prior run's record or collide on the hand_index
+        # PK/UNIQUE (DEF-13).
+        hand_id = f"{self._boot_id}-t{table_id}-h0"
+        records_dir = data_dir / "records" / self._boot_id / f"t{table_id}"
         records_dir.mkdir(parents=True, exist_ok=True)
         record_path = records_dir / "hand_0000.jsonl"
 
@@ -1083,6 +1112,7 @@ class TableRegistry:
             seed=seed + int(table_id),
             hand_id=hand_id,
             record_path=record_path,
+            boot_id=self._boot_id,
             server_info=server_info,
             canned_seat_actions=canned_seat_actions,
             decide_timeout_seconds=decide_timeout_seconds,

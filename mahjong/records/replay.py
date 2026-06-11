@@ -2,9 +2,17 @@
 
 Spec: docs/specs/record-format.md § Goals (replayable), § Verification fixture 2.
 
-Strategy: re-deal from `HEADER.seed` via `initial_state` (the engine is pure
-and deterministic, so the deal is reproducible), then re-apply exactly the
-actions the table manager applied at runtime.
+Strategy: re-deal from `HEADER.seed` **and the recorded dealer** via
+`initial_state` (the engine is pure and deterministic, so the deal is
+reproducible), then re-apply exactly the actions the table manager applied at
+runtime. The dealer matters: every hand after a match's first rotates it, which
+rotates the seat winds and the starting actor — replaying with the default
+``dealer_seat=0`` made the first recorded discard illegal (DEF-11).
+
+Caveat — records are only replayable against the *rule engine* that wrote them.
+A record produced before a scoring/legality change (e.g. the FB-09 concealed-fan
+fix) can carry a HU that the corrected engine refuses (it now scores below the
+ruleset's fan floor); that is an engine-version mismatch, not a replay defect.
 
 The subtlety is **claim windows and terminal wins**: the record's event
 vocabulary doesn't map one-to-one onto applied actions, and a window closes via
@@ -52,7 +60,21 @@ def replay(events: list[dict[str, Any]]) -> Iterator[GameState]:
     header = events[0]
     ruleset: RuleSetRef = header["ruleset"]
     seed = int(header["seed"])
-    state = initial_state(ruleset, seed=seed)
+    # The deal depends on the dealer, not just the seed: any hand after the
+    # match's first rotates the dealer, which rotates the seat winds and the
+    # starting actor. ``initial_state``'s default ``dealer_seat=0`` only
+    # reconstructs the first hand; for the rest we recover the dealer (the seat
+    # assigned East / F1) from the HEADER, or the first recorded discard lands
+    # on the wrong actor and raises IllegalAction.
+    #
+    # We mirror `run_hand`'s exact deal call (`manager.py`:
+    # ``initial_state(ruleset, seed, dealer_seat=...)``) — note it does *not*
+    # pass ``hand_index``, so every recorded state carries ``hand_index=0`` even
+    # though the HEADER's ``hand_index_in_match`` is non-zero for later hands.
+    # That field is orchestrator metadata that never reaches the engine state;
+    # trusting it here would make the reconstructed state diverge from the one
+    # that produced the record.
+    state = initial_state(ruleset, seed=seed, dealer_seat=_dealer_seat_from_header(header))
     yield state
 
     window: list[dict[str, Any]] = []  # buffered CLAIM_DECISIONs for the open window
@@ -114,6 +136,19 @@ def replay(events: list[dict[str, Any]]) -> Iterator[GameState]:
 
         else:  # pragma: no cover — exhaustive over the record vocabulary
             raise ValueError(f"unexpected event during replay: {kind!r}")
+
+
+def _dealer_seat_from_header(header: dict[str, Any]) -> int:
+    """The dealer is the seat assigned East (F1); seat winds rotate with it.
+
+    Mirrors the live writer (`registry.py`: ``wind = F{(seat-dealer)%4+1}``),
+    so the dealer is the unique seat with wind ``"F1"``. Falls back to 0 (the
+    hand-0 default) for legacy headers that predate per-hand wind recording.
+    """
+    for seat in header.get("seats", []):
+        if seat.get("wind") == "F1":
+            return int(seat["seat"])
+    return 0
 
 
 def _only(matches: Iterable[dict[str, Any]]) -> dict[str, Any]:
