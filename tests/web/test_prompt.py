@@ -173,6 +173,47 @@ async def test_space_key_sends_pass_action(page: Page, fake_wire_server: FakeWir
     assert action_msg["action"] == {"type": "PASS"}
 
 
+async def test_typing_in_text_field_does_not_fire_action(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Keystrokes typed into a text input must not be hijacked as game actions.
+
+    Player report (025210): while typing a bug report mid-hand, Space/H/Enter
+    were swallowed by the game-pane shortcut handler — Space passed, H toggled
+    HU, Enter discarded a tile. The bug-report textarea lives in a shadow root,
+    so at window level the keydown target is the *host* element, not the
+    textarea; the guard must inspect composedPath()[0], not e.target.
+    """
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_prompt_three_actions())
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
+
+    # A textarea inside a shadow root mirrors the real <feedback-button> form.
+    await page.evaluate(
+        """() => {
+          const host = document.createElement('div');
+          const root = host.attachShadow({ mode: 'open' });
+          const ta = document.createElement('textarea');
+          root.appendChild(ta);
+          document.body.appendChild(host);
+          ta.focus();
+        }"""
+    )
+
+    # Space would PASS, Enter would discard — both must be inert while typing.
+    await page.keyboard.press("Space")
+    await page.keyboard.press("Enter")
+
+    await asyncio.sleep(0.3)
+    actions = [m for m in fake_wire_server.inbound if m.get("kind") == "ACTION"]
+    assert actions == [], actions
+    # Prompt stays open — nothing was submitted on the player's behalf.
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible()
+
+
 async def test_alt_chord_does_not_fire_action(page: Page, fake_wire_server: FakeWireServer) -> None:
     """Alt+C is the chat-pane toggle; bare C is Chi. Alt+C must NOT send Chi."""
     await page.goto(fake_wire_server.url)

@@ -195,7 +195,11 @@ def load_config_from_env(
             "MAHJONG_MAX_SPECTATORS_PER_TABLE",
             e.get("MAHJONG_MAX_SPECTATORS_PER_TABLE", "32"),
         ),
-        default_ruleset=e.get("MAHJONG_DEFAULT_RULESET", "mcr-2006"),
+        # House default is the 3-fan floor (mcr-house-3fan): the official MCR
+        # 8-fan minimum left casual players unable to declare ordinary winning
+        # hands (FB-10 — "missed mahjong"). Official MCR stays available via
+        # MAHJONG_DEFAULT_RULESET=mcr-2006 and will return as a per-table pick.
+        default_ruleset=e.get("MAHJONG_DEFAULT_RULESET", "mcr-house-3fan"),
         shutdown_timeout_s=_parse_int(
             "MAHJONG_SHUTDOWN_TIMEOUT_SECONDS",
             e.get("MAHJONG_SHUTDOWN_TIMEOUT_SECONDS", "30"),

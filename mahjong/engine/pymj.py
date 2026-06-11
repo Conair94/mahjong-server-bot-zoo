@@ -26,7 +26,7 @@ from MahjongGB import (  # type: ignore[import-not-found]
     ThirteenOrphansShanten,
 )
 
-from mahjong.engine.tiles import Tile
+from mahjong.engine.tiles import Tile, tile_sort_key
 from mahjong.engine.types import FanEntry, Meld, WinType
 
 ShantenVariant = Literal[
@@ -184,9 +184,19 @@ def winning_tiles(hand: list[Tile], melds: list[Meld]) -> list[Tile]:
 def _melds_to_pack(melds: list[Meld]) -> tuple[tuple[str, str, int], ...]:
     """Convert our Meld TypedDicts to PyMahjongGB's pack tuple format.
 
-    PyMahjongGB pack entry: `(kind, tile, offer)` where kind is
-    "CHI"/"PENG"/"GANG" and `offer` is 0..3 (the absolute seat of the
-    discarder; per the Botzone convention).
+    PyMahjongGB pack entry: ``(kind, tile, offer)`` where kind is
+    "CHI"/"PENG"/"GANG" and ``offer`` is the *relative* seat the tile was
+    claimed from. **offer == 0 marks a concealed meld** (an-gang); an exposed
+    meld must be a non-zero offer. Only the 0-vs-nonzero distinction affects
+    fan scoring (the exact 1..3 value does not, verified against MahjongGB),
+    and no other consumer reads the offer, so exposed melds map to a fixed
+    non-zero sentinel.
+
+    FB-09 history: this used to emit the *absolute* ``called_from_seat`` as the
+    offer, so any meld claimed off seat 0 became offer=0 and the calculator
+    scored the exposed meld as **concealed** — inflating hands with bogus
+    "Fully Concealed Hand"/"Concealed Hand"/"N Concealed Pungs" fans. Only
+    ``GANG_CONCEALED`` is genuinely concealed.
     """
     out: list[tuple[str, str, int]] = []
     for meld in melds:
@@ -195,7 +205,20 @@ def _melds_to_pack(melds: list[Meld]) -> tuple[tuple[str, str, int], ...]:
         # PyMahjongGB; the variant matters for fan calculation flags
         # (is_about_kong) which is the caller's job to set.
         kind = "GANG" if kind_raw.startswith("GANG") else kind_raw
-        tile = meld.get("called_tile") or meld["tiles"][0]
-        offer = meld["called_from_seat"]
+        if kind == "CHI":
+            # PyMahjongGB identifies a CHI by its *middle* tile, not the claimed
+            # tile. Emitting `called_tile` made the library read the run shifted
+            # by one (e.g. a claimed B7 turned B7B8B9 into B6B7B8), corrupting
+            # terminal-sensitive fans like All Simples. Pungs/kongs are uniform,
+            # so `called_tile`/`tiles[0]` are interchangeable there.
+            tile = sorted(meld["tiles"], key=tile_sort_key)[1]
+        else:
+            tile = meld.get("called_tile") or meld["tiles"][0]
+        offer = 0 if kind_raw == "GANG_CONCEALED" else _EXPOSED_OFFER
         out.append((kind, tile, offer))
     return tuple(out)
+
+
+# PyMahjongGB only distinguishes concealed (0) from exposed (non-zero) packs;
+# the specific 1..3 value is fan-irrelevant, so exposed melds use this sentinel.
+_EXPOSED_OFFER = 1

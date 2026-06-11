@@ -41,13 +41,14 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-06 | feat | Audio cues + clearer claim-opportunity notifications | P2 | implemented | (this doc) |
 | FB-07 | meta | Feedback-tracking system (this backlog + admin console) | P0 (enabler) | implemented | [feedback-tracking.md](feedback-tracking.md) |
 | FB-08 | bug | Profile page unreachable / re-login on refresh | — | implemented | [live-play-bugfixes.md](live-play-bugfixes.md) (Spec 29 Bug A/E) |
-| FB-09 | bug | Scoring awards concealed fans (Fully Concealed / Concealed Pungs / Concealed Kong) to hands with claimed melds; Self-Drawn fan missing | **P0** (wrong winners/payments) | triaged | (this doc) |
-| FB-10 | bug | Fan→point conversion "wrong" (−20/loser) — live tables run `mcr-2006` payment, not the house ruleset | P1 | triaged | (this doc; [scoring-config.md](scoring-config.md)) |
+| FB-09 | bug | Scoring awards concealed fans (Fully Concealed / Concealed Pungs / Concealed Kong) to hands with claimed melds; Self-Drawn fan missing | **P0** (wrong winners/payments) | implemented | (this doc — meld→pack offer fix) |
+| FB-10 | bug | Fan→point conversion "wrong" (−20/loser) — live tables ran `mcr-2006` (8-fan floor), not the house ruleset | P1 | implemented | (this doc — default ruleset → `mcr-house-3fan`) |
 | FB-11 | feat | Mobile-friendly client + a way to quit a game | P2 | triaged | — (quit-game half delivered by FB-14; mobile layout remains) |
 | FB-12 | feat | Minimalist UI mode (discards + melds + own tiles only) | P2 | triaged | — |
 | FB-13 | bug | Mid-hand table freeze — hand task dead-stops at a pending prompt, no timeout, nothing logged | **P0** (game-breaking) | in-progress | (this doc — stall watchdog) |
 | FB-14 | bug | No way back to the main menu from a game — fatal when combined with a hung table (FB-13) + auto-rejoin (FB-03) | **P0** (game-breaking with FB-13) | implemented | (this doc — leave-table escape hatch) |
-| FB-15 | bug | Missed a mahjong (HU) on a discard of 9B — claim window not offered? | P1 | open | (this doc) |
+| FB-15 | bug | Missed a mahjong (HU) on a discard of 9B / 7B — HU not offered | P1 | implemented | (this doc — was the `mcr-2006` 8-fan floor; see FB-10) |
+| FB-16 | bug | Typing in a text field (bug-report box / chat) fires game shortcuts — Space passes, H toggles HU, Enter discards | P1 | implemented | (this doc — keydown editable-target guard) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
@@ -347,32 +348,49 @@ status overlay + admin-console UI so the product owner can triage from the runni
   > hand and was not supposed to have gotten a concealed hand, concealed pung concealed
   > kong. Also there was no extra fan for self drawn."
 - **Priority:** P0 — wrong fan totals change winners' payments every hand.
-- **Status:** triaged.
+- **Status:** **implemented** (2026-06-11).
 
-**Captured fixture** (the regression test, ready to pin): the winning `HAND_END` of
-`records/t1/hand_0000.jsonl` (hand_id `t1-h0`, seed `1781137498`, ts 00:38:25Z). Seat 1's
-melds are `GANG_EXPOSED` (T1 **called from seat 0**) and `PENG` (T7, claimed) — an
-unambiguously exposed hand — yet the fan list awards **Fully Concealed Hand (4)**, **Two
-Concealed Pungs (2)** and **Concealed Kong (2)**, and `win_type: SELF_DRAW` earns no
-Self-Drawn fan (in MCR, Fully Concealed Hand subsumes Self-Drawn — so once the
-concealment misclassification is fixed, the Self-Drawn fan should appear instead). The
-fan evaluator appears to ignore meld exposure (`called_from_seat` / meld type) when
-classifying concealment. Note this hand's `fan_total: 12` also drove the FB-10 report.
+**Root cause** (`mahjong/engine/pymj.py` `_melds_to_pack`): PyMahjongGB's pack `offer`
+field uses **0 to mark a concealed meld**; an exposed meld must be non-zero. The wrapper
+emitted the *absolute* `called_from_seat` as the offer, so **any meld claimed off seat 0
+became offer=0** and the calculator scored the exposed meld as concealed — awarding bogus
+"Fully Concealed Hand"/"Concealed Hand"/"N Concealed Pungs"/"Concealed Kong". (This is why
+it mis-scored *many* hands: ~¼ of exposed melds are claimed off seat 0.) Verified directly
+against MahjongGB: `offer=0` → "Fully Concealed Hand"; any non-zero → "Self-Drawn".
+
+**Fix:** offer is now `0` only for `GANG_CONCEALED`, a fixed non-zero sentinel otherwise
+(the 1..3 value is fan-irrelevant — only 0-vs-nonzero affects scoring). A second bug in the
+same function was fixed alongside: CHI emitted its *claimed* tile instead of the run's
+**middle** tile, so MahjongGB read the run shifted by one (a claimed B7 turned B7B8B9 into
+B6B7B8) and granted bogus terminal-sensitive fans like "All Simples" on a hand holding B9.
+
+**Regression test:** `tests/engine/test_pymj.py::test_exposed_melds_not_scored_as_concealed`
+(seat 1's real `records/t1/hand_0000_3` self-draw with three CHI off seat 0 — pins no
+concealed bonus, "Self-Drawn" present, and no "All Simples" with a terminal in a chow).
+Note: without the +4 concealed bug the hand totals 7 < 8, so the bug was also letting an
+**illegal-under-MCR self-draw** through.
 
 ## FB-10 — Fan→point conversion: live tables run `mcr-2006`, not the house ruleset
 
 - **Report(s):** `20260611_004040_bug.txt` (ConnorL).
   > "Fan to point conversion is broken, should not be be negative twenty"
 - **Priority:** P1.
-- **Status:** triaged.
+- **Status:** **implemented** (2026-06-11).
 
-The arithmetic is actually *correct for the ruleset the table ran*: the record header says
+The arithmetic was actually *correct for the ruleset the table ran*: the record header said
 `ruleset: mcr-2006`, and the −20/+60 split is standard MCR table payment
-(self-draw: each loser pays 8 + fan = 8 + 12 = 20). Two real issues hide under the report:
-(1) the inflated `fan_total` comes from FB-09; (2) the Spec-26 house ruleset
-(`mcr-house-3fan.json`, the zero-sum fan→points contract) is **not what live tables
-play** — `CREATE_TABLE` has no ruleset selection and the server default is `mcr-2006`.
-The fix is ruleset plumbing (default config or per-table choice), not conversion math.
+(self-draw: each loser pays 8 + fan = 8 + 12 = 20). Two real issues hid under the report:
+(1) the inflated `fan_total` came from FB-09 (now fixed); (2) the Spec-26 house ruleset
+(`mcr-house-3fan.json`) is **not what live tables played** — the server default was
+`mcr-2006`, whose 8-fan floor also blocked ordinary winning hands (the FB-15 "missed
+mahjong" reports).
+
+**Fix:** the server default ruleset is now `mcr-house-3fan` (3-fan floor) —
+`mahjong/server/config.py` `default_ruleset`. Official MCR remains available via
+`MAHJONG_DEFAULT_RULESET=mcr-2006` and will return as a per-table `CREATE_TABLE` choice
+(deferred — see below). Verified end-to-end: the default config resolves to `fan_cliff: 3`,
+and the real FB-15 hand (seat 2's Dragon-Pung + B9 wait, 5 fan) is now offered HU where it
+was silently refused under the 8-fan floor.
 
 ## FB-11 / FB-12 — Mobile + quit-game; minimalist UI mode
 
@@ -497,17 +515,59 @@ Two halves, both "missing exit", not broken code:
 - **Browser-verify owed** on the deployed build (→ DEF-04 bucket): click the button in
   a live game, land in the lobby, join a new table.
 
-## FB-15 — Missed a mahjong (HU) on a discard of 9B
+## FB-15 — Missed a mahjong (HU) on a discard of 9B / 7B
 
-- **Report(s):** `20260611_015746_bug.txt` (Lillian, 2026-06-11):
-  > "missed a mahjong with a discard of nine b"
-- **Priority:** P1 — if real, a missing claim-HU window is a rules-engine defect.
-- **Status:** open — not yet investigated. Two prior hypotheses to check first:
-  (1) the hand may simply have been under the 8-fan MCR floor on that win tile
-  (legitimately not HU — HU legality maximizes fan over all win-tile choices, so
-  probe that before calling it a bug; see the FB-09 fixture's fan-floor interplay);
-  (2) the FB-09 concealment misclassification distorting fan totals near the floor.
-  Needs the hand record from that evening's session to reconstruct the claim window.
+- **Report(s):** `20260611_015746_bug.txt` (Lillian) "missed a mahjong with a discard of
+  nine b"; `20260611_032539_bug.txt` (North) "east discard seven dot which north would
+  mahjong on but was not given option".
+- **Priority:** P1.
+- **Status:** **implemented** (2026-06-11) — it was hypothesis (1): the **8-fan MCR floor**.
+  Reconstructed from `records/t1/hand_0000_3`: seat 2 (North) finished fully-concealed,
+  tenpai on a **B9 pair wait** (W6W7W8 · B4B5B6 · T2T3T4 · J2J2J2 · B9). On a B9 ron that
+  hand is Dragon Pung + Concealed Hand + Single Wait = **5 fan** — a legitimate win, but
+  below `mcr-2006`'s 8-fan floor, so the engine *correctly-but-frustratingly* refused the
+  HU and offered no claim window. Across the whole evening's last two hands, **zero HU
+  opportunities** were ever surfaced; both hands resolved on self-draw. Fixed by the FB-10
+  default-ruleset change (3-fan floor): the same hand now clears and HU is offered. No
+  engine defect — the claim-window legality (`legality/claim.py`) was working as designed.
+
+## FB-16 — Text-field keystrokes hijacked as game shortcuts
+
+- **Report(s):** `20260611_025210_bug.txt` (ConnorL): "After starting a new hand, the
+  ability for me to type a bug report was hampered. I could not input a space or an H. … it
+  also kept reporting that I could Hu when I couldn't. When I press enter it accidentally
+  discarded a tile."
+- **Priority:** P1 — corrupts the bug-report box and chat, and can discard a tile / declare
+  HU unintentionally mid-hand.
+- **Status:** **implemented** (2026-06-11).
+
+**Root cause:** `<game-pane>._handleKeydown` (`mahjong/web/static/app.js`) is a `window`
+keydown listener that maps **Space→PASS, H→HU, Enter→PLAY(discard), letters→tile-select**
+with no check for whether the user is typing in a text field. So in the bug-report textarea
+(or chat), Space was swallowed as PASS, H toggled HU, Enter discarded the auto-selected
+tile. The textarea lives in a Lit **shadow root**, so at `window` level `e.target` is the
+retargeted host — the guard must read `e.composedPath()[0]`.
+
+**Fix:** new `isEditableTarget(e)` helper bails the handler when the composed target is an
+`INPUT`/`TEXTAREA`/`SELECT`/`contentEditable` node.
+**Regression test:** `tests/web/test_prompt.py::test_typing_in_text_field_does_not_fire_action`
+(Playwright: a focused shadow-root textarea + active prompt; Space/Enter must send no
+`ACTION`). Pinned the shadow-DOM retargeting specifically — a naive `e.target` check passes
+this test wrongly.
+
+## Triaged but not yet fixed (this session's reports)
+
+- **`20260611_030111` (claim priority):** "North discards one dot, priority was given to
+  east for chi before south could claim peng." MCR priority is HU > PENG/GANG > CHI, and
+  `table/manager.py::_resolve_claim_priority` enforces it — so either South's PENG window
+  wasn't *offered*, or the CHI resolved before South's claim was collected. **Needs a
+  record repro** (the cited hand predates the surviving `hand_0000_3`). Not yet an `FB-NN`;
+  open until reproduced.
+- **`20260611_025404` (score tracking):** "Game isn't tracking total scores across rounds."
+  Cross-hand cumulative scores — separate from per-hand `score_delta`. Candidate next FB.
+- **`20260611_030212` ("option for HU but no HU"):** likely a compound of FB-15 (floor) +
+  FB-16 (the H key being eaten); re-verify in a live session on this build before opening a
+  distinct item.
 
 ---
 

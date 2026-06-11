@@ -51,6 +51,59 @@ def test_calculate_fan_four_concealed_pungs_self_drawn() -> None:
     assert total >= 8, "total fan must clear the MCR 8-fan cliff"
 
 
+_CONCEALED_BONUS_FANS = {
+    "Fully Concealed Hand",
+    "Concealed Hand",
+    "Two Concealed Pungs",
+    "Three Concealed Pungs",
+    "Four Concealed Pungs",
+}
+
+
+def test_exposed_melds_not_scored_as_concealed() -> None:
+    """FB-09 regression: a hand with exposed melds must not earn concealed fans.
+
+    PyMahjongGB's pack ``offer`` field uses 0 to mark a *concealed* meld; an
+    exposed meld must be a non-zero offer. The wrapper used to emit the
+    absolute ``called_from_seat`` as the offer, so any meld claimed off seat 0
+    became offer=0 and the calculator scored it as concealed — inflating the
+    hand with "Fully Concealed Hand" (+4) and friends.
+
+    Scenario is the real one from records/t1/hand_0000_3: seat 1 self-draws W6
+    to complete a hand of three CHI melds (all called off seat 0) + T5T6T7 +
+    W6W6 pair. The win is by self-draw with three exposed chows, so the only
+    concealment-related fan that may appear is the +1 "Self-Drawn", never a
+    "...Concealed Hand" bonus.
+
+    Scored against a 3-fan floor: without the +4 concealed bug the hand totals
+    7, which clears 3 but not the official 8 — i.e. the bug was also letting an
+    illegal-under-MCR self-draw through.
+    """
+    exposed_off_seat_0 = [
+        {"type": "CHI", "tiles": ["W3", "W4", "W5"], "called_tile": "W4", "called_from_seat": 0},
+        {"type": "CHI", "tiles": ["B4", "B5", "B6"], "called_tile": "B6", "called_from_seat": 0},
+        {"type": "CHI", "tiles": ["B7", "B8", "B9"], "called_tile": "B7", "called_from_seat": 0},
+    ]
+    fans = calculate_fan(
+        hand=["W6", "T5", "T6", "T7"],
+        melds=exposed_off_seat_0,  # type: ignore[arg-type]
+        win_tile="W6",
+        win_type="SELF_DRAW",
+        seat_wind="F3",
+        round_wind="F1",
+        ruleset_config={"fan_cliff": 3},
+    )
+    names = {entry["name"] for entry in fans}
+    assert not (names & _CONCEALED_BONUS_FANS), (
+        f"exposed melds wrongly scored as concealed: {names & _CONCEALED_BONUS_FANS}"
+    )
+    assert "Self-Drawn" in names, "a self-draw with exposed melds still earns +1 Self-Drawn"
+    # The B7B8B9 chow contains the terminal B9, so All Simples must NOT apply.
+    # A CHI emitted as its claimed tile (B7) instead of its middle (B8) made the
+    # library read the run as B6B7B8 and wrongly grant All Simples.
+    assert "All Simples" not in names, "a chow with a terminal must not score All Simples"
+
+
 def test_calculate_fan_returns_fanentry_shape() -> None:
     """Every returned entry has the FanEntry shape: {'name': str, 'value': int}."""
     fans = calculate_fan(
