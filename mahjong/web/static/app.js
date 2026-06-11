@@ -39,6 +39,7 @@ import {
 } from "/static/prompt.js";
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
+import "/static/docs.js";
 
 // True when the keydown originated in an editable element (text input,
 // textarea, contentEditable) — so global game shortcuts can stand down and let
@@ -2271,7 +2272,8 @@ class MahjongApp extends LitElement {
     _authError: { state: true },    // null | error string shown under the form
     _authMode: { state: true },     // "login" | "register" (invite-gated signup)
     // Lobby vs. in-game view.
-    _view: { state: true },         // "lobby" | "table" | "profile"
+    _view: { state: true },         // "lobby" | "table" | "profile" | "docs" | "replay"
+    _docsReturnView: { state: true }, // where [back] from the docs page goes
     _lobbyTables: { state: true },  // array of TABLE_LIST.tables entries
     _lobbyHumans: { state: true },  // current composition pick (1..4)
     _lobbyError: { state: true },   // null | error string above the table list
@@ -2446,6 +2448,9 @@ class MahjongApp extends LitElement {
     this._settingsOpen = false;
     this._profile = null;
     this._serverFeatures = [];
+    // Docs reader (Spec 36). Reachable from any view incl. the auth screen;
+    // [back]/Esc returns to wherever the reader came from.
+    this._docsReturnView = "lobby";
     // Replay viewer (FB-04). Set from a REPLAY frame; cleared on close.
     this._replay = null;
     this._replayReturnView = "profile";  // where [back] returns to
@@ -2479,11 +2484,17 @@ class MahjongApp extends LitElement {
   }
 
   _handleKeydown(e) {
-    // Esc closes whichever overlay/screen is open (settings first, then profile).
+    // Esc closes whichever overlay/screen is open (settings, then docs, then
+    // profile).
     if (e.key === "Escape") {
       if (this._settingsOpen) {
         e.preventDefault();
         this._settingsOpen = false;
+        return;
+      }
+      if (this._view === "docs") {
+        e.preventDefault();
+        this._closeDocs();
         return;
       }
       if (this._view === "profile") {
@@ -2601,6 +2612,17 @@ class MahjongApp extends LitElement {
   _closeProfile() {
     this._profile = null;
     this._view = "lobby";
+  }
+
+  _openDocs() {
+    if (this._view === "docs") return;
+    this._docsReturnView = this._view;
+    this._view = "docs";
+    this._settingsOpen = false;
+  }
+
+  _closeDocs() {
+    this._view = this._docsReturnView || "lobby";
   }
 
   _onProfileReplay(e) {
@@ -3182,12 +3204,15 @@ class MahjongApp extends LitElement {
     // lobby/table/profile hidden until auth resolves (so we don't flash the
     // form or the empty lobby on every reload).
     const showResuming = this._authRequired && this._authState === "resuming";
+    // Docs are deliberately reachable pre-login (Spec 36): the docs view takes
+    // precedence over the auth form while open, and [back] returns to it.
+    const showDocs = !showResuming && this._view === "docs";
     // Show the auth form when the server requires auth and we haven't authed yet.
     const showAuth =
-      this._authRequired && this._authState !== "authed" && !showResuming;
-    const showReplay = !showAuth && !showResuming && this._view === "replay";
-    const showLobby = !showAuth && !showResuming && this._view === "lobby";
-    const showProfile = !showAuth && !showResuming && this._view === "profile";
+      this._authRequired && this._authState !== "authed" && !showResuming && !showDocs;
+    const showReplay = !showAuth && !showResuming && !showDocs && this._view === "replay";
+    const showLobby = !showAuth && !showResuming && !showDocs && this._view === "lobby";
+    const showProfile = !showAuth && !showResuming && !showDocs && this._view === "profile";
     // Profile needs the server to persist history; gate the button on the
     // advertised feature (older/no-persistence servers omit it).
     const profileSupported = (this._serverFeatures ?? []).includes("profile");
@@ -3216,6 +3241,13 @@ class MahjongApp extends LitElement {
                 [ profile ]
               </button>`
             : ""}
+          <button
+            class="theme-btn"
+            @click=${this._openDocs}
+            title="Rules, scoring & bot documentation"
+          >
+            [ docs ]
+          </button>
           <button
             class="theme-btn"
             @click=${() => { this._settingsOpen = true; }}
@@ -3265,6 +3297,9 @@ class MahjongApp extends LitElement {
             @profile-replay=${this._onProfileReplay.bind(this)}
           ></profile-page>`
         : ""}
+      ${showDocs
+        ? html`<docs-page @docs-back=${this._closeDocs.bind(this)}></docs-page>`
+        : ""}
       ${showReplay
         ? html`<replay-view
             .replay=${this._replay}
@@ -3275,7 +3310,7 @@ class MahjongApp extends LitElement {
         .panes=${this.panes}
         .tileStyle=${this.tileStyle}
         .viewMode=${this.viewMode}
-        ?hidden=${showLobby || showAuth || showProfile || showResuming || showReplay}
+        ?hidden=${showLobby || showAuth || showProfile || showResuming || showReplay || showDocs}
       ></table-page>
       ${this._settingsOpen
         ? html`<settings-menu
