@@ -338,9 +338,7 @@ class WebSocketServer:
             return
         conn_id = self._next_conn_id
         self._next_conn_id += 1
-        conn = Connection(
-            conn_id, ws, client_ip=self._resolve_peer_ip(ws)
-        )
+        conn = Connection(conn_id, ws, client_ip=self._resolve_peer_ip(ws))
         try:
             await self._handler(conn)
         except ConnectionClosed:

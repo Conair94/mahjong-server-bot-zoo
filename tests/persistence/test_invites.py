@@ -82,9 +82,7 @@ def test_mint_returns_prefixed_code(db: sqlite3.Connection, admin_id: int) -> No
     assert len(code) == len("inv_") + 16  # 8 bytes hex
 
 
-def test_mint_defaults_single_use_not_disabled(
-    db: sqlite3.Connection, admin_id: int
-) -> None:
+def test_mint_defaults_single_use_not_disabled(db: sqlite3.Connection, admin_id: int) -> None:
     code = mint_invite(db, created_by=admin_id, created_at_ms=1000)
     row = get_invite(db, code)
     assert row is not None
@@ -109,9 +107,7 @@ def test_get_unknown_code_returns_none(db: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_redeem_fresh_single_use_succeeds(
-    db: sqlite3.Connection, admin_id: int
-) -> None:
+def test_redeem_fresh_single_use_succeeds(db: sqlite3.Connection, admin_id: int) -> None:
     code = mint_invite(db, created_by=admin_id, created_at_ms=1000)
     assert redeem_invite(db, code, now_ms=2000) is True
     db.commit()
@@ -139,20 +135,14 @@ def test_redeem_spent_invite_rejected(db: sqlite3.Connection, admin_id: int) -> 
 
 
 def test_redeem_expired_invite_rejected(db: sqlite3.Connection, admin_id: int) -> None:
-    code = mint_invite(
-        db, created_by=admin_id, created_at_ms=1000, expires_at_ms=1500
-    )
+    code = mint_invite(db, created_by=admin_id, created_at_ms=1000, expires_at_ms=1500)
     assert redeem_invite(db, code, now_ms=2000) is False  # now > expiry
     db.commit()
     assert get_invite(db, code).used_count == 0
 
 
-def test_redeem_unexpired_invite_succeeds(
-    db: sqlite3.Connection, admin_id: int
-) -> None:
-    code = mint_invite(
-        db, created_by=admin_id, created_at_ms=1000, expires_at_ms=5000
-    )
+def test_redeem_unexpired_invite_succeeds(db: sqlite3.Connection, admin_id: int) -> None:
+    code = mint_invite(db, created_by=admin_id, created_at_ms=1000, expires_at_ms=5000)
     assert redeem_invite(db, code, now_ms=2000) is True  # now < expiry
 
 
@@ -161,9 +151,7 @@ def test_redeem_unexpired_invite_succeeds(
 # ---------------------------------------------------------------------------
 
 
-def test_redeem_disabled_invite_rejected(
-    db: sqlite3.Connection, admin_id: int
-) -> None:
+def test_redeem_disabled_invite_rejected(db: sqlite3.Connection, admin_id: int) -> None:
     code = mint_invite(db, created_by=admin_id, created_at_ms=1000)
     set_invite_disabled(db, code, True)
     db.commit()
@@ -177,9 +165,7 @@ def test_redeem_disabled_invite_rejected(
 # ---------------------------------------------------------------------------
 
 
-def test_redeem_multi_use_allows_up_to_max(
-    db: sqlite3.Connection, admin_id: int
-) -> None:
+def test_redeem_multi_use_allows_up_to_max(db: sqlite3.Connection, admin_id: int) -> None:
     code = mint_invite(db, created_by=admin_id, created_at_ms=1000, max_uses=3)
     assert [redeem_invite(db, code, now_ms=2000) for _ in range(3)] == [True, True, True]
     db.commit()
@@ -235,8 +221,6 @@ def test_concurrent_single_use_redemption_one_winner(tmp_path: Path) -> None:
     assert sum(results) == 1, f"expected exactly one winner, got {sum(results)}"
 
     check = open_db(db_path)
-    used = check.execute(
-        "SELECT used_count FROM invites WHERE code = ?", (code,)
-    ).fetchone()[0]
+    used = check.execute("SELECT used_count FROM invites WHERE code = ?", (code,)).fetchone()[0]
     check.close()
     assert used == 1

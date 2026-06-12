@@ -58,9 +58,9 @@ async def test_v0_records_replay_to_runtime_final_state(tmp_path: Path) -> None:
         seen.add(f"{final['terminal']['kind']}/{final['terminal']['win_type']}")
 
         states = list(replay(read_record(out)))
-        assert state_hash(states[-1]) == state_hash(final), (
-            f"seed {seed}: replay final state diverged from runtime"
-        )
+        assert state_hash(states[-1]) == state_hash(
+            final
+        ), f"seed {seed}: replay final state diverged from runtime"
 
     # The seed range must actually exercise both win paths — otherwise this
     # test would silently stop covering the regression it exists for.
@@ -95,6 +95,6 @@ async def test_replay_reconstructs_rotated_dealer_hands(tmp_path: Path) -> None:
             hand_index_in_match=dealer,  # exercise a non-zero index alongside
         )
         states = list(replay(read_record(out)))
-        assert state_hash(states[-1]) == state_hash(final), (
-            f"dealer {dealer}: replay final state diverged from runtime"
-        )
+        assert state_hash(states[-1]) == state_hash(
+            final
+        ), f"dealer {dealer}: replay final state diverged from runtime"

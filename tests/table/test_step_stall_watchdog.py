@@ -67,12 +67,14 @@ async def test_stalled_step_logs_and_raises(
 
     monkeypatch.setattr(mgr, "_step_discard", _hung_step)
 
-    with caplog.at_level("ERROR", logger="mahjong.table.manager"):
-        with pytest.raises(HandStepStalled):
-            await asyncio.wait_for(
-                _run(tmp_path, step_stall_seconds=0.1),
-                timeout=5.0,  # the watchdog, not this outer guard, must fire
-            )
+    with (
+        caplog.at_level("ERROR", logger="mahjong.table.manager"),
+        pytest.raises(HandStepStalled),
+    ):
+        await asyncio.wait_for(
+            _run(tmp_path, step_stall_seconds=0.1),
+            timeout=5.0,  # the watchdog, not this outer guard, must fire
+        )
 
     stall_lines = [r.message for r in caplog.records if "hand_step_stalled" in r.message]
     assert stall_lines, "expected a hand_step_stalled log line"
@@ -102,9 +104,11 @@ async def test_stall_that_swallows_cancellation_still_aborts(
 
     monkeypatch.setattr(mgr, "_step_discard", _uncancellable_step)
 
-    with caplog.at_level("ERROR", logger="mahjong.table.manager"):
-        with pytest.raises(HandStepStalled):
-            await asyncio.wait_for(_run(tmp_path, step_stall_seconds=0.1), timeout=5.0)
+    with (
+        caplog.at_level("ERROR", logger="mahjong.table.manager"),
+        pytest.raises(HandStepStalled),
+    ):
+        await asyncio.wait_for(_run(tmp_path, step_stall_seconds=0.1), timeout=5.0)
 
     messages = [r.message for r in caplog.records]
     assert any("hand_step_stalled" in m for m in messages)

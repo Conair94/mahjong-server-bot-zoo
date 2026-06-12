@@ -72,9 +72,9 @@ async def test_claim_window_records_all_seats_decisions(tmp_path: Path) -> None:
             if events[j]["event"] == "CLAIM_DECISION":
                 seats_decided.add(events[j]["seat"])
             j += 1
-        assert seats_in_opps.issubset(seats_decided), (
-            f"window at seq {events[i]['seq']}: opps={seats_in_opps}, decided={seats_decided}"
-        )
+        assert seats_in_opps.issubset(
+            seats_decided
+        ), f"window at seq {events[i]['seq']}: opps={seats_in_opps}, decided={seats_decided}"
         windows_seen += 1
         i = j
     assert windows_seen > 0, "smoke seed expected to produce at least one claim window"

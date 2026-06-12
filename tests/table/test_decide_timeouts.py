@@ -111,9 +111,9 @@ async def test_human_discard_timeout_uses_human_discard_budget(tmp_path: Path) -
 
     discard_budgets = [b for (kind, b) in human.seen if kind == "DISCARD"]
     assert discard_budgets, "expected at least one DISCARD prompt to seat 0"
-    assert all(b == pytest.approx(45.0, abs=0.5) for b in discard_budgets), (
-        f"human DISCARD budgets should all be ~45s, got {discard_budgets}"
-    )
+    assert all(
+        b == pytest.approx(45.0, abs=0.5) for b in discard_budgets
+    ), f"human DISCARD budgets should all be ~45s, got {discard_budgets}"
 
 
 # --- Fixture 2: human CLAIM timeout uses human_claim_s ----------------------
@@ -139,9 +139,9 @@ async def test_human_claim_timeout_uses_human_claim_budget(tmp_path: Path) -> No
         by_kind[kind].append(b)
 
     assert by_kind["CLAIM"], "expected at least one CLAIM prompt to the human seat"
-    assert all(b == pytest.approx(15.0, abs=0.5) for b in by_kind["CLAIM"]), (
-        f"human CLAIM budgets should all be ~15s, got {by_kind['CLAIM']}"
-    )
+    assert all(
+        b == pytest.approx(15.0, abs=0.5) for b in by_kind["CLAIM"]
+    ), f"human CLAIM budgets should all be ~15s, got {by_kind['CLAIM']}"
     # And DISCARD prompts (if any) used the human_discard_s side.
     for b in by_kind["DISCARD"]:
         assert b == pytest.approx(45.0, abs=0.5)
@@ -165,9 +165,9 @@ async def test_bot_seat_uses_bot_s_regardless_of_prompt_kind(tmp_path: Path) -> 
     )
 
     assert canned.seen, "expected at least one prompt to seat 2"
-    assert all(b == pytest.approx(7.0, abs=0.5) for (_, b) in canned.seen), (
-        f"all canned-seat budgets should be ~7s (bot_s), got {canned.seen}"
-    )
+    assert all(
+        b == pytest.approx(7.0, abs=0.5) for (_, b) in canned.seen
+    ), f"all canned-seat budgets should be ~7s (bot_s), got {canned.seen}"
 
 
 # --- Fixture 4: env-var defaults + back-compat shim -------------------------

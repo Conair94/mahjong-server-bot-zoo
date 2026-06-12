@@ -144,9 +144,39 @@ def test_hu_beats_gang() -> None:
 # --- Gated GANG (v1 refinement of v0's always-GANG) --------------------------
 
 # Isolated J2 quad: konging keeps the tenpai (d 0.0 either way; probed).
-HARMLESS_KONG_HAND = ["J2", "J2", "J2", "J2", "B2", "B3", "B4", "T6", "T7", "T8", "W2", "W3", "F1", "F1"]
+HARMLESS_KONG_HAND = [
+    "J2",
+    "J2",
+    "J2",
+    "J2",
+    "B2",
+    "B3",
+    "B4",
+    "T6",
+    "T7",
+    "T8",
+    "W2",
+    "W3",
+    "F1",
+    "F1",
+]
 # B4 quad serves B3-B4-B5 runs: konging strands B3/B5 (d 0.0 -> 1.0; probed).
-WRECK_KONG_HAND = ["B3", "B4", "B4", "B4", "B4", "B5", "T1", "T2", "T3", "W7", "W8", "W9", "F1", "J2"]
+WRECK_KONG_HAND = [
+    "B3",
+    "B4",
+    "B4",
+    "B4",
+    "B4",
+    "B5",
+    "T1",
+    "T2",
+    "T3",
+    "W7",
+    "W8",
+    "W9",
+    "F1",
+    "J2",
+]
 
 
 def test_gang_taken_when_harmless() -> None:

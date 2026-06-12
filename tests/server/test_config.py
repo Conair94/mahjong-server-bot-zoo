@@ -74,8 +74,6 @@ def test_bad_listen_addr_raises() -> None:
 
 
 def test_unknown_mahjong_var_returned_as_warning() -> None:
-    cfg, unknown = load_config_from_env(
-        env={"MAHJONG_HARTBEAT_INTERVAL_SECONDS": "30"}
-    )
+    cfg, unknown = load_config_from_env(env={"MAHJONG_HARTBEAT_INTERVAL_SECONDS": "30"})
     assert "MAHJONG_HARTBEAT_INTERVAL_SECONDS" in unknown
     assert isinstance(cfg, ServerConfig)

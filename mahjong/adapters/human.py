@@ -21,7 +21,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 from mahjong.adapters.base import (
     HumanIdentity,

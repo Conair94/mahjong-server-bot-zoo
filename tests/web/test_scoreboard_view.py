@@ -88,9 +88,7 @@ async def test_header_shows_live_round_wall_hand(
     await expect(header).not_to_contain_text("demo")
 
 
-async def test_inline_match_total_in_roster(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_inline_match_total_in_roster(page: Page, fake_wire_server: FakeWireServer) -> None:
     """Own seat (0) has a +16 running total; it shows in the roster, not 0."""
     await _attach(page, fake_wire_server)
     own_score = page.locator("game-pane").locator(".mv-own-head .mv-score")

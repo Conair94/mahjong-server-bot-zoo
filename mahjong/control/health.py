@@ -58,9 +58,7 @@ class HealthMonitor:
         }
 
     async def snapshot(self) -> dict[str, Any]:
-        return await asyncio.get_running_loop().run_in_executor(
-            None, self._snapshot_blocking
-        )
+        return await asyncio.get_running_loop().run_in_executor(None, self._snapshot_blocking)
 
 
 __all__ = ["HealthMonitor"]

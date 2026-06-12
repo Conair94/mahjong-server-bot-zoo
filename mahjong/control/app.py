@@ -122,16 +122,12 @@ class ControlApp:
         # (the same port serves the web client + WS). cloudflared need not be
         # installed; TunnelSupervisor reports `cloudflared_not_found` if it isn't.
         _, _, server_port = server_listen_addr.rpartition(":")
-        tunnel = TunnelSupervisor(
-            argv=cloudflared_argv(f"http://127.0.0.1:{server_port}")
-        )
+        tunnel = TunnelSupervisor(argv=cloudflared_argv(f"http://127.0.0.1:{server_port}"))
 
         # The child is a `serve`, not a `control`; strip our MAHJONG_CTL_* vars so
         # it doesn't log them as unknown-config warnings (which would then show up
         # in the console's own Logs pane).
-        child_env = {
-            k: v for k, v in server_env.items() if not k.startswith("MAHJONG_CTL_")
-        }
+        child_env = {k: v for k, v in server_env.items() if not k.startswith("MAHJONG_CTL_")}
         self._log_buffer = LogRingBuffer(maxlen=config.log_buffer_lines)
         self._supervisor = ServerSupervisor(
             argv=[sys.executable, "-m", "mahjong", "serve"],

@@ -86,7 +86,7 @@ def _pending_stack_summary(task: asyncio.Task[Any], limit: int = 6) -> str:
 
 
 async def _guarded_step(
-    step: Awaitable["GameState"],
+    step: Awaitable[GameState],
     *,
     cap_seconds: float,
     hand_id: str,
@@ -162,6 +162,7 @@ class DecideTimeouts:
         """Back-compat shim: one value applies everywhere (mirrors the
         pre-spec-19 single ``decide_timeout_seconds`` parameter)."""
         return cls(human_discard_s=seconds, human_claim_s=seconds, bot_s=seconds)
+
 
 # Optional per-event hook the orchestrator can pass to fan record events to
 # additional consumers (e.g. spectators) without going through the adapter

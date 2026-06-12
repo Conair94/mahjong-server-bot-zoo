@@ -85,9 +85,7 @@ def test_payload_counts_distinct_occupied_humans() -> None:
     """players_connected = distinct user_ids on occupied human seats (bots and
     empty seats excluded)."""
     reg = _two_table_registry()
-    payload = build_admin_status_payload(
-        registry=reg, started_at_monotonic=0.0, listen_addr="x:1"
-    )
+    payload = build_admin_status_payload(registry=reg, started_at_monotonic=0.0, listen_addr="x:1")
     assert payload["players_connected"] == 3  # u_7, u_9, u_4
 
 

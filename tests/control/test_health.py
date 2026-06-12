@@ -59,6 +59,7 @@ async def test_integrity_result_is_cached(tmp_path: Path) -> None:
 async def test_status_includes_health_block(tmp_path: Path) -> None:
     p = Persistence(str(tmp_path / "mj.db"), tmp_path)
     try:
+
         async def fetch() -> dict | None:
             return None
 

@@ -20,7 +20,9 @@ from mahjong.server.registry import TableHandle, TableRegistry
 MCR_REF: dict[str, Any] = {"id": "mcr-2006", "version": 1, "config_hash": MANIFEST["mcr-2006"]}
 SERVER = {"version": "test", "git_sha": "test", "host": "test"}
 PARTICIPANTS = [
-    Participant(seat=i, account_id=None, seat_kind="canned", wind=f"F{i + 1}", final_score_delta=None)
+    Participant(
+        seat=i, account_id=None, seat_kind="canned", wind=f"F{i + 1}", final_score_delta=None
+    )
     for i in range(4)
 ]
 

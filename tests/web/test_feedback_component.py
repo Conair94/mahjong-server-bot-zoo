@@ -45,9 +45,7 @@ async def test_no_button_without_session_token(
     page: Page, fake_wire_server: FakeWireServer
 ) -> None:
     await _mount(page, fake_wire_server, {})
-    has_launcher = await page.evaluate(
-        "() => !!window.__fb.renderRoot.querySelector('.launcher')"
-    )
+    has_launcher = await page.evaluate("() => !!window.__fb.renderRoot.querySelector('.launcher')")
     assert has_launcher is False
 
 
@@ -61,9 +59,7 @@ async def test_launcher_visible_when_logged_in(
     assert text == "[feedback]"
 
 
-async def test_open_dialog_shows_controls(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_open_dialog_shows_controls(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
     controls = await page.evaluate(
         """async () => {
@@ -82,9 +78,7 @@ async def test_open_dialog_shows_controls(
     assert controls["options"] == ["bug", "feature"]
 
 
-async def test_valid_submit_dispatches_event(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_valid_submit_dispatches_event(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
     events = await page.evaluate(
         """async () => {
@@ -104,9 +98,7 @@ async def test_valid_submit_dispatches_event(
     assert events[0]["text"] == "Please add a spectator chat window."
 
 
-async def test_repeat_submit_sends_only_once(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_repeat_submit_sends_only_once(page: Page, fake_wire_server: FakeWireServer) -> None:
     """Spec 29 Bug E: clicking Submit repeatedly must dispatch exactly one
     FEEDBACK event (the cause of the three duplicate reports)."""
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
@@ -129,9 +121,7 @@ async def test_repeat_submit_sends_only_once(
     assert count == 1
 
 
-async def test_ack_auto_closes_and_clears(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_ack_auto_closes_and_clears(page: Page, fake_wire_server: FakeWireServer) -> None:
     """Spec 29 Bug E: a successful ACK auto-closes the dialog and clears the
     draft, so the user can't sit on a lingering modal and re-submit."""
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
@@ -158,9 +148,7 @@ async def test_ack_auto_closes_and_clears(
     assert result["phase"] == "draft"
 
 
-async def test_short_text_rejected_locally(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_short_text_rejected_locally(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
     result = await page.evaluate(
         """async () => {
@@ -183,9 +171,7 @@ async def test_short_text_rejected_locally(
     assert result["hasError"] is True
 
 
-async def test_on_result_success_shows_thanks(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_on_result_success_shows_thanks(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
     done_text = await page.evaluate(
         """async () => {
@@ -204,9 +190,7 @@ async def test_on_result_success_shows_thanks(
     assert "Feedback received" in done_text
 
 
-async def test_on_result_failure_shows_error(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_on_result_failure_shows_error(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _mount(page, fake_wire_server, {"sessionToken": "s_abc"})
     err_text = await page.evaluate(
         """async () => {

@@ -131,9 +131,7 @@ def redeem_invite(conn: sqlite3.Connection, code: str, *, now_ms: int) -> bool:
     return cursor.rowcount == 1
 
 
-def set_invite_disabled(
-    conn: sqlite3.Connection, code: str, disabled: bool
-) -> None:
+def set_invite_disabled(conn: sqlite3.Connection, code: str, disabled: bool) -> None:
     """Flip the ``disabled`` flag for *code*. Does NOT commit — caller commits.
 
     Backs the ``account invite revoke`` CLI (step 2).

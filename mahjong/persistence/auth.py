@@ -230,9 +230,7 @@ def handle_auth_request(
         PasswordHasher.verify(STATIC_INVALID_HASH, password)
         return _FAILURE
 
-    account_id, pw_hash, disabled, display_name = (
-        row[0], row[1], row[2], row[3]
-    )
+    account_id, pw_hash, disabled, display_name = (row[0], row[1], row[2], row[3])
 
     if disabled:
         # Still run a full verify — disabled-account path must look like
@@ -301,7 +299,12 @@ def handle_resume(
         return _FAILURE
 
     account_id, expires_at_ms, revoked, disabled, display_name, _username = (
-        row[0], row[1], row[2], row[3], row[4], row[5]
+        row[0],
+        row[1],
+        row[2],
+        row[3],
+        row[4],
+        row[5],
     )
 
     if revoked or expires_at_ms <= now or disabled:

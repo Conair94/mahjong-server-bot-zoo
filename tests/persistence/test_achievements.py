@@ -39,22 +39,37 @@ def _by_id(achievements: list[dict]) -> dict[str, dict]:
 
 def _win(p: Persistence, account_id: int, *, ts: int, fan: int = 8) -> None:
     _seed_hand(
-        p, account_id=account_id, seat=0, winner_seat=0,
-        score_deltas={0: 24, 1: -8, 2: -8, 3: -8}, fan_total=fan, started_at_ms=ts,
+        p,
+        account_id=account_id,
+        seat=0,
+        winner_seat=0,
+        score_deltas={0: 24, 1: -8, 2: -8, 3: -8},
+        fan_total=fan,
+        started_at_ms=ts,
     )
 
 
 def _loss(p: Persistence, account_id: int, *, ts: int, fan: int = 8, delta: int = -8) -> None:
     _seed_hand(
-        p, account_id=account_id, seat=0, winner_seat=1,
-        score_deltas={0: delta, 1: 24, 2: -8, 3: -8}, fan_total=fan, started_at_ms=ts,
+        p,
+        account_id=account_id,
+        seat=0,
+        winner_seat=1,
+        score_deltas={0: delta, 1: 24, 2: -8, 3: -8},
+        fan_total=fan,
+        started_at_ms=ts,
     )
 
 
 def _draw(p: Persistence, account_id: int, *, ts: int) -> None:
     _seed_hand(
-        p, account_id=account_id, seat=0, winner_seat=None,
-        score_deltas={0: 0, 1: 0, 2: 0, 3: 0}, fan_total=None, started_at_ms=ts,
+        p,
+        account_id=account_id,
+        seat=0,
+        winner_seat=None,
+        score_deltas={0: 0, 1: 0, 2: 0, 3: 0},
+        fan_total=None,
+        started_at_ms=ts,
         terminal_kind="EXHAUSTIVE_DRAW",
     )
 
@@ -159,12 +174,23 @@ def test_unfinalized_and_selfplay_hands_count_toward_nothing(
 ) -> None:
     """Fixture 6: same exclusions as account_stats."""
     _seed_hand(
-        p, account_id=account_id, seat=0, winner_seat=None,
-        score_deltas={}, fan_total=None, started_at_ms=1000, finalize=False,
+        p,
+        account_id=account_id,
+        seat=0,
+        winner_seat=None,
+        score_deltas={},
+        fan_total=None,
+        started_at_ms=1000,
+        finalize=False,
     )
     _seed_hand(
-        p, account_id=account_id, seat=0, winner_seat=0,
-        score_deltas={0: 24, 1: -8, 2: -8, 3: -8}, fan_total=24, started_at_ms=2000,
+        p,
+        account_id=account_id,
+        seat=0,
+        winner_seat=0,
+        score_deltas={0: 24, 1: -8, 2: -8, 3: -8},
+        fan_total=24,
+        started_at_ms=2000,
         source="selfplay",
     )
     by_id = _by_id(p.account_achievements(account_id))

@@ -105,7 +105,9 @@ def _hand_end_draw() -> dict[str, Any]:
 
 
 async def _wait_for_attached(page: Page) -> None:
-    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(
+        timeout=5000
+    )
 
 
 async def test_no_summary_before_hand_end(page: Page, fake_wire_server: FakeWireServer) -> None:
@@ -117,9 +119,7 @@ async def test_no_summary_before_hand_end(page: Page, fake_wire_server: FakeWire
     await expect(page.locator("game-pane").locator(".hand-end-summary")).to_have_count(0)
 
 
-async def test_hand_end_frame_renders_summary(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_hand_end_frame_renders_summary(page: Page, fake_wire_server: FakeWireServer) -> None:
     await page.goto(fake_wire_server.url)
     await fake_wire_server.send(_hello())
     await fake_wire_server.send(_attached())

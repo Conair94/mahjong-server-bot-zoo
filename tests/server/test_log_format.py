@@ -21,9 +21,7 @@ from mahjong.server.logconfig import (
 )
 
 
-def _record(
-    msg: str, level: int = logging.INFO, **extra: object
-) -> logging.LogRecord:
+def _record(msg: str, level: int = logging.INFO, **extra: object) -> logging.LogRecord:
     rec = logging.LogRecord(
         name="mahjong.serve",
         level=level,
@@ -48,9 +46,7 @@ def test_json_formatter_emits_required_keys() -> None:
 
 
 def test_json_formatter_merges_structured_extra() -> None:
-    line = JsonLogFormatter().format(
-        _record("sessions.cleanup", deleted=3, table_id="t1")
-    )
+    line = JsonLogFormatter().format(_record("sessions.cleanup", deleted=3, table_id="t1"))
     payload = json.loads(line)
     assert payload["deleted"] == 3
     assert payload["table_id"] == "t1"

@@ -33,7 +33,9 @@ _CANNED_SEATS = [
 ]
 
 _CANNED_PARTICIPANTS = [
-    Participant(seat=i, account_id=None, seat_kind="canned", wind=f"F{i + 1}", final_score_delta=None)
+    Participant(
+        seat=i, account_id=None, seat_kind="canned", wind=f"F{i + 1}", final_score_delta=None
+    )
     for i in range(4)
 ]
 
@@ -279,7 +281,9 @@ def test_reserve_hand_atomicity(p: Persistence, data_dir: Path) -> None:
         Participant(seat=1, account_id=None, seat_kind="canned", wind="F2", final_score_delta=None),
         Participant(seat=2, account_id=None, seat_kind="canned", wind="F3", final_score_delta=None),
         # seat=99 violates CHECK (seat BETWEEN 0 AND 3)
-        Participant(seat=99, account_id=None, seat_kind="canned", wind="F4", final_score_delta=None),
+        Participant(
+            seat=99, account_id=None, seat_kind="canned", wind="F4", final_score_delta=None
+        ),
     ]
 
     with pytest.raises(sqlite3.IntegrityError):
@@ -304,7 +308,9 @@ def test_find_hands_by_account_order_desc(p: Persistence, data_dir: Path) -> Non
         password_hash="hash",
     )
     participants = [
-        Participant(seat=0, account_id=account_id, seat_kind="human", wind="F1", final_score_delta=None),
+        Participant(
+            seat=0, account_id=account_id, seat_kind="human", wind="F1", final_score_delta=None
+        ),
         *_CANNED_PARTICIPANTS[1:],
     ]
 
@@ -335,7 +341,9 @@ def test_find_hands_by_account_pagination(p: Persistence, data_dir: Path) -> Non
         password_hash="hash",
     )
     participants = [
-        Participant(seat=0, account_id=account_id, seat_kind="human", wind="F1", final_score_delta=None),
+        Participant(
+            seat=0, account_id=account_id, seat_kind="human", wind="F1", final_score_delta=None
+        ),
         *_CANNED_PARTICIPANTS[1:],
     ]
 
@@ -370,7 +378,9 @@ def test_find_hands_by_match_order(p: Persistence, data_dir: Path) -> None:
     match_id = "match-001"
     for i in [2, 0, 1]:
         hand_id = f"hand-6-{i}"
-        record_path, _ = _make_record_file(data_dir, hand_id, match_id=match_id, hand_index=i, with_footer=False)
+        record_path, _ = _make_record_file(
+            data_dir, hand_id, match_id=match_id, hand_index=i, with_footer=False
+        )
         _reserve(p, hand_id, record_path, match_id=match_id, hand_index_in_match=i)
 
     rows = p.find_hands_by_match(match_id)

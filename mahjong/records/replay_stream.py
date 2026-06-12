@@ -32,11 +32,7 @@ def projected_events_for_seat(
     """The ordered inner-event payloads a replay viewer folds through the live
     reducer. HEADER/FOOTER are dropped; every other event (incl. HAND_END) is
     projected for ``seat`` (``None`` = public)."""
-    return [
-        project_event(e, seat)
-        for e in record_events
-        if e.get("event") not in _NON_VISIBLE
-    ]
+    return [project_event(e, seat) for e in record_events if e.get("event") not in _NON_VISIBLE]
 
 
 def initial_snapshot_for_seat(

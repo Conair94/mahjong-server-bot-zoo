@@ -109,9 +109,7 @@ async def test_hu_summary_shows_winner_and_fan(
     assert "Total" in fan and "8" in fan
 
 
-async def test_self_draw_vs_discard_headline(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_self_draw_vs_discard_headline(page: Page, fake_wire_server: FakeWireServer) -> None:
     t = _hu_terminal()
     t["win_type"] = "SELF_DRAW"
     t["deal_in_seat"] = None
@@ -124,9 +122,7 @@ async def test_self_draw_vs_discard_headline(
     assert "on South (Seat 2)'s discard" in headline, headline
 
 
-async def test_draw_summary_shows_no_winner(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_draw_summary_shows_no_winner(page: Page, fake_wire_server: FakeWireServer) -> None:
     t = {
         "kind": "DRAW",
         "winner": None,
@@ -188,9 +184,7 @@ async def test_final_hands_revealed_for_all_seats(
     assert tile_counts == [2, 2, 2, 2], tile_counts
 
 
-async def test_no_summary_before_terminal(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_no_summary_before_terminal(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _render(page, fake_wire_server, _view(None))
     present = await page.evaluate(
         """() => document.getElementById('__he_root').querySelector('.hand-end-summary') !== null"""

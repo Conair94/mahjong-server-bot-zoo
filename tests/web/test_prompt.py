@@ -102,7 +102,9 @@ def _prompt_multi_chi(prompt_id: str = "p_0_5_CLAIM_WINDOW") -> dict[str, Any]:
 
 
 async def _wait_for_attached(page: Page) -> None:
-    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(
+        timeout=5000
+    )
 
 
 # --- fixture 7: PROMPT renders legal action bar ---
@@ -374,9 +376,7 @@ def _prompt_pass_only(prompt_id: str = "p_0_5_CLAIM_PASS") -> dict[str, Any]:
     }
 
 
-async def test_claim_prompt_triggers_alert(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_claim_prompt_triggers_alert(page: Page, fake_wire_server: FakeWireServer) -> None:
     await page.goto(fake_wire_server.url)
     await fake_wire_server.send(_hello())
     await fake_wire_server.send(_attached())
@@ -388,9 +388,7 @@ async def test_claim_prompt_triggers_alert(
     await expect(gp.locator(".claim-chip")).to_be_visible()
 
 
-async def test_discard_prompt_has_no_alert(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_discard_prompt_has_no_alert(page: Page, fake_wire_server: FakeWireServer) -> None:
     await page.goto(fake_wire_server.url)
     await fake_wire_server.send(_hello())
     await fake_wire_server.send(_attached())
@@ -403,9 +401,7 @@ async def test_discard_prompt_has_no_alert(
     await expect(gp.locator(".claim-chip")).to_have_count(0)
 
 
-async def test_pass_only_claim_has_no_alert(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_pass_only_claim_has_no_alert(page: Page, fake_wire_server: FakeWireServer) -> None:
     await page.goto(fake_wire_server.url)
     await fake_wire_server.send(_hello())
     await fake_wire_server.send(_attached())
@@ -418,9 +414,7 @@ async def test_pass_only_claim_has_no_alert(
     await expect(gp.locator(".claim-chip")).to_have_count(0)
 
 
-async def test_alert_clears_on_prompt_change(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_alert_clears_on_prompt_change(page: Page, fake_wire_server: FakeWireServer) -> None:
     """Alert is visible for a claim prompt, then a follow-up DISCARD prompt
     replaces it and both cues disappear."""
     await page.goto(fake_wire_server.url)

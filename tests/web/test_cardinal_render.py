@@ -162,7 +162,9 @@ async def test_fixture_2_arrow_points_at_last_discarder(
     await _render_pinwheel(page, fake_wire_server, view, own_seat=0)
 
     arrow = await _text(page, ".pw-arrow")
-    assert arrow == expected_arrow, f"discarder={discarder_seat} → expected {expected_arrow!r}, got {arrow!r}"
+    assert (
+        arrow == expected_arrow
+    ), f"discarder={discarder_seat} → expected {expected_arrow!r}, got {arrow!r}"
 
 
 # --- Fixture 3: claim-window arrow follows the discarder (no info leak) -----
@@ -241,9 +243,9 @@ async def test_fixture_5_last_discard_uses_unicode_tile(
     # T5 in unicode = bamboo 5 = U+1F014 (0x1f010 + 4).
     tile_text = await _text(page, ".pw-last-discard .tile")
     expected_glyph = chr(0x1F010 + 4)
-    assert tile_text == expected_glyph, (
-        f"expected unicode bamboo-5 glyph {expected_glyph!r}, got {tile_text!r}"
-    )
+    assert (
+        tile_text == expected_glyph
+    ), f"expected unicode bamboo-5 glyph {expected_glyph!r}, got {tile_text!r}"
 
 
 # --- Fixture 6: no last-discard placeholder --------------------------------

@@ -97,9 +97,7 @@ class AdminWebServer:
 
     # --- HTTP (static assets) ---
 
-    def _process_request(
-        self, connection: ServerConnection, request: Request
-    ) -> Response | None:
+    def _process_request(self, connection: ServerConnection, request: Request) -> Response | None:
         offered = request.headers.get_all("Sec-WebSocket-Protocol")
         if offered:
             return None  # let the WS upgrade proceed

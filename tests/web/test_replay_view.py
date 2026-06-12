@@ -26,14 +26,31 @@ _RULESET: RuleSetRef = cast(RuleSetRef, {"id": "mcr-2006", "version": 1})
 def _replay_frame(seat: int = 0) -> dict[str, Any]:
     snapshot = cast(dict[str, Any], project(initial_state(_RULESET, seed=42), seat))
     events = [
-        {"event": "DRAW", "seat": seat, "tile": "B5", "turn_index": 1,
-         "phase": "DISCARD", "ts": "t"},
-        {"event": "DISCARD", "seat": seat, "tile": "B5", "from_hand": False,
-         "turn_index": 1, "phase": "DISCARD", "ts": "t"},
+        {
+            "event": "DRAW",
+            "seat": seat,
+            "tile": "B5",
+            "turn_index": 1,
+            "phase": "DISCARD",
+            "ts": "t",
+        },
+        {
+            "event": "DISCARD",
+            "seat": seat,
+            "tile": "B5",
+            "from_hand": False,
+            "turn_index": 1,
+            "phase": "DISCARD",
+            "ts": "t",
+        },
     ]
     return {
-        "kind": "REPLAY", "seq": 5, "hand_id": "h1", "seat": seat,
-        "snapshot": snapshot, "events": events,
+        "kind": "REPLAY",
+        "seq": 5,
+        "hand_id": "h1",
+        "seat": seat,
+        "snapshot": snapshot,
+        "events": events,
         "meta": {"ruleset_id": "mcr-2006", "winner_seat": None, "fan_total": None},
     }
 

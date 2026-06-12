@@ -79,9 +79,7 @@ async def test_get_profile_while_attached_returns_profile(tmp_path: Path) -> Non
             assert hello["kind"] == "HELLO", hello
 
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "connor", "password": "connorpw12"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "connor", "password": "connorpw12"})
             )
             auth = json.loads(cast(str, await ws.recv()))
             assert auth["ok"] is True, auth

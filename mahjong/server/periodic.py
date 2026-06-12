@@ -45,9 +45,7 @@ def _now_ms() -> int:
 # --- session cleanup -------------------------------------------------------
 
 
-def run_session_cleanup_once(
-    persistence: _SessionStore, *, now_ms: int | None = None
-) -> int:
+def run_session_cleanup_once(persistence: _SessionStore, *, now_ms: int | None = None) -> int:
     """Delete sessions already past their ``expires_at_ms``.  Returns count."""
     cutoff = _now_ms() if now_ms is None else now_ms
     deleted = persistence.delete_expired_sessions(before_ms=cutoff)
@@ -75,9 +73,7 @@ def run_wal_checkpoint_once(persistence: _WalStore, *, mode: str = "PASSIVE") ->
     return pages
 
 
-async def periodic_wal_checkpoint(
-    persistence: _WalStore, *, interval_s: float
-) -> None:
+async def periodic_wal_checkpoint(persistence: _WalStore, *, interval_s: float) -> None:
     """Run a PASSIVE checkpoint every *interval_s*.  Loops forever; cancelled
     at drain."""
     while True:

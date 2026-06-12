@@ -30,7 +30,21 @@ from mahjong.engine.transition import apply_action
 # min=5, max=6 — every choice clears the house floor (3) and none reaches the
 # mcr-2006 floor (8). (An all-chows hand can spuriously hit 8 via a wait fan;
 # this pung-based hand stays safely sub-8.)
-LOW_FAN_HAND13: list[Tile] = ["W2", "W2", "W2", "B3", "B4", "B5", "T6", "T7", "T8", "W7", "W8", "W9", "B9"]
+LOW_FAN_HAND13: list[Tile] = [
+    "W2",
+    "W2",
+    "W2",
+    "B3",
+    "B4",
+    "B5",
+    "T6",
+    "T7",
+    "T8",
+    "W7",
+    "W8",
+    "W9",
+    "B9",
+]
 LOW_FAN_WIN: Tile = "B9"
 
 MCR_REF: dict[str, Any] = {"id": "mcr-2006", "version": 1, "config_hash": MANIFEST["mcr-2006"]}
@@ -43,8 +57,12 @@ HOUSE_REF: dict[str, Any] = {"id": "mcr-house-3fan", "version": 1}
 def test_calculate_fan_cliff_from_config() -> None:
     """Same 6-fan hand: empty under cliff 8, non-empty under cliff 3."""
     kw: dict[str, Any] = dict(
-        hand=LOW_FAN_HAND13, melds=[], win_tile=LOW_FAN_WIN,
-        win_type="SELF_DRAW", seat_wind="F1", round_wind="F1",
+        hand=LOW_FAN_HAND13,
+        melds=[],
+        win_tile=LOW_FAN_WIN,
+        win_type="SELF_DRAW",
+        seat_wind="F1",
+        round_wind="F1",
     )
     assert pymj.calculate_fan(**kw, ruleset_config={"fan_cliff": 8}) == []
     assert pymj.calculate_fan(**kw, ruleset_config={"fan_cliff": 3}), "6 fan clears a 3-fan floor"
@@ -53,8 +71,12 @@ def test_calculate_fan_cliff_from_config() -> None:
 def test_calculate_fan_defaults_to_8_when_cliff_absent() -> None:
     """No fan_cliff key => default 8 (backwards-compatible with existing callers)."""
     fans = pymj.calculate_fan(
-        hand=LOW_FAN_HAND13, melds=[], win_tile=LOW_FAN_WIN,
-        win_type="SELF_DRAW", seat_wind="F1", round_wind="F1",
+        hand=LOW_FAN_HAND13,
+        melds=[],
+        win_tile=LOW_FAN_WIN,
+        win_type="SELF_DRAW",
+        seat_wind="F1",
+        round_wind="F1",
         ruleset_config={},
     )
     assert fans == []
@@ -80,7 +102,9 @@ def test_mcr_2006_hash_unchanged() -> None:
 
 
 def test_resolve_config_is_cached_and_equal() -> None:
-    a = resolve_config({"id": "mcr-house-3fan", "version": 1, "config_hash": MANIFEST["mcr-house-3fan"]})
+    a = resolve_config(
+        {"id": "mcr-house-3fan", "version": 1, "config_hash": MANIFEST["mcr-house-3fan"]}
+    )
     b = resolve_config({"id": "mcr-house-3fan"})
     assert a == b
     assert canonical_hash(a) == canonical_hash(b)

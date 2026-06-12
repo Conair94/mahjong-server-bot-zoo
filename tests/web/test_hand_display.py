@@ -151,9 +151,7 @@ async def _own_tile_mod_tokens(page: Page) -> list[str]:
 # --- Fixture 1: selection highlight ----------------------------------------
 
 
-async def test_fixture_1_selection_highlight(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_fixture_1_selection_highlight(page: Page, fake_wire_server: FakeWireServer) -> None:
     """With ``selectedTile = 1``, exactly one ``.tile-mod`` carries
     ``.selected`` and it's the second tile in render order (the engine
     sort puts these in W2 / W3 / W4 order)."""
@@ -182,9 +180,7 @@ async def test_fixture_2_no_selection_no_class(
 # --- Fixture 3: just-drawn tile is offset ----------------------------------
 
 
-async def test_fixture_3_just_drawn_offset(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_fixture_3_just_drawn_offset(page: Page, fake_wire_server: FakeWireServer) -> None:
     """``last_drawn = {seat: 0, tile: "B5"}`` with concealed
     ``[W2, W3, B5, T7]`` (sorted): the renderer pulls B5 out of sort
     position and renders it last with ``.just-drawn``.  Render order
@@ -265,15 +261,13 @@ async def test_fixture_6_suit_break_at_each_transition(
     #             4 (T9 new → yes), 5 (F1 new → yes), 6 (J1 new → yes).
     expected_breaks = [False, False, True, False, True, True, True]
     actual_breaks = ["suit-break" in c for c in cls]
-    assert actual_breaks == expected_breaks, list(zip(actual_breaks, expected_breaks))
+    assert actual_breaks == expected_breaks, list(zip(actual_breaks, expected_breaks, strict=False))
 
 
 # --- Fixture 7: combined — selection + just-drawn + suit-break -------------
 
 
-async def test_fixture_7_combined_decoration(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_fixture_7_combined_decoration(page: Page, fake_wire_server: FakeWireServer) -> None:
     """All three concerns at once: ``selectedTile = 0`` (the W2), a
     just-drawn B5, and a hand spanning two suits.  Render order is
     [W2(selected), W3, T7(suit-break), B5(just-drawn)].
@@ -342,7 +336,12 @@ async def _mount_game_pane(
           await el.updateComplete;
           return null;
         }""",
-        {"view": view, "own_seat": own_seat, "tile_style": tile_style, "selected_tile": selected_tile},
+        {
+            "view": view,
+            "own_seat": own_seat,
+            "tile_style": tile_style,
+            "selected_tile": selected_tile,
+        },
     )
 
 
@@ -353,9 +352,7 @@ async def test_fixture_8_selection_background_visible_in_both_styles(
     """The selection cue computes to a non-transparent background under both
     tile styles — the underline it replaced didn't render under unicode."""
     view = _view_with_concealed(own_seat=0, concealed=["W2", "W3", "W4"])
-    await _mount_game_pane(
-        page, fake_wire_server, view, tile_style=tile_style, selected_tile=1
-    )
+    await _mount_game_pane(page, fake_wire_server, view, tile_style=tile_style, selected_tile=1)
     bg = cast(
         str,
         await page.evaluate(

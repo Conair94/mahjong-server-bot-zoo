@@ -21,7 +21,9 @@ from mahjong.control.feedback import FeedbackInbox
 pytestmark = pytest.mark.asyncio
 
 
-def _write_report(reports_dir, name: str, *, rtype: str, submitted: str, submitter: str, body: str) -> None:
+def _write_report(
+    reports_dir, name: str, *, rtype: str, submitted: str, submitter: str, body: str
+) -> None:
     reports_dir.mkdir(parents=True, exist_ok=True)
     header = f"type: {rtype}\nsubmitted: {submitted}\nsubmitter: {submitter}\n---\n"
     (reports_dir / name).write_text(header + body, encoding="utf-8")
@@ -57,11 +59,22 @@ async def test_missing_dir_is_empty_not_an_error(tmp_path):
 
 async def test_newest_first_and_body_may_be_multiline(tmp_path):
     reports = tmp_path / "reports"
-    _write_report(reports, "20260601_090000_feature.txt", rtype="feature",
-                  submitted="2026-06-01T09:00:00+00:00", submitter="Bob", body="add a dark mode")
-    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
-                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice",
-                  body="line one\nline two")
+    _write_report(
+        reports,
+        "20260601_090000_feature.txt",
+        rtype="feature",
+        submitted="2026-06-01T09:00:00+00:00",
+        submitter="Bob",
+        body="add a dark mode",
+    )
+    _write_report(
+        reports,
+        "20260603_120000_bug.txt",
+        rtype="bug",
+        submitted="2026-06-03T12:00:00+00:00",
+        submitter="Alice",
+        body="line one\nline two",
+    )
     inbox = FeedbackInbox(reports)
 
     rows = await inbox.list_reports()
@@ -78,8 +91,14 @@ async def test_malformed_file_is_skipped_not_fatal(tmp_path):
     reports = tmp_path / "reports"
     reports.mkdir(parents=True)
     (reports / "garbage.txt").write_text("no header here", encoding="utf-8")
-    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
-                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="ok")
+    _write_report(
+        reports,
+        "20260603_120000_bug.txt",
+        rtype="bug",
+        submitted="2026-06-03T12:00:00+00:00",
+        submitter="Alice",
+        body="ok",
+    )
     inbox = FeedbackInbox(reports)
 
     rows = await inbox.list_reports()
@@ -94,8 +113,14 @@ async def test_malformed_file_is_skipped_not_fatal(tmp_path):
 
 async def test_list_defaults_status_open(tmp_path):
     reports = tmp_path / "reports"
-    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
-                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="a bug")
+    _write_report(
+        reports,
+        "20260603_120000_bug.txt",
+        rtype="bug",
+        submitted="2026-06-03T12:00:00+00:00",
+        submitter="Alice",
+        body="a bug",
+    )
     rows = await FeedbackInbox(reports).list_reports()
     assert rows[0]["status"] == "open"
     assert rows[0]["backlog_id"] == ""
@@ -104,8 +129,14 @@ async def test_list_defaults_status_open(tmp_path):
 
 async def test_update_status_then_list_reflects_it(tmp_path):
     reports = tmp_path / "reports"
-    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
-                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="a bug")
+    _write_report(
+        reports,
+        "20260603_120000_bug.txt",
+        rtype="bug",
+        submitted="2026-06-03T12:00:00+00:00",
+        submitter="Alice",
+        body="a bug",
+    )
     inbox = FeedbackInbox(reports)
 
     returned = await inbox.update_status(
@@ -118,7 +149,9 @@ async def test_update_status_then_list_reflects_it(tmp_path):
 
     # persisted: a fresh inbox over the same dir still sees it
     rows = await FeedbackInbox(reports).list_reports()
-    assert next(r for r in rows if r["filename"] == "20260603_120000_bug.txt")["status"] == "triaged"
+    assert (
+        next(r for r in rows if r["filename"] == "20260603_120000_bug.txt")["status"] == "triaged"
+    )
 
 
 async def test_update_status_unknown_filename_raises(tmp_path):
@@ -130,7 +163,13 @@ async def test_update_status_unknown_filename_raises(tmp_path):
 
 async def test_update_status_rejects_path_separator(tmp_path):
     reports = tmp_path / "reports"
-    _write_report(reports, "20260603_120000_bug.txt", rtype="bug",
-                  submitted="2026-06-03T12:00:00+00:00", submitter="Alice", body="a bug")
+    _write_report(
+        reports,
+        "20260603_120000_bug.txt",
+        rtype="bug",
+        submitted="2026-06-03T12:00:00+00:00",
+        submitter="Alice",
+        body="a bug",
+    )
     with pytest.raises(KeyError):
         await FeedbackInbox(reports).update_status("../evil.txt", "open")

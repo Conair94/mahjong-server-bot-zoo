@@ -185,9 +185,7 @@ async def test_default_layout_is_per_player_rows(
     assert "Alice" in rows_text and "Bob" in rows_text, rows_text
 
 
-async def test_turn_banner_marks_your_turn(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_turn_banner_marks_your_turn(page: Page, fake_wire_server: FakeWireServer) -> None:
     """When current_actor is the own seat, the YOUR TURN banner shows."""
     await _render_minimal(page, fake_wire_server, _view(current_actor=0), own_seat=0)
     banner = await _text_of(page, ".mv-turn")

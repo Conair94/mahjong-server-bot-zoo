@@ -59,7 +59,13 @@ async def test_custom_pacing_builds_minmax(page: Page, fake_wire_server: FakeWir
     opts = await _build_options(
         page,
         fake_wire_server,
-        {"pacingPreset": "custom", "customMin": 2, "customMax": 4, "decideTimeout": 60, "timeoutsEnabled": True},
+        {
+            "pacingPreset": "custom",
+            "customMin": 2,
+            "customMax": 4,
+            "decideTimeout": 60,
+            "timeoutsEnabled": True,
+        },
     )
     assert opts["bot_pacing"] == {"min_s": 2, "max_s": 4}
 
@@ -192,8 +198,6 @@ async def test_bot_picker_falls_back_to_v0_without_menu(
 ) -> None:
     """Old server (no HELLO.bots): payload still defaults bot seats to v0."""
     await _mount_lobby(page, fake_wire_server, {"desiredHumans": 2, "availableBots": []})
-    payload = await page.evaluate(
-        "() => document.getElementById('lv')._seatsPayload()"
-    )
+    payload = await page.evaluate("() => document.getElementById('lv')._seatsPayload()")
     assert payload[2] == {"kind": "bot", "bot_id": "v0"}
     assert payload[3] == {"kind": "bot", "bot_id": "v0"}

@@ -205,9 +205,9 @@ async def test_l8_f1_two_hand_loop_hand_index_increments(
     )
     assert first_hand_ended_detach is not None, "No DETACH(hand_ended) after HAND_END(0)"
     assert second_attached is not None, "No ATTACHED(hand_index=1) after HAND_END(0)"
-    assert first_hand_ended_detach < second_attached, (
-        "DETACH(hand_ended) must precede ATTACHED(hand_index=1)"
-    )
+    assert (
+        first_hand_ended_detach < second_attached
+    ), "DETACH(hand_ended) must precede ATTACHED(hand_index=1)"
 
 
 # ---------------------------------------------------------------------------
@@ -278,23 +278,23 @@ async def test_l8_f2_spectator_stays_subscribed_across_hand_boundary(
     hand_ends_0 = [
         m for m in spectator_frames if m["kind"] == "HAND_END" and m.get("hand_index") == 0
     ]
-    assert len(hand_ends_0) == 1, (
-        f"Spectator should see exactly one HAND_END(hand_index=0); got {len(hand_ends_0)}"
-    )
+    assert (
+        len(hand_ends_0) == 1
+    ), f"Spectator should see exactly one HAND_END(hand_index=0); got {len(hand_ends_0)}"
 
     # Spectator saw EVENTs with hand_index=1 without re-subscribing
     hand1_events = [
         m for m in spectator_frames if m["kind"] == "EVENT" and m.get("hand_index") == 1
     ]
-    assert len(hand1_events) >= 4, (
-        f"Spectator should see ≥4 hand-1 EVENTs (no re-subscribe needed); got {len(hand1_events)}"
-    )
+    assert (
+        len(hand1_events) >= 4
+    ), f"Spectator should see ≥4 hand-1 EVENTs (no re-subscribe needed); got {len(hand1_events)}"
 
     # Only one SPECTATING frame (no re-subscribe)
     spectating_frames = [m for m in spectator_frames if m["kind"] == "SPECTATING"]
-    assert len(spectating_frames) == 1, (
-        f"Spectator should only receive SPECTATING once; got {len(spectating_frames)}"
-    )
+    assert (
+        len(spectating_frames) == 1
+    ), f"Spectator should only receive SPECTATING once; got {len(spectating_frames)}"
 
 
 # ---------------------------------------------------------------------------
@@ -335,14 +335,14 @@ async def test_l8_f3_three_hand_loop_hand_indices(
         f"{[m.get('hand_index') for m in all_attached]}"
     )
     for i, frame in enumerate(all_attached):
-        assert frame["hand_index"] == i, (
-            f"ATTACHED #{i}: expected hand_index={i}, got {frame['hand_index']}"
-        )
+        assert (
+            frame["hand_index"] == i
+        ), f"ATTACHED #{i}: expected hand_index={i}, got {frame['hand_index']}"
 
     # Dealer rotates: each hand's initial snapshot should differ
     # (confirmed indirectly: different dealer_seat → different concealed tile counts per seat)
     # Weak check: the three snapshots are not all identical
     snapshots = [m["snapshot"] for m in all_attached]
-    assert not all(s == snapshots[0] for s in snapshots), (
-        "All three hands have identical snapshots — dealer rotation or seed derivation broken"
-    )
+    assert not all(
+        s == snapshots[0] for s in snapshots
+    ), "All three hands have identical snapshots — dealer rotation or seed derivation broken"

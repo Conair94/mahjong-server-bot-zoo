@@ -113,9 +113,13 @@ async def test_losing_chi_leaves_no_phantom_meld(
 
     seat0 = next(s for s in result["seats"] if s["seat"] == 0)
     assert seat0["melds"] == [], f"local hand must have no phantom meld; got {seat0['melds']}"
-    assert seat0["concealed"] == ["B7", "B8", "W2", "W3", "W4"], (
-        f"B7/B8 must stay in hand; got {seat0['concealed']}"
-    )
+    assert seat0["concealed"] == [
+        "B7",
+        "B8",
+        "W2",
+        "W3",
+        "W4",
+    ], f"B7/B8 must stay in hand; got {seat0['concealed']}"
 
     seat2 = next(s for s in result["seats"] if s["seat"] == 2)
     assert len(seat2["melds"]) == 1

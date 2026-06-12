@@ -81,30 +81,22 @@ async def _create_2h2b(ws: Any) -> int:
 
 
 async def _attach(ws: Any, table_id: int, seat: int) -> dict[str, Any]:
-    await ws.send(
-        json.dumps({"kind": "ATTACH", "table_id": int(table_id), "seat": seat})
-    )
+    await ws.send(json.dumps({"kind": "ATTACH", "table_id": int(table_id), "seat": seat}))
     return cast(dict[str, Any], json.loads(cast(str, await ws.recv())))
 
 
 async def _send_start_hand(ws: Any, table_id: int) -> None:
-    await ws.send(
-        json.dumps({"kind": "START_HAND", "table_id": int(table_id)})
-    )
+    await ws.send(json.dumps({"kind": "START_HAND", "table_id": int(table_id)}))
 
 
-async def _recv_until(
-    ws: Any, kinds: set[str], *, timeout: float = 10.0
-) -> dict[str, Any]:
+async def _recv_until(ws: Any, kinds: set[str], *, timeout: float = 10.0) -> dict[str, Any]:
     """Receive messages, ignoring any whose kind is not in *kinds*."""
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
         remaining = deadline - asyncio.get_event_loop().time()
         if remaining <= 0:
             raise AssertionError(f"timed out waiting for {kinds}")
-        msg = json.loads(
-            cast(str, await asyncio.wait_for(ws.recv(), timeout=remaining))
-        )
+        msg = json.loads(cast(str, await asyncio.wait_for(ws.recv(), timeout=remaining)))
         if msg.get("kind") in kinds:
             return cast(dict[str, Any], msg)
 
@@ -205,11 +197,7 @@ async def test_fixture_17_spectator_start_hand_not_authorized(
             await _attach(alice_ws, table_id, seat=0)
 
             async with await _connect(url) as spec_ws:
-                await spec_ws.send(
-                    json.dumps(
-                        {"kind": "SPECTATE", "table_id": int(table_id)}
-                    )
-                )
+                await spec_ws.send(json.dumps({"kind": "SPECTATE", "table_id": int(table_id)}))
                 resp = json.loads(cast(str, await spec_ws.recv()))
                 assert resp["kind"] == "SPECTATING", resp
 

@@ -48,43 +48,31 @@ def _fixed_ts(counter: dict[str, int]):
 
 
 async def _auth(ws: Any, *, username: str, password: str) -> dict[str, Any]:
-    await ws.send(
-        json.dumps(
-            {"kind": "AUTH_REQUEST", "username": username, "password": password}
-        )
-    )
+    await ws.send(json.dumps({"kind": "AUTH_REQUEST", "username": username, "password": password}))
     resp = json.loads(cast(str, await ws.recv()))
     assert resp["kind"] == "AUTH_RESPONSE" and resp.get("ok"), resp
     return cast(dict[str, Any], resp)
 
 
-async def _drive_one_hand_at(
-    url: str, table_id: str, *, username: str, password: str
-) -> None:
+async def _drive_one_hand_at(url: str, table_id: str, *, username: str, password: str) -> None:
     """ATTACH seat 0 with a fixed user_id and play the hand to HAND_END."""
     async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
         hello = json.loads(cast(str, await ws.recv()))
         assert hello["kind"] == "HELLO"
         await _auth(ws, username=username, password=password)
 
-        await ws.send(
-            json.dumps({"kind": "ATTACH", "table_id": int(table_id), "seat": 0})
-        )
+        await ws.send(json.dumps({"kind": "ATTACH", "table_id": int(table_id), "seat": 0}))
         attached = json.loads(cast(str, await ws.recv()))
         assert attached["kind"] == "ATTACHED", attached
 
         # Step 8.7.d: explicit START_HAND now drives the hand loop.
-        await ws.send(
-            json.dumps({"kind": "START_HAND", "table_id": int(table_id)})
-        )
+        await ws.send(json.dumps({"kind": "START_HAND", "table_id": int(table_id)}))
 
         deadline = asyncio.get_event_loop().time() + 60.0
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
             assert remaining > 0
-            msg = json.loads(
-                cast(str, await asyncio.wait_for(ws.recv(), timeout=remaining))
-            )
+            msg = json.loads(cast(str, await asyncio.wait_for(ws.recv(), timeout=remaining)))
             if msg["kind"] == "PROMPT":
                 await ws.send(
                     json.dumps(
@@ -153,9 +141,7 @@ async def test_persistence_wiring_records_hand_for_account(
             table_id = str(created["table_id"])
 
         await asyncio.wait_for(
-            _drive_one_hand_at(
-                url, table_id, username="alice", password="alicealice"
-            ),
+            _drive_one_hand_at(url, table_id, username="alice", password="alicealice"),
             timeout=90.0,
         )
 

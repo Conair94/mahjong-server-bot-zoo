@@ -29,8 +29,18 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    # mypy is intentionally left floating here: the type-check step has its own
+    # pre-existing failures (and the code's PEP 695 generics need mypy >= 1.12,
+    # so pre-commit's v1.10.1 pin is itself stale) — that cleanup is tracked
+    # separately, not in this formatting PR.
     "mypy>=1.10",
-    "ruff>=0.5",
+    # Pin ruff to the SAME version pre-commit uses (.pre-commit-config.yaml:
+    # ruff v0.5.5). CI installs ruff from here with no floor of its own, so an
+    # unpinned `>=` let CI float to a newer ruff whose formatter diverged from
+    # what contributors run locally — turning every PR (and main) red on a
+    # whole-repo `ruff format --check` even though nothing changed. Bump this
+    # and the pre-commit rev together when intentionally upgrading.
+    "ruff==0.5.5",
     "pre-commit>=3.7",
 ]
 
@@ -94,6 +104,10 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# `bots/sample-botzone` is a git submodule (vendored MahjongGB code). CI doesn't
+# check submodules out, but a local `ruff format .` would recurse into it and
+# reformat external code — exclude it so the formatter only owns our source.
+extend-exclude = ["bots/sample-botzone"]
 
 [tool.ruff.lint]
 # Conservative starter set; tighten as the codebase grows.
@@ -102,6 +116,12 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 ignore = [
     "E501",  # line length — let the formatter handle wrapping where it can
+    # Ambiguous-unicode rules: the project deliberately uses ×, –, →, · in
+    # docstrings/comments/strings (tile counts like "B6 ×3", en-dash ranges).
+    # These are intentional, not typos — flagging them is pure noise here.
+    "RUF001",  # ambiguous unicode in strings
+    "RUF002",  # ambiguous unicode in docstrings
+    "RUF003",  # ambiguous unicode in comments
 ]
 
 [tool.ruff.lint.per-file-ignores]

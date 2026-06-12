@@ -60,9 +60,7 @@ async def test_auth_request_success_returns_token(tmp_path: Path) -> None:
         async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()  # HELLO
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "bob", "password": "bobbobbob"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "bob", "password": "bobbobbob"})
             )
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["kind"] == "AUTH_RESPONSE"
@@ -95,9 +93,7 @@ async def test_auth_request_failure_does_not_leak_reason(tmp_path: Path) -> None
         async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()  # HELLO
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "bob", "password": "wrongone"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "bob", "password": "wrongone"})
             )
             wrong_pw_resp = json.loads(cast(str, await ws.recv()))
 
@@ -105,9 +101,7 @@ async def test_auth_request_failure_does_not_leak_reason(tmp_path: Path) -> None
         async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()  # HELLO
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "ghost", "password": "anything1"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "ghost", "password": "anything1"})
             )
             unknown_resp = json.loads(cast(str, await ws.recv()))
 
@@ -142,9 +136,7 @@ async def test_resume_succeeds_with_returned_token(tmp_path: Path) -> None:
         async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "carol", "password": "carolcarol"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "carol", "password": "carolcarol"})
             )
             first = json.loads(cast(str, await ws.recv()))
             token = first["session_token"]

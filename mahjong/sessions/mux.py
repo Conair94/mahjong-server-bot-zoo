@@ -60,6 +60,7 @@ def _chat_ts() -> str:
     base = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now))
     return f"{base}.{int((now % 1) * 1000):03d}Z"
 
+
 # Record-event wrapper fields that must NOT appear in the wire HAND_END
 # `terminal` payload (record-format.md vs wire-protocol.md § HAND_END).
 _HAND_END_WRAPPER_FIELDS: frozenset[str] = frozenset({"event", "seq", "turn_index", "phase", "ts"})
@@ -451,9 +452,7 @@ class SeatSession:
         self._buffer.clear()
         self._buffer_overflowed = False
         self._state = SeatState.LIVE
-        await self._send_attached(
-            snapshot=self._snapshot_provider(self.seat), resume_buffer_size=0
-        )
+        await self._send_attached(snapshot=self._snapshot_provider(self.seat), resume_buffer_size=0)
         for kind, payload in replay:
             if kind == "HAND_END":
                 await self._emit_hand_end(payload)
@@ -570,9 +569,9 @@ class SeatSession:
         Per spec § Pending prompt: 'one outstanding prompt at a time'. Caller
         guarantees this; we assert.
         """
-        assert self._pending is None or self._pending.future.done(), (
-            "two concurrent decide() calls on the same seat"
-        )
+        assert (
+            self._pending is None or self._pending.future.done()
+        ), "two concurrent decide() calls on the same seat"
         loop = asyncio.get_event_loop()
         future: asyncio.Future[dict[str, Any]] = loop.create_future()
         pending = _Pending(prompt=prompt, future=future)

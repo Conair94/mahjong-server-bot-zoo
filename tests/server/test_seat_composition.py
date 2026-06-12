@@ -307,9 +307,7 @@ async def test_hello_advertises_available_bots(tmp_path: Path) -> None:
     orch = _make_orch(tmp_path)
     await orch.start()
     try:
-        ws = await websockets.connect(
-            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
-        )
+        ws = await websockets.connect(f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"])
         try:
             hello = json.loads(cast(str, await ws.recv()))
             assert hello["kind"] == "HELLO", hello

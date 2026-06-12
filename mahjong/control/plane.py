@@ -163,9 +163,7 @@ class ControlPlane:
             return {"kind": "ERROR", "code": "feedback_error", "message": str(exc)}
         return {"kind": "FEEDBACK_LIST", "reports": reports}
 
-    async def _handle_data_command(
-        self, kind: str, msg: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _handle_data_command(self, kind: str, msg: dict[str, Any]) -> dict[str, Any]:
         """Invite/account commands.  Each replies with a refreshed list frame."""
         if self._data is None:
             return {"kind": "ERROR", "code": "data_unavailable"}
@@ -234,10 +232,14 @@ class ControlPlane:
             "players_connected": int(admin["players_connected"]) if admin else 0,
             "tables": list(admin["tables"]) if admin else [],
         }
-        tunnel = self._tunnel.to_wire() if self._tunnel is not None else {
-            "running": False,
-            "url": None,
-        }
+        tunnel = (
+            self._tunnel.to_wire()
+            if self._tunnel is not None
+            else {
+                "running": False,
+                "url": None,
+            }
+        )
         health: dict[str, Any] = {"admin_status_ok": admin is not None}
         if self._health_monitor is not None:
             try:

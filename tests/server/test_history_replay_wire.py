@@ -108,12 +108,21 @@ async def test_history_paginates_by_keyset(tmp_path: Path) -> None:
     (tmp_path / "records").mkdir(exist_ok=True)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
     aid = create_account(
-        p._conn, username="connor", display_name="Connor", kind="human", role="user",
+        p._conn,
+        username="connor",
+        display_name="Connor",
+        kind="human",
+        role="user",
         password="connorpw12",
     )
     for i in range(5):
-        _seed_hand(p, hand_id=f"h{i}", seat0_account=aid, started_at_ms=1000 + i,
-                   record_path=f"records/h{i}.jsonl")
+        _seed_hand(
+            p,
+            hand_id=f"h{i}",
+            seat0_account=aid,
+            started_at_ms=1000 + i,
+            record_path=f"records/h{i}.jsonl",
+        )
 
     orch = _orch(tmp_path, p)
     await orch.start()
@@ -128,8 +137,8 @@ async def test_history_paginates_by_keyset(tmp_path: Path) -> None:
             assert page1["next_before_hand_id"] is not None  # more to come
 
             page2 = await _send_recv(
-                ws, {"kind": "GET_HISTORY", "limit": 3,
-                     "before_hand_id": page1["next_before_hand_id"]}
+                ws,
+                {"kind": "GET_HISTORY", "limit": 3, "before_hand_id": page1["next_before_hand_id"]},
             )
             assert len(page2["hands"]) == 2  # remaining
             assert page2["next_before_hand_id"] is None  # end of history
@@ -149,7 +158,11 @@ async def test_participant_replays_own_seat(tmp_path: Path) -> None:
     shutil.copy(_FIXTURE_RECORD, rec)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
     aid = create_account(
-        p._conn, username="connor", display_name="Connor", kind="human", role="user",
+        p._conn,
+        username="connor",
+        display_name="Connor",
+        kind="human",
+        role="user",
         password="connorpw12",
     )
     _seed_hand(p, hand_id="h1", seat0_account=aid, started_at_ms=1000, record_path=str(rec))
@@ -179,11 +192,19 @@ async def test_non_participant_non_admin_refused(tmp_path: Path) -> None:
     shutil.copy(_FIXTURE_RECORD, rec)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
     owner = create_account(
-        p._conn, username="owner", display_name="Owner", kind="human", role="user",
+        p._conn,
+        username="owner",
+        display_name="Owner",
+        kind="human",
+        role="user",
         password="ownerpw1234",
     )
     create_account(
-        p._conn, username="nosy", display_name="Nosy", kind="human", role="user",
+        p._conn,
+        username="nosy",
+        display_name="Nosy",
+        kind="human",
+        role="user",
         password="nosypw12345",
     )
     _seed_hand(p, hand_id="h1", seat0_account=owner, started_at_ms=1000, record_path=str(rec))
@@ -207,11 +228,19 @@ async def test_admin_gets_public_view(tmp_path: Path) -> None:
     shutil.copy(_FIXTURE_RECORD, rec)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
     owner = create_account(
-        p._conn, username="owner", display_name="Owner", kind="human", role="user",
+        p._conn,
+        username="owner",
+        display_name="Owner",
+        kind="human",
+        role="user",
         password="ownerpw1234",
     )
     create_account(
-        p._conn, username="boss", display_name="Boss", kind="human", role="admin",
+        p._conn,
+        username="boss",
+        display_name="Boss",
+        kind="human",
+        role="admin",
         password="bosspw12345",
     )
     _seed_hand(p, hand_id="h1", seat0_account=owner, started_at_ms=1000, record_path=str(rec))
@@ -235,7 +264,11 @@ async def test_unknown_hand_is_not_found(tmp_path: Path) -> None:
     (tmp_path / "records").mkdir(exist_ok=True)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
     create_account(
-        p._conn, username="connor", display_name="Connor", kind="human", role="user",
+        p._conn,
+        username="connor",
+        display_name="Connor",
+        kind="human",
+        role="user",
         password="connorpw12",
     )
     orch = _orch(tmp_path, p)
@@ -257,7 +290,11 @@ async def test_corrupt_record_is_unavailable(tmp_path: Path) -> None:
     rec.write_text('{"event":"HEADER","seq":0}\n{"garbage really')  # truncated/corrupt
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
     aid = create_account(
-        p._conn, username="connor", display_name="Connor", kind="human", role="user",
+        p._conn,
+        username="connor",
+        display_name="Connor",
+        kind="human",
+        role="user",
         password="connorpw12",
     )
     _seed_hand(p, hand_id="h1", seat0_account=aid, started_at_ms=1000, record_path=str(rec))

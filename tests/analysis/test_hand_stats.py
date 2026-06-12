@@ -23,8 +23,9 @@ TS_REF: dict[str, Any] = {
 }
 
 
-def _opponent(seat: int, *, melds: list[dict[str, Any]] | None = None,
-              discards: list[str] | None = None) -> dict[str, Any]:
+def _opponent(
+    seat: int, *, melds: list[dict[str, Any]] | None = None, discards: list[str] | None = None
+) -> dict[str, Any]:
     return {
         "seat": seat,
         "seat_wind": f"F{seat + 1}",
@@ -65,7 +66,11 @@ def _view(
         "dealer_seat": 0,
         "hand_index": 0,
         "turn_index": 7,
-        "wall": {"remaining_count": wall_remaining, "drawn_count": 144 - 53 - wall_remaining, "total": 144},
+        "wall": {
+            "remaining_count": wall_remaining,
+            "drawn_count": 144 - 53 - wall_remaining,
+            "total": 144,
+        },
         "seats": seats,
         "last_discard": last_discard,
         "pending_claims": [],
@@ -144,8 +149,14 @@ def test_remaining_counts_subtract_each_visible_zone() -> None:
         opponents={
             1: _opponent(
                 1,
-                melds=[{"type": "PENG", "tiles": ["B6", "B6", "B6"],
-                        "called_tile": "B6", "called_from_seat": 2}],
+                melds=[
+                    {
+                        "type": "PENG",
+                        "tiles": ["B6", "B6", "B6"],
+                        "called_tile": "B6",
+                        "called_from_seat": 2,
+                    }
+                ],
                 discards=["T1"],
             ),
             2: _opponent(

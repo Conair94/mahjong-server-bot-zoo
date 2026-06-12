@@ -89,9 +89,9 @@ def test_initial_state_flowers_are_not_in_concealed() -> None:
     """Bonus tiles (H*) live in `flowers`, never in `concealed`."""
     s = state.initial_state(MCR_REF, seed=12345)
     for seat in s["seats"]:
-        assert all(not t.startswith("H") for t in seat["concealed"]), (
-            f"seat {seat['seat']}: H tile leaked into concealed"
-        )
+        assert all(
+            not t.startswith("H") for t in seat["concealed"]
+        ), f"seat {seat['seat']}: H tile leaked into concealed"
 
 
 def test_initial_state_rng_cursor_is_post_shuffle() -> None:
@@ -136,9 +136,9 @@ def test_initial_state_dealer_seat_parameter() -> None:
         # Dealer has 14 concealed tiles; others have 13
         for i in range(4):
             expected = 14 if i == dealer else 13
-            assert len(s["seats"][i]["concealed"]) == expected, (
-                f"dealer={dealer}, seat {i}: expected {expected}, got {len(s['seats'][i]['concealed'])}"
-            )
+            assert (
+                len(s["seats"][i]["concealed"]) == expected
+            ), f"dealer={dealer}, seat {i}: expected {expected}, got {len(s['seats'][i]['concealed'])}"
         # East wind (F1) belongs to the dealer seat
         dealer_wind = s["seats"][dealer]["seat_wind"]
         assert dealer_wind == "F1", f"dealer={dealer}: seat wind is {dealer_wind}, want F1"
@@ -391,9 +391,9 @@ def test_project_public_view_agrees_with_opponent_view_per_seat() -> None:
             if viewer == s_target:
                 continue
             per_seat = state.project(s, viewer)
-            assert public["seats"][s_target] == per_seat["seats"][s_target], (
-                f"public seat[{s_target}] disagrees with viewer-{viewer}'s opponent view"
-            )
+            assert (
+                public["seats"][s_target] == per_seat["seats"][s_target]
+            ), f"public seat[{s_target}] disagrees with viewer-{viewer}'s opponent view"
 
 
 def test_project_public_view_terminal_fully_visible() -> None:
@@ -636,6 +636,6 @@ def _assert_no_tile_strings(obj: Any) -> None:
     elif isinstance(obj, dict):
         for v in obj.values():
             _assert_no_tile_strings(v)
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, list | tuple):
         for v in obj:
             _assert_no_tile_strings(v)

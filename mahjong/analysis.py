@@ -243,9 +243,7 @@ def _claim_reach(
         return _shanten(tuple(new_concealed), _meld_key([*melds, new_meld]))
 
     after_key = _meld_key([*melds, new_meld])
-    return min(
-        _shanten(tuple(_without(new_concealed, d)), after_key) for d in set(new_concealed)
-    )
+    return min(_shanten(tuple(_without(new_concealed, d)), after_key) for d in set(new_concealed))
 
 
 def _without(tiles: list[Tile], tile: Tile) -> list[Tile]:

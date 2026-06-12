@@ -314,10 +314,21 @@ def rebuild_index_from_records(
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            hand_id, match_id, hand_index_in_match, ruleset_id,
-                            ruleset_config_hash, started_at_ms, ended_at_ms,
-                            terminal_kind, winner_seat, fan_total, master_seed,
-                            record_path, record_checksum, server_version, source,
+                            hand_id,
+                            match_id,
+                            hand_index_in_match,
+                            ruleset_id,
+                            ruleset_config_hash,
+                            started_at_ms,
+                            ended_at_ms,
+                            terminal_kind,
+                            winner_seat,
+                            fan_total,
+                            master_seed,
+                            record_path,
+                            record_checksum,
+                            server_version,
+                            source,
                         ),
                     )
                     # INSERT OR REPLACE on hand_index cascades (deletes old

@@ -82,9 +82,7 @@ def test_draining_returns_503() -> None:
     import time
 
     status, payload = build_health_payload(
-        registry=_FakeRegistry(
-            accepting=False, n_tables=1, drain_at=time.monotonic()
-        ),
+        registry=_FakeRegistry(accepting=False, n_tables=1, drain_at=time.monotonic()),
         persistence=_OkPersistence(),
         started_at_monotonic=0.0,
         server_id="x",

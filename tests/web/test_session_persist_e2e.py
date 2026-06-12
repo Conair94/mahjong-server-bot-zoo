@@ -107,15 +107,11 @@ async def test_stale_token_falls_back_to_login(
     url = f"http://127.0.0.1:{orch.port}/"
 
     await page.goto(url)
-    await page.evaluate(
-        "() => localStorage.setItem('mahjong.session_token', 'tok_bogus_not_real')"
-    )
+    await page.evaluate("() => localStorage.setItem('mahjong.session_token', 'tok_bogus_not_real')")
     await page.reload()
 
     # RESUME fails → login form appears, and the dead token is cleared so it
     # won't be retried on the next reconnect.
     await expect(page.locator('input[name="username"]')).to_be_visible(timeout=10_000)
-    leftover = await page.evaluate(
-        "() => localStorage.getItem('mahjong.session_token')"
-    )
+    leftover = await page.evaluate("() => localStorage.getItem('mahjong.session_token')")
     assert leftover is None, f"stale token should be cleared; got {leftover!r}"

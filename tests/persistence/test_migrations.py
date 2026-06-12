@@ -56,14 +56,17 @@ def test_fresh_apply_schema_version_is_latest(fresh_db: sqlite3.Connection) -> N
 
 def test_fresh_apply_all_tables_exist(fresh_db: sqlite3.Connection) -> None:
     """Fixture 1b: Every table required by the spec exists after fresh apply."""
-    expected_tables = {"schema_version", "accounts", "sessions", "hand_index", "hand_participants", "invites"}
-    rows = fresh_db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()
+    expected_tables = {
+        "schema_version",
+        "accounts",
+        "sessions",
+        "hand_index",
+        "hand_participants",
+        "invites",
+    }
+    rows = fresh_db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     actual_tables = {r[0] for r in rows}
-    assert expected_tables <= actual_tables, (
-        f"Missing tables: {expected_tables - actual_tables}"
-    )
+    assert expected_tables <= actual_tables, f"Missing tables: {expected_tables - actual_tables}"
 
 
 def test_fresh_apply_all_indexes_exist(fresh_db: sqlite3.Connection) -> None:
@@ -81,9 +84,9 @@ def test_fresh_apply_all_indexes_exist(fresh_db: sqlite3.Connection) -> None:
         "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
     actual_indexes = {r[0] for r in rows}
-    assert expected_indexes <= actual_indexes, (
-        f"Missing indexes: {expected_indexes - actual_indexes}"
-    )
+    assert (
+        expected_indexes <= actual_indexes
+    ), f"Missing indexes: {expected_indexes - actual_indexes}"
 
 
 # ---------------------------------------------------------------------------

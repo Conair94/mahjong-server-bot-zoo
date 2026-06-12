@@ -57,14 +57,31 @@ async def _login(ws, *, username: str, password: str) -> None:
 async def test_feedback_bug_creates_file(tmp_path: Path) -> None:
     (tmp_path / "records").mkdir(exist_ok=True)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
-    create_account(p._conn, username="alice", display_name="Alice", kind="human", role="user", password="alicealice")  # type: ignore[attr-defined]
+    create_account(
+        p._conn,
+        username="alice",
+        display_name="Alice",
+        kind="human",
+        role="user",
+        password="alicealice",
+    )  # type: ignore[attr-defined]
 
     orch = _orch(tmp_path, p)
     await orch.start()
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]) as ws:
+        async with websockets.connect(
+            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
+        ) as ws:
             await _login(ws, username="alice", password="alicealice")
-            await ws.send(json.dumps({"kind": "FEEDBACK", "type": "bug", "text": "The discard button disappears sometimes."}))
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "FEEDBACK",
+                        "type": "bug",
+                        "text": "The discard button disappears sometimes.",
+                    }
+                )
+            )
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["kind"] == "FEEDBACK_ACK"
 
@@ -81,14 +98,31 @@ async def test_feedback_bug_creates_file(tmp_path: Path) -> None:
 async def test_feedback_feature_creates_file(tmp_path: Path) -> None:
     (tmp_path / "records").mkdir(exist_ok=True)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
-    create_account(p._conn, username="bob", display_name="Bob", kind="human", role="user", password="bobbobbobbob")  # type: ignore[attr-defined]
+    create_account(
+        p._conn,
+        username="bob",
+        display_name="Bob",
+        kind="human",
+        role="user",
+        password="bobbobbobbob",
+    )  # type: ignore[attr-defined]
 
     orch = _orch(tmp_path, p)
     await orch.start()
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]) as ws:
+        async with websockets.connect(
+            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
+        ) as ws:
             await _login(ws, username="bob", password="bobbobbobbob")
-            await ws.send(json.dumps({"kind": "FEEDBACK", "type": "feature", "text": "Please add a chat window to the lobby."}))
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "FEEDBACK",
+                        "type": "feature",
+                        "text": "Please add a chat window to the lobby.",
+                    }
+                )
+            )
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["kind"] == "FEEDBACK_ACK"
 
@@ -102,14 +136,31 @@ async def test_feedback_feature_creates_file(tmp_path: Path) -> None:
 async def test_feedback_invalid_type_returns_error(tmp_path: Path) -> None:
     (tmp_path / "records").mkdir(exist_ok=True)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
-    create_account(p._conn, username="carol", display_name="Carol", kind="human", role="user", password="carolcarol")  # type: ignore[attr-defined]
+    create_account(
+        p._conn,
+        username="carol",
+        display_name="Carol",
+        kind="human",
+        role="user",
+        password="carolcarol",
+    )  # type: ignore[attr-defined]
 
     orch = _orch(tmp_path, p)
     await orch.start()
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]) as ws:
+        async with websockets.connect(
+            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
+        ) as ws:
             await _login(ws, username="carol", password="carolcarol")
-            await ws.send(json.dumps({"kind": "FEEDBACK", "type": "complaint", "text": "This is a complaint about the game rules."}))
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "FEEDBACK",
+                        "type": "complaint",
+                        "text": "This is a complaint about the game rules.",
+                    }
+                )
+            )
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["kind"] == "ERROR"
             assert resp["code"] == "feedback_error"
@@ -122,12 +173,21 @@ async def test_feedback_invalid_type_returns_error(tmp_path: Path) -> None:
 async def test_feedback_text_too_short_returns_error(tmp_path: Path) -> None:
     (tmp_path / "records").mkdir(exist_ok=True)
     p = Persistence(tmp_path / "db.sqlite", tmp_path)
-    create_account(p._conn, username="dave", display_name="Dave", kind="human", role="user", password="davedavedave")  # type: ignore[attr-defined]
+    create_account(
+        p._conn,
+        username="dave",
+        display_name="Dave",
+        kind="human",
+        role="user",
+        password="davedavedave",
+    )  # type: ignore[attr-defined]
 
     orch = _orch(tmp_path, p)
     await orch.start()
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]) as ws:
+        async with websockets.connect(
+            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
+        ) as ws:
             await _login(ws, username="dave", password="davedavedave")
             await ws.send(json.dumps({"kind": "FEEDBACK", "type": "bug", "text": "bad"}))
             resp = json.loads(cast(str, await ws.recv()))
@@ -145,9 +205,19 @@ async def test_feedback_unauthenticated_disconnects(tmp_path: Path) -> None:
     orch = _orch(tmp_path, p)
     await orch.start()
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]) as ws:
+        async with websockets.connect(
+            f"ws://127.0.0.1:{orch.port}", subprotocols=["mahjong-v1"]
+        ) as ws:
             await ws.recv()  # HELLO — skip auth
-            await ws.send(json.dumps({"kind": "FEEDBACK", "type": "bug", "text": "This should be rejected since auth is required."}))
+            await ws.send(
+                json.dumps(
+                    {
+                        "kind": "FEEDBACK",
+                        "type": "bug",
+                        "text": "This should be rejected since auth is required.",
+                    }
+                )
+            )
             # Server expects AUTH_REQUEST first; FEEDBACK is an unexpected kind → ERROR + close
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["kind"] == "ERROR"

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from mahjong.wire.feedback import sanitise_report_text, SanitiseError
+from mahjong.wire.feedback import SanitiseError, sanitise_report_text
 
 
 class TestSanitiseReportText:
@@ -32,7 +32,7 @@ class TestSanitiseReportText:
     def test_collapses_whitespace(self):
         result = sanitise_report_text("too   many    spaces")
         assert "  " not in result
-        assert "too many spaces" == result
+        assert result == "too many spaces"
 
     def test_trims_leading_trailing_whitespace(self):
         assert sanitise_report_text("  hello world  ") == "hello world"

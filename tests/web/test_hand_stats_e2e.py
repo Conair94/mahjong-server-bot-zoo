@@ -63,9 +63,7 @@ async def test_real_prompt_carries_stats(tmp_path: Any) -> None:
             assert isinstance(stats["wall_remaining"], int)
             if prompt["phase"] == "DISCARD":
                 rows = stats["discards"]
-                assert rows and all(
-                    {"tile", "shanten", "tiles"} <= set(r) for r in rows
-                )
+                assert rows and all({"tile", "shanten", "tiles"} <= set(r) for r in rows)
                 # Sorted: best candidate first.
                 assert rows[0]["shanten"] == min(r["shanten"] for r in rows)
             else:

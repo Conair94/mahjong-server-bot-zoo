@@ -187,9 +187,7 @@ def test_register_spent_invite_rejected() -> None:
 def test_register_expired_invite_rejected() -> None:
     conn = _db()
     admin = _admin(conn)
-    code = mint_invite(
-        conn, created_by=admin, created_at_ms=NOW, expires_at_ms=NOW + 10
-    )
+    code = mint_invite(conn, created_by=admin, created_at_ms=NOW, expires_at_ms=NOW + 10)
     with pytest.raises(RegisterError) as exc:
         handle_register(
             conn,

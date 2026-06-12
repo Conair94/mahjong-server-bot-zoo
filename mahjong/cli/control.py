@@ -28,9 +28,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="mahjong control",
         description="Run the admin control console (supervises `serve`).",
     )
-    parser.add_argument(
-        "--open", action="store_true", help="open the dashboard in a browser"
-    )
+    parser.add_argument("--open", action="store_true", help="open the dashboard in a browser")
     parser.add_argument(
         "--autostart-server",
         action="store_true",
@@ -54,9 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         server_env=dict(os.environ),
         server_listen_addr=server_cfg.listen_addr,
     )
-    return asyncio.run(
-        app.run(autostart_server=args.autostart_server, open_browser=args.open)
-    )
+    return asyncio.run(app.run(autostart_server=args.autostart_server, open_browser=args.open))
 
 
 if __name__ == "__main__":  # pragma: no cover
