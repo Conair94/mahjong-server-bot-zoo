@@ -19,5 +19,7 @@ export const SETTINGS = [
   { key: "sound", label: "Sound", values: ["on", "off"], hotkey: "", scope: "global" },
   { key: "pane-chat", label: "Chat pane", values: ["off", "on"], hotkey: "Alt+C", scope: "table" },
   { key: "pane-stats", label: "Stats pane", values: ["off", "on"], hotkey: "Alt+S", scope: "table" },
+  { key: "pane-score", label: "Score pane", values: ["off", "on"], hotkey: "Alt+P", scope: "table" },
   { key: "pane-spectator", label: "Spectator pane", values: ["off", "on"], hotkey: "Alt+W", scope: "table" },
+  { key: "discard-layout", label: "Discards", values: ["rows", "pond"], hotkey: "Alt+D", scope: "global" },
 ];

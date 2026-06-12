@@ -224,6 +224,16 @@ function renderDiscards(discards, options) {
   return html`<span class="discard-row">${out}</span>`;
 }
 
+// Cumulative match total for a seat (Spec 40), signed for readability. The
+// engine's per-hand `score` is 0 for the whole hand in MCR (scoring happens
+// only at terminal), so the live rows show this running total instead; the
+// per-hand delta still appears in the end-of-hand summary. Falls back to 0 for
+// pre-first-hand snapshots and older servers that omit the field.
+export function matchTotal(seat) {
+  const v = seat?.match_score ?? 0;
+  return v > 0 ? `+${v}` : String(v);
+}
+
 function seatHeader(seat, positionLabel, view) {
   const wind = WIND_NAME[seat.seat_wind] ?? "?";
   const seatNum = seat.seat + 1;
@@ -232,7 +242,7 @@ function seatHeader(seat, positionLabel, view) {
   const label = name
     ? `${name}${isBot ? " ·bot" : ""} — ${wind} (Seat ${seatNum})`
     : `${wind} (Seat ${seatNum})`;
-  return html`<span class="seat-label">${label}</span> <span class="seat-position">(${positionLabel})</span> Score: ${seat.score}`;
+  return html`<span class="seat-label">${label}</span> <span class="seat-position">(${positionLabel})</span> Total: ${matchTotal(seat)}`;
 }
 
 // Flowers are public-knowledge tiles (state-schema.md: flowers are not
@@ -586,7 +596,7 @@ function _minimalSeatRow(view, seatIndex, options) {
       >${name}${isBot ? html`<span class="mv-bot">·bot</span>` : ""}
       <span class="mv-wind">(${wind})</span></span
     >
-    <span class="mv-score">${seat.score ?? 0}</span>
+    <span class="mv-score" title="Running match total">${matchTotal(seat)}</span>
     <span class="mv-melds">${renderMelds(seat.melds, options)}</span>
     <span class="mv-flowers">${_minimalFlowers(seat.flowers, options)}</span>
   </div>`;
@@ -623,6 +633,27 @@ function _minimalPond(view, options) {
   </div>`;
 }
 
+// Per-player discard rows (Spec 40, the default layout): four rows in fixed
+// seat order (E,S,W,N), each that seat's discards. The combined-pond
+// alternative is _minimalPond; the toggle is options.discardLayout.
+function _minimalDiscardRows(view, options) {
+  const seats = [...(view.seats ?? [])].sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0));
+  return html`<div class="mv-drows">
+    <div class="mv-pond-label">Discards (by player)</div>
+    ${seats.map((s) => {
+      const wind = (WIND_NAME[s.seat_wind] ?? "?")[0];
+      const name = s.name ?? `Seat ${(s.seat ?? 0) + 1}`;
+      const ds = s.discards ?? [];
+      return html`<div class="mv-drow">
+        <span class="mv-drow-label">${wind} · ${name}</span>
+        <span class="mv-drow-tiles"
+          >${ds.length ? joinTiles(ds, " ", options) : html`<span class="empty">—</span>`}</span
+        >
+      </div>`;
+    })}
+  </div>`;
+}
+
 // The own seat: roster line + the concealed hand (large), reusing
 // renderOwnConcealedTiles for the selection / just-drawn / suit-break cues.
 function _minimalOwn(view, ownSeat, options) {
@@ -633,7 +664,7 @@ function _minimalOwn(view, ownSeat, options) {
   return html`<div class="mv-own">
     <div class="mv-own-head">
       <span class="mv-name mv-you">YOU · ${name} <span class="mv-wind">(${wind})</span></span>
-      <span class="mv-score">${seat.score ?? 0}</span>
+      <span class="mv-score" title="Running match total">${matchTotal(seat)}</span>
       <span class="mv-melds">${renderMelds(seat.melds, options)}</span>
       <span class="mv-flowers">${_minimalFlowers(seat.flowers, options)}</span>
     </div>
@@ -652,7 +683,10 @@ export function renderMinimal(seatView, ownSeat, options = {}) {
     <div class="mv-roster">
       ${opponents.map((i) => _minimalSeatRow(seatView, i, options))}
     </div>
-    ${_minimalPond(seatView, options)} ${_minimalOwn(seatView, ownSeat, options)}
+    ${options.discardLayout === "pond"
+      ? _minimalPond(seatView, options)
+      : _minimalDiscardRows(seatView, options)}
+    ${_minimalOwn(seatView, ownSeat, options)}
   </div>`;
 }
 
