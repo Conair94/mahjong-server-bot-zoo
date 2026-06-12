@@ -365,6 +365,24 @@ class MultiTableOrchestrator:
                     if kind == "FEEDBACK":
                         await self._handle_feedback(conn, msg)
                         continue
+                    # GET_PROFILE / GET_HISTORY / GET_REPLAY are read-only account
+                    # & lobby concerns, not table actions, but the profile button
+                    # (and the recent-games "watch" links it exposes) are reachable
+                    # from the table view.  Intercept them here too — otherwise they
+                    # fall through to the table session, which replies
+                    # ERROR unknown_kind, and the client hangs on "Loading…" (the
+                    # same two-phase trap as FEEDBACK above).  These touch only the
+                    # persistence layer and the connection, never table state, so
+                    # they are safe to answer mid-hand.
+                    if kind == "GET_PROFILE":
+                        await self._handle_get_profile(conn)
+                        continue
+                    if kind == "GET_HISTORY":
+                        await self._handle_get_history(conn, msg)
+                        continue
+                    if kind == "GET_REPLAY":
+                        await self._handle_get_replay(conn, msg)
+                        continue
                     await table.handle_inbound(conn, msg)
                     if kind == leave_kind:
                         # The mux has acked (DETACHED) and released the seat /
