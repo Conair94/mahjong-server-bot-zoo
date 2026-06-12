@@ -195,3 +195,68 @@ async def test_mute_suppresses_cue(page: Page, fake_wire_server: FakeWireServer)
     # Give the frame time to dispatch, then assert nothing was recorded.
     await page.wait_for_timeout(200)
     assert await _last_cue(page) is None
+
+
+# --- Iconic-motif contract (user feedback 2026-06-11) -----------------------
+#
+# "Instantly recognizable" is a structural property: each declaration must be
+# distinguishable WITHOUT hearing the others. Pinned here as contour/register/
+# rhythm/timbre assertions over the exported VOICES table — headless CI can't
+# listen, but it can verify the shapes that make the sounds tellable-apart.
+
+
+async def _voices(page: Page, fake_wire_server: FakeWireServer) -> dict:
+    await page.goto(fake_wire_server.url)
+    return await page.evaluate("async () => (await import('/static/audio.js')).VOICES")
+
+
+async def test_chi_is_a_fast_ascending_run(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    voices = await _voices(page, fake_wire_server)
+    notes = voices["chi"]["notes"]
+    pitches = [n["f"] for n in notes]
+    assert len(notes) == 3
+    assert pitches == sorted(pitches) and len(set(pitches)) == 3, "chi must rise"
+    assert max(n["t"] + n["d"] for n in notes) < 0.35, "chi is a quick flick"
+
+
+async def test_peng_is_three_identical_knocks(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    voices = await _voices(page, fake_wire_server)
+    v = voices["peng"]
+    pitches = {n["f"] for n in v["notes"]}
+    assert len(v["notes"]) == 3
+    assert len(pitches) == 1, "peng knocks on ONE pitch (opposite contour of chi)"
+    assert v["wave"] == "square", "peng is percussive"
+    starts = sorted(n["t"] for n in v["notes"])
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert all(g > 0.05 for g in gaps), "knocks are separated, not a chord"
+
+
+async def test_gang_is_four_heavy_low_hits_with_a_slam(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    voices = await _voices(page, fake_wire_server)
+    gang = voices["gang"]["notes"]
+    peng_pitch = voices["peng"]["notes"][0]["f"]
+    base = [n for n in gang if n["f"] == gang[0]["f"]]
+    assert len(base) >= 4, "gang hits four times (four of a kind)"
+    assert gang[0]["f"] <= peng_pitch / 2, "gang lives at least an octave below peng"
+    assert any(n.get("p", 1) > 1 for n in gang), "the final hit is slammed (accent)"
+    assert voices["gang"]["wave"] == "sawtooth", "gang is the heaviest timbre"
+
+
+async def test_hu_is_the_biggest_flourish(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    voices = await _voices(page, fake_wire_server)
+    hu = voices["hu"]["notes"]
+    for other in ("chi", "peng", "gang"):
+        assert len(hu) > len(voices[other]["notes"]), f"hu outsizes {other}"
+    # The finale holds a chord: at least three notes sharing one start time.
+    from collections import Counter
+
+    start_counts = Counter(n["t"] for n in hu)
+    assert max(start_counts.values()) >= 3, "hu resolves into a held triad"

@@ -76,32 +76,60 @@ export function cueForTerminal(terminal) {
 }
 
 // Per-cue "score": each cue is a waveform + a list of notes (freq Hz, start
-// offset s, duration s). Every note is voiced by a detuned oscillator pair
-// (chorus) under an ADSR envelope; the timbre brightens with intensity
-// (sine → triangle → sawtooth) and `hu` is a rising arpeggio into a
-// triad-with-octave-shimmer flourish. Still synthesized: no binary assets.
-const C6 = 1046.5, E6 = 1318.51, G6 = 1567.98;
-const G5 = 783.99, B5 = 987.77, D6 = 1174.66;
+// offset s, duration s, optional per-note `w` wave override and `p` peak
+// multiplier). Every note is voiced by a detuned oscillator pair (chorus)
+// under an ADSR envelope. Still synthesized: no binary assets.
+//
+// Iconic-motif redesign (user feedback 2026-06-11: "more fun and instantly
+// recognizable"): each declaration's sound *is* its claim, so the contours
+// are distinguishable without comparison —
+//   chi  = a fast ascending 3-note scale RUN (a chi is a run),
+//   peng = three IDENTICAL staccato knocks (a pung is a triplet),
+//   gang = FOUR heavy low hits, last one slammed with an octave accent
+//          (a kong is four of a kind, and it's a big deal),
+//   hu   = the rising-fanfare-into-held-triad finale (unchanged).
+// Distinct in pitch contour (rise vs repeat), register (gang lives an octave
+// down), rhythm (run vs knocks), and timbre (triangle vs square vs sawtooth).
+const C6 = 1046.5, D6 = 1174.66, E6 = 1318.51, G6 = 1567.98;
+const G5 = 783.99, A5 = 880.0, B5 = 987.77;
+const G4 = 392.0;
 const VOICES = {
   // Soft private blip on your own draw.
   draw: { wave: "sine", notes: [{ f: 587.33, t: 0, d: 0.09 }] },
   // Bright rising "ding" — your turn to call or pass. Distinct from any call.
   alert: {
     wave: "triangle",
-    notes: [{ f: 880.0, t: 0, d: 0.08 }, { f: E6, t: 0.07, d: 0.2 }],
+    notes: [{ f: A5, t: 0, d: 0.08 }, { f: E6, t: 0.07, d: 0.2 }],
   },
-  // Declarations, escalating chi < peng < gang in pitch, note-count and edge.
-  chi: { wave: "triangle", notes: [{ f: C6, t: 0, d: 0.14 }] },
-  peng: {
+  // CHI: a quick ascending run, light and bright — over in a fifth of a second.
+  chi: {
     wave: "triangle",
-    notes: [{ f: C6, t: 0, d: 0.08 }, { f: E6, t: 0.07, d: 0.18 }],
+    notes: [
+      { f: C6, t: 0.0, d: 0.07 },
+      { f: D6, t: 0.06, d: 0.07 },
+      { f: E6, t: 0.12, d: 0.16 },
+    ],
   },
+  // PENG: knock-knock-knock — three identical square-wave staccato hits.
+  // Same-pitch repetition is the opposite contour of chi's rise.
+  peng: {
+    wave: "square",
+    notes: [
+      { f: A5, t: 0.0, d: 0.06 },
+      { f: A5, t: 0.09, d: 0.06 },
+      { f: A5, t: 0.18, d: 0.12 },
+    ],
+  },
+  // GANG: four heavy hits an octave below everything else, the fourth slammed
+  // louder with an octave doubling on top.
   gang: {
     wave: "sawtooth",
     notes: [
-      { f: C6, t: 0, d: 0.08 },
-      { f: E6, t: 0.07, d: 0.08 },
-      { f: G6, t: 0.14, d: 0.22 },
+      { f: G4, t: 0.0, d: 0.07 },
+      { f: G4, t: 0.09, d: 0.07 },
+      { f: G4, t: 0.18, d: 0.07 },
+      { f: G4, t: 0.27, d: 0.3, p: 1.5 },
+      { f: G5, t: 0.27, d: 0.3, p: 0.8 },
     ],
   },
   // The grand finale: a rising arpeggio resolving into a held G-major triad
@@ -119,6 +147,10 @@ const VOICES = {
     ],
   },
 };
+
+// Exported for structural tests: the recognizability contract (contours,
+// registers, rhythms) is pinned in tests/web/test_audio_cues.py.
+export { VOICES };
 
 export class AudioCues {
   constructor() {
@@ -162,7 +194,7 @@ export class AudioCues {
       const voice = VOICES[cue];
       const t0 = this._ctx.currentTime;
       for (const note of voice.notes) {
-        this._playNote(note.f, t0 + note.t, note.d, voice.wave);
+        this._playNote(note.f, t0 + note.t, note.d, note.w ?? voice.wave, note.p ?? 1);
       }
     } catch {
       // Web Audio blocked (e.g. no user gesture yet) — non-fatal, stay silent.
@@ -170,9 +202,10 @@ export class AudioCues {
   }
 
   // One note = a detuned oscillator pair (chorus) sharing an ADSR gain envelope.
-  // Per-note peak is kept low so stacked notes (the `hu` triad) don't clip.
-  _playNote(freq, start, dur, wave) {
-    const peak = 0.09;
+  // Per-note peak is kept low so stacked notes (the `hu` triad) don't clip;
+  // `peakMul` lets a score accent a single hit (the gang slam).
+  _playNote(freq, start, dur, wave, peakMul = 1) {
+    const peak = 0.09 * peakMul;
     const gain = this._ctx.createGain();
     gain.gain.setValueAtTime(0.0001, start);
     gain.gain.exponentialRampToValueAtTime(peak, start + 0.008); // attack
