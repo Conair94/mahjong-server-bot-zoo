@@ -412,7 +412,7 @@ SQLite's WAL grows monotonically until checkpointed. `PASSIVE` runs without bloc
 
 ## Logging
 
-Structured JSON to stdout. The host's journal / log shipper handles persistence; the server never writes to a log file directly.
+Structured JSON to stdout, **and** (DEF-20, amended 2026-06-12) teed to a rotating file — `MAHJONG_LOG_FILE`, default `<data_dir>/logs/server.log`, 5 MB x 3 backups, always JSON-formatted; set the var to an empty string to disable. The original "the host's journal handles persistence" stance assumed a systemd deploy; in practice the server runs from a terminal whose scrollback dies with it, which made the 2026-06-12 hand-loop stall (FB-19) unattributable. Instrument-and-defer ledger rows are only grep-able if some file survives the process.
 
 ```python
 # every log call is structured:

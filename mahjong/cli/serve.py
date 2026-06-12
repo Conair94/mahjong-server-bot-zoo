@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import logging.handlers
 import signal
 import sys
 import time
@@ -54,6 +55,11 @@ def _setup_logging(cfg: ServerConfig) -> None:
     """Configure root logging per ``MAHJONG_LOG_FORMAT`` (server-lifecycle.md
     § Logging).  ``json`` (default) emits one JSON object per line to stdout for
     journald / log shippers; ``console`` is a plain line for dev.
+
+    DEF-20: logs are additionally teed to ``cfg.log_file`` (rotating, 5 MB x 3)
+    unless disabled via ``MAHJONG_LOG_FILE=""``.  stdout-only logging meant
+    every crash/stall post-mortem died with the terminal — the project's
+    instrument-and-defer rows are grep-able only if some file survives.
     """
     level = getattr(logging, cfg.log_level.upper(), logging.INFO)
     handler = logging.StreamHandler(stream=sys.stdout)
@@ -61,6 +67,15 @@ def _setup_logging(cfg: ServerConfig) -> None:
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
+    if cfg.log_file is not None:
+        cfg.log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            cfg.log_file, maxBytes=5 * 1024 * 1024, backupCount=3
+        )
+        # Always JSON in the file, even when stdout is console-formatted for
+        # a dev session — the file is for grepping, not reading along.
+        file_handler.setFormatter(make_formatter("json"))
+        root.addHandler(file_handler)
     root.setLevel(level)
 
 

@@ -79,3 +79,26 @@ def test_unknown_mahjong_var_returned_as_warning() -> None:
     )
     assert "MAHJONG_HARTBEAT_INTERVAL_SECONDS" in unknown
     assert isinstance(cfg, ServerConfig)
+
+
+# --- DEF-20: log-file persistence -------------------------------------------
+
+
+def test_log_file_defaults_under_data_dir() -> None:
+    """DEF-20: stdout-only logging lost the evidence for the 2026-06-12
+    stall (FB-19) the moment the terminal closed. Default to a file under
+    data_dir so every instrument-and-defer grep string survives the process."""
+    cfg, _ = load_config_from_env(env={"MAHJONG_DATA_DIR": "/tmp/mj"})
+    assert cfg.log_file == Path("/tmp/mj/logs/server.log")
+
+
+def test_log_file_explicit_path() -> None:
+    cfg, _ = load_config_from_env(
+        env={"MAHJONG_LOG_FILE": "/var/log/mahjong/custom.log"}
+    )
+    assert cfg.log_file == Path("/var/log/mahjong/custom.log")
+
+
+def test_log_file_empty_disables() -> None:
+    cfg, _ = load_config_from_env(env={"MAHJONG_LOG_FILE": ""})
+    assert cfg.log_file is None

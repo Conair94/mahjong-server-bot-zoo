@@ -3,9 +3,11 @@
 Two formats, selected by ``MAHJONG_LOG_FORMAT``:
 
 - ``json`` (default / production): one JSON object per line on stdout, with
-  fixed top-level keys ``ts`` (ISO-8601 UTC, ms), ``level``, ``event``.  The
-  host's journal / log shipper handles persistence.  Any structured ``extra=``
-  kwargs on the log call are merged in as additional keys.
+  fixed top-level keys ``ts`` (ISO-8601 UTC, ms), ``level``, ``event``.  Any
+  structured ``extra=`` kwargs on the log call are merged in as additional
+  keys.  Since DEF-20 the same JSON lines are also teed to a rotating file
+  (``MAHJONG_LOG_FILE``; see ``cli/serve._setup_logging``) so post-mortems
+  survive the terminal.
 - ``console`` (dev): a plain ``%(asctime)s %(levelname)s %(name)s %(message)s``
   line — easier to read in a terminal.
 
