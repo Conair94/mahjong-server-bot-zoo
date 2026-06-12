@@ -11,6 +11,7 @@ rather than a stack trace when cloudflared isn't installed.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import pytest
@@ -49,3 +50,33 @@ async def test_start_scrapes_url_then_stop_clears_it() -> None:
     after = tun.to_wire()
     assert after["running"] is False
     assert after["url"] is None
+
+
+async def test_url_updates_after_cloudflared_reconnect() -> None:
+    """A quick tunnel re-registers with a NEW hostname when its edge connection
+    drops; the supervisor must surface the *current* URL rather than pinning the
+    first one. Pinning the first is the live bug that left the console showing a
+    dead (NXDOMAIN) trycloudflare URL after a reconnect."""
+    script = (
+        "import sys, time\n"
+        "sys.stderr.write('INF |  https://first-url-1.trycloudflare.com  |\\n')\n"
+        "sys.stderr.flush()\n"
+        "time.sleep(0.3)\n"
+        "sys.stderr.write('INF Connection terminated, reconnecting...\\n')\n"
+        "sys.stderr.write('INF |  https://second-url-2.trycloudflare.com  |\\n')\n"
+        "sys.stderr.flush()\n"
+        "time.sleep(30)\n"
+    )
+    tun = TunnelSupervisor(argv=[sys.executable, "-c", script], url_timeout_s=5.0)
+    wire = await tun.start()
+    assert wire["url"] == "https://first-url-1.trycloudflare.com"
+
+    # The drain loop should pick up the re-registered URL within a beat.
+    try:
+        async with asyncio.timeout(5.0):
+            while tun.to_wire()["url"] == "https://first-url-1.trycloudflare.com":
+                await asyncio.sleep(0.05)
+    finally:
+        current = tun.to_wire()["url"]
+        await tun.stop()
+    assert current == "https://second-url-2.trycloudflare.com"
