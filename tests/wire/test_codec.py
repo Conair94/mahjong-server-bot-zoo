@@ -269,6 +269,23 @@ _CHAT_MESSAGE: dict[str, Any] = {
     "text": "nice kong",
 }
 
+_PROMPT_WITH_STATS: dict[str, Any] = {
+    **_PROMPT,
+    # Spec 37: optional decision-time analysis payload — must survive the
+    # round trip untouched (the codec preserves unknown optional fields).
+    "stats": {
+        "floor": 3,
+        "wall_remaining": 42,
+        "discards": [
+            {
+                "tile": "J3",
+                "shanten": 0,
+                "tiles": [{"tile": "B6", "remaining": 4, "fan_discard": 4, "fan_self_draw": 6}],
+            },
+        ],
+    },
+}
+
 _ACTION: dict[str, Any] = {
     "kind": "ACTION",
     "ref": 23,
@@ -397,6 +414,7 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("STOP_SPECTATING", _STOP_SPECTATING),
     ("EVENT", _EVENT),
     ("PROMPT", _PROMPT),
+    ("PROMPT_with_stats", _PROMPT_WITH_STATS),
     ("ACTION", _ACTION),
     ("CHAT", _CHAT),
     ("CHAT_MESSAGE", _CHAT_MESSAGE),

@@ -238,6 +238,86 @@ async def test_illegal_action_strikes_via_callback_and_prompt_stays_outstanding(
     assert await decide_task == legal
 
 
+async def test_decide_attaches_stats_from_provider() -> None:
+    """Spec 37: a `stats_provider` is called with (prompt, seat) and its
+    payload rides the PROMPT frame as `stats`."""
+    session = _make_seat_session()
+    sink = FakeSink()
+    await session.attach(sink, user_id="alice")
+
+    calls: list[tuple[Prompt, int]] = []
+
+    def provider(prompt: Prompt, seat: int) -> dict[str, Any]:
+        calls.append((prompt, seat))
+        return {"floor": 3, "wall_remaining": 42, "discards": []}
+
+    identity: HumanIdentity = {"kind": "human", "user_id": "alice", "display": "Alice"}
+    adapter = HumanAdapter(session=session, identity=identity, stats_provider=provider)
+    await adapter.seated(_make_seat_context())
+
+    decide_task = asyncio.create_task(adapter.decide(_make_seat_port_prompt(turn_index=3)))
+    await asyncio.sleep(0)
+    prompts = sink.by_kind("PROMPT")
+    assert len(prompts) == 1
+    assert prompts[0]["stats"] == {"floor": 3, "wall_remaining": 42, "discards": []}
+    assert calls and calls[0][1] == 0  # seat from the adapter's SeatContext
+
+    await session.handle_action(
+        prompt_id=prompts[0]["prompt_id"], action={"type": "PLAY", "tile": "B5"}
+    )
+    await decide_task
+
+
+async def test_stats_provider_failure_never_blocks_the_prompt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Spec 37 § Failure containment: a raising provider logs
+    `hand_stats_failed` and the PROMPT goes out without a `stats` key —
+    the decide path must be unaffected."""
+    session = _make_seat_session()
+    sink = FakeSink()
+    await session.attach(sink, user_id="alice")
+
+    def provider(prompt: Prompt, seat: int) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    identity: HumanIdentity = {"kind": "human", "user_id": "alice", "display": "Alice"}
+    adapter = HumanAdapter(session=session, identity=identity, stats_provider=provider)
+    await adapter.seated(_make_seat_context())
+
+    with caplog.at_level("WARNING", logger="mahjong.adapters.human"):
+        decide_task = asyncio.create_task(adapter.decide(_make_seat_port_prompt()))
+        await asyncio.sleep(0)
+
+    prompts = sink.by_kind("PROMPT")
+    assert len(prompts) == 1
+    assert "stats" not in prompts[0]
+    assert any("hand_stats_failed" in r.message for r in caplog.records)
+
+    await session.handle_action(
+        prompt_id=prompts[0]["prompt_id"], action={"type": "PLAY", "tile": "B5"}
+    )
+    await decide_task
+
+
+async def test_no_provider_means_no_stats_key() -> None:
+    """Default construction (bots' tables, TUI) emits the pre-Spec-37 frame."""
+    session = _make_seat_session()
+    sink = FakeSink()
+    await session.attach(sink, user_id="alice")
+    adapter = _make_adapter(session)
+    await adapter.seated(_make_seat_context())
+
+    decide_task = asyncio.create_task(adapter.decide(_make_seat_port_prompt()))
+    await asyncio.sleep(0)
+    prompts = sink.by_kind("PROMPT")
+    assert len(prompts) == 1 and "stats" not in prompts[0]
+    await session.handle_action(
+        prompt_id=prompts[0]["prompt_id"], action={"type": "PLAY", "tile": "B5"}
+    )
+    await decide_task
+
+
 async def test_left_with_table_closed_drives_session_shutdown_path() -> None:
     """`left("TABLE_CLOSED")` should drive the session into a shutdown that
     sends DETACH(server_shutdown) and closes the sink — not the silent

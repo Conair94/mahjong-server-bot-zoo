@@ -32,6 +32,7 @@ from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
 from mahjong.adapters.paced import PacedAdapter
+from mahjong.analysis import stats_for_prompt
 from mahjong.engine import initial_state
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
@@ -763,7 +764,11 @@ class TableHandle:
                     adapters.append(
                         cast(
                             SeatAdapter,
-                            HumanAdapter(session=session, identity=identity),
+                            HumanAdapter(
+                                session=session,
+                                identity=identity,
+                                stats_provider=stats_for_prompt,
+                            ),
                         )
                     )
             elif seat in self._scripted_seats:
