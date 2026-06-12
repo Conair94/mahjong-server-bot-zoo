@@ -12,17 +12,22 @@ See docs/specs/sqlite-schema.md and docs/specs/persistence-api.md.
 
 from __future__ import annotations
 
+import functools
 import os
 import sqlite3
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from mahjong.persistence import accounts as _accounts
 from mahjong.persistence import achievements as _achievements
+from mahjong.persistence import auth as _auth
 from mahjong.persistence import hands as _hands
 from mahjong.persistence import invites as _invites
 from mahjong.persistence import rebuild as _rebuild
+from mahjong.persistence.auth import AuthResult
 from mahjong.persistence.db import open_db
 from mahjong.persistence.migrations import apply_migrations
 from mahjong.persistence.models import (
@@ -58,7 +63,50 @@ __all__ = [
 # Valid SQLite WAL-checkpoint modes (PRAGMA wal_checkpoint argument).
 _WAL_CHECKPOINT_MODES: frozenset[str] = frozenset({"PASSIVE", "FULL", "RESTART", "TRUNCATE"})
 
+_P = TypeVar("_P", bound="Persistence")
+_R = TypeVar("_R")
 
+
+def _synchronized(method: Callable[..., _R]) -> Callable[..., _R]:
+    """Run *method* while holding the façade's re-entrant lock."""
+
+    @functools.wraps(method)
+    def wrapper(self: Persistence, *args: Any, **kwargs: Any) -> _R:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _synchronize_facade(cls: type[_P]) -> type[_P]:
+    """Serialize every public façade method through ``self._lock``.
+
+    The façade owns ONE ``sqlite3.Connection`` shared across the event-loop
+    thread and the ``run_in_executor`` thread pool — auth/resume/register and
+    the profile/history/replay builders all run off-loop (db.py opens the
+    connection with ``check_same_thread=False``). A single SQLite connection is
+    *not* safe for concurrent use: two threads stepping statements on it at once
+    corrupt each other, surfacing as intermittent
+    ``sqlite3.InterfaceError: bad parameter or other API misuse`` (→ a 1011
+    connection crash) or simply wrong query results (a valid login read back as
+    "no such account"). That was the shared root cause of the flaky multi-human
+    e2e tests DEF-14 and DEF-23.
+
+    A re-entrant lock acquired for the whole call makes each façade operation
+    (including its multi-statement ``with self._conn:`` transactions) atomic
+    against every other thread. The raw-``_conn`` auth helpers the orchestrator
+    runs in the executor take the same lock explicitly (see
+    ``MultiTableOrchestrator._run_auth_request``). This serializes DB work at
+    our scale; a per-thread connection pool is the documented scale-up path
+    (db.py).
+    """
+    for name, attr in list(vars(cls).items()):
+        if callable(attr) and not name.startswith("_"):
+            setattr(cls, name, _synchronized(attr))
+    return cls
+
+
+@_synchronize_facade
 class Persistence:
     """High-level persistence façade.
 
@@ -71,6 +119,9 @@ class Persistence:
 
     def __init__(self, db_path: str | os.PathLike[str], data_dir: Path) -> None:
         """Open the DB; apply pragmas + migrations; verify schema_version."""
+        # Serializes the shared connection across event-loop + executor threads.
+        # Re-entrant so a façade method may call another (see _synchronize_facade).
+        self._lock = threading.RLock()
         self._conn: sqlite3.Connection = open_db(db_path)
         apply_migrations(self._conn)
         self._data_dir: Path = data_dir
@@ -168,6 +219,42 @@ class Persistence:
 
     def list_accounts(self) -> list[Account]:
         return _accounts.list_accounts(self._conn)
+
+    # ------------------------------------------------------------------
+    # Auth flows  (consumed by the server auth phase; run in the executor pool)
+    #
+    # Thin façade wrappers over the stateless ``auth`` helpers. Routing them
+    # through the façade — rather than the orchestrator reaching into
+    # ``persistence._conn`` — keeps every connection touch under the one lock
+    # (_synchronize_facade), so a login can't race the hand-loop's DB writes.
+    # ------------------------------------------------------------------
+
+    def authenticate(
+        self, username: str, password: str, *, user_agent: str | None = None
+    ) -> AuthResult:
+        return _auth.handle_auth_request(self._conn, username, password, user_agent)
+
+    def resume_session(self, session_token: str) -> AuthResult:
+        return _auth.handle_resume(self._conn, session_token)
+
+    def register(
+        self,
+        *,
+        username: str,
+        password: str,
+        display_name: str,
+        invite_code: str,
+        user_agent: str | None = None,
+    ) -> AuthResult:
+        """Invite-gated signup. Raises ``auth.RegisterError`` on rejection."""
+        return _auth.handle_register(
+            self._conn,
+            username=username,
+            password=password,
+            display_name=display_name,
+            invite_code=invite_code,
+            user_agent=user_agent,
+        )
 
     # ------------------------------------------------------------------
     # Invite helpers  (consumed by public-deployment.md + admin console)

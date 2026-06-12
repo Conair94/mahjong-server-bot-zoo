@@ -28,13 +28,7 @@ from typing import Any
 from mahjong.adapters.base import HumanIdentity
 from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
-from mahjong.persistence.auth import (
-    AuthResult,
-    RegisterError,
-    handle_auth_request,
-    handle_register,
-    handle_resume,
-)
+from mahjong.persistence.auth import AuthResult, RegisterError
 from mahjong.records.reader import RecordCorruptError, read_record
 from mahjong.records.replay_stream import (
     initial_snapshot_for_seat,
@@ -527,18 +521,21 @@ class MultiTableOrchestrator:
 
         return False
 
+    # These run in the executor pool. They go through the façade (not
+    # persistence._conn) so the shared connection stays under the façade lock —
+    # without it, two concurrent logins (or a login racing the hand-loop's DB
+    # writes) corrupt the connection: the DEF-14 / DEF-23 flake.
     def _run_auth_request(self, username: str, password: str) -> AuthResult:
         assert self._persistence is not None
-        return handle_auth_request(self._persistence._conn, username, password)
+        return self._persistence.authenticate(username, password)
 
     def _run_resume(self, token: str) -> AuthResult:
         assert self._persistence is not None
-        return handle_resume(self._persistence._conn, token)
+        return self._persistence.resume_session(token)
 
     def _run_register(self, msg: dict[str, Any]) -> AuthResult:
         assert self._persistence is not None
-        return handle_register(
-            self._persistence._conn,
+        return self._persistence.register(
             username=str(msg.get("username") or ""),
             password=str(msg.get("password") or ""),
             display_name=str(msg.get("display_name") or ""),

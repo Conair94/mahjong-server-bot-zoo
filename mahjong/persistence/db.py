@@ -24,10 +24,14 @@ def open_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
     closing the connection when done (or using it as a context manager).
     """
     # check_same_thread=False: the async server calls argon2-heavy auth flows
-    # via run_in_executor, which crosses thread boundaries. With WAL + a single
-    # process and python's GIL serialising stmt execution, this is safe at our
-    # scale. Higher-throughput multi-table workloads would want a per-thread
-    # connection pool; documented as a deferral in server-lifecycle.md.
+    # via run_in_executor, which crosses thread boundaries. The GIL does NOT make
+    # a shared connection safe — sqlite3 releases it mid-statement, so two threads
+    # stepping the connection at once corrupt each other (was the DEF-14 / DEF-23
+    # flake). Concurrency is serialized one level up by the Persistence façade's
+    # re-entrant lock (see Persistence._synchronize_facade); every connection
+    # touch goes through it. Higher-throughput multi-table workloads would want a
+    # per-thread connection pool instead; documented as a deferral in
+    # server-lifecycle.md.
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row  # named-column access for free
     conn.execute("PRAGMA journal_mode = WAL")
