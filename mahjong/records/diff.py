@@ -72,6 +72,12 @@ def diff_to_events(
             and state_after["wall"]["drawn_count"] > state_before["wall"]["drawn_count"]
         ):
             events.append(_draw_event(state_after, ts))
+        # DEF-16: when the wall is empty the replacement draw exhausts the
+        # hand (engine: internal_draw -> make_exhaustive_draw_terminal).
+        # Without this, the record closes with a FOOTER but no HAND_END and
+        # live clients wait on settlement forever.
+        if state_after["phase"] == "TERMINAL":
+            events.append(_hand_end_event(state_after, ts))
     elif t == "HU":
         events.append(_hand_end_event(state_after, ts))
     else:  # pragma: no cover — exhaustive

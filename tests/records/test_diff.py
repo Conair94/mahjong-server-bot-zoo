@@ -312,6 +312,127 @@ def test_diff_concealed_gang_emits_no_resolution() -> None:
     )
 
 
+def _empty_wall_concealed_gang_state() -> dict[str, Any]:
+    """DISCARD-phase state where seat 0 holds a concealed kong and the wall
+    is empty, so the kong's replacement draw exhausts into TERMINAL."""
+    seats = [
+        {
+            "seat": 0,
+            "seat_wind": "F1",
+            "concealed": sorted(["B5"] * 4 + ["W2"] * 9 + ["W3"], key=tile_sort_key),
+            "melds": [],
+            "discards": [],
+            "flowers": [],
+            "score": 0,
+        },
+        *(
+            {
+                "seat": i,
+                "seat_wind": f"F{i + 1}",
+                "concealed": ["W2"] * 13,
+                "melds": [],
+                "discards": [],
+                "flowers": [],
+                "score": 0,
+            }
+            for i in (1, 2, 3)
+        ),
+    ]
+    return {
+        "ruleset": MCR_REF,
+        "round_wind": "F1",
+        "dealer_seat": 0,
+        "hand_index": 0,
+        "turn_index": 5,
+        "wall": {"remaining": [], "drawn_count": 144, "total": 144},
+        "seats": seats,
+        "last_discard": None,
+        "last_drawn": {"seat": 0, "tile": "W3"},
+        "pending_claims": [],
+        "phase": "DISCARD",
+        "current_actor": 0,
+        "terminal": None,
+        "rng": {"seed": "0", "cursor": 0},
+    }
+
+
+def test_diff_concealed_gang_on_empty_wall_emits_hand_end() -> None:
+    """DEF-16: a kong whose replacement draw finds the wall empty goes
+    TERMINAL (exhaustive draw) in the engine, but the differ's GANG branch
+    only emitted the DRAW when phase landed back in DISCARD — so the record
+    closed (FOOTER) with no HAND_END and live clients waited on settlement
+    forever. Any transition into TERMINAL must emit HAND_END."""
+    s0 = _empty_wall_concealed_gang_state()
+    gang = {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}
+    s1 = apply_action(s0, 0, gang)  # type: ignore[arg-type]
+    assert s1["phase"] == "TERMINAL", "premise: empty-wall kong exhausts the hand"
+
+    events = diff_to_events(s0, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
+    hand_ends = [e for e in events if e["event"] == "HAND_END"]
+    assert hand_ends, f"GANG into TERMINAL must emit HAND_END; got {[e['event'] for e in events]}"
+    hand_end = hand_ends[0]
+    assert hand_end["kind"] == "DRAW"
+    assert hand_end["winner"] == []
+    assert hand_end["score_delta"] == [0, 0, 0, 0]
+    # No replacement tile was drawn, so no DRAW event should be fabricated.
+    assert not [e for e in events if e["event"] == "DRAW"]
+    # Ordering: the kong decision precedes the hand end.
+    kinds = [e["event"] for e in events]
+    assert kinds.index("CLAIM_DECISION") < kinds.index("HAND_END")
+
+
+def test_diff_exposed_gang_on_empty_wall_emits_hand_end() -> None:
+    """Same DEF-16 gap for the claim variant: DECISION + RESOLUTION must be
+    followed by HAND_END when the replacement draw exhausts the wall."""
+    seats = [
+        {
+            "seat": 0,
+            "seat_wind": "F1",
+            "concealed": sorted(["T3", "T3", "T3"] + ["W2"] * 11, key=tile_sort_key),
+            "melds": [],
+            "discards": [],
+            "flowers": [],
+            "score": 0,
+        },
+        *(
+            {
+                "seat": i,
+                "seat_wind": f"F{i + 1}",
+                "concealed": ["W2"] * 13,
+                "melds": [],
+                "discards": ["T3"] if i == 1 else [],
+                "flowers": [],
+                "score": 0,
+            }
+            for i in (1, 2, 3)
+        ),
+    ]
+    s0: dict[str, Any] = {
+        "ruleset": MCR_REF,
+        "round_wind": "F1",
+        "dealer_seat": 0,
+        "hand_index": 0,
+        "turn_index": 5,
+        "wall": {"remaining": [], "drawn_count": 144, "total": 144},
+        "seats": seats,
+        "last_discard": {"seat": 1, "tile": "T3"},
+        "last_drawn": None,
+        "pending_claims": [{"seat": 0, "type": "GANG"}],
+        "phase": "CLAIM_WINDOW",
+        "current_actor": 1,
+        "terminal": None,
+        "rng": {"seed": "0", "cursor": 0},
+    }
+    gang = {"type": "GANG", "tile": "T3", "kind": "EXPOSED"}
+    s1 = apply_action(s0, 0, gang)  # type: ignore[arg-type]
+    assert s1["phase"] == "TERMINAL", "premise: empty-wall kong exhausts the hand"
+
+    events = diff_to_events(s0, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
+    kinds = [e["event"] for e in events]
+    assert "HAND_END" in kinds, f"GANG into TERMINAL must emit HAND_END; got {kinds}"
+    assert kinds.index("CLAIM_DECISION") < kinds.index("CLAIM_RESOLUTION") < kinds.index("HAND_END")
+
+
 def test_diff_pass_emits_claim_decision() -> None:
     s = _seed_state()
     steps = 0
