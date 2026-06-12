@@ -52,6 +52,7 @@ from mahjong.engine.types import Action, GameState, RuleSetRef
 from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS
 from mahjong.table import manager as mgr
+from mahjong.table.match_score import MatchScore
 from mahjong.table.rotation import next_dealer
 from mahjong.wire.server import Connection, WebSocketServer
 
@@ -126,6 +127,9 @@ class WebOrchestrator:
         self._initial_state: GameState = initial_state(
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
+        # Running cumulative match score across hands (Spec 40), mirroring
+        # TableHandle. Display-only, not persisted; rides each snapshot.
+        self._match_score = MatchScore()
 
         # The v0 offense bot (Spec 27) fills the non-human seats.  The
         # ``canned_seat_actions`` seam is retained for tests: any seat given a
@@ -200,7 +204,16 @@ class WebOrchestrator:
     # --- providers for TableSessions ---
 
     def _snapshot_provider(self, seat: int | None) -> dict[str, Any]:
-        return cast(dict[str, Any], project_state(self._initial_state, seat))
+        snapshot = cast(dict[str, Any], project_state(self._initial_state, seat))
+        # Spec 40: splice the running match score onto the snapshot (mirrors
+        # TableHandle._annotate_match_scores).
+        snapshot["match_scores"] = self._match_score.to_wire()
+        cumulative = self._match_score.cumulative
+        for seat_view in snapshot.get("seats", []):
+            s = seat_view.get("seat")
+            if isinstance(s, int) and 0 <= s < len(cumulative):
+                seat_view["match_score"] = cumulative[s]
+        return snapshot
 
     def _record_path_for_hand(self, hand_index: int) -> Path:
         """Per-hand record path.  Hand 0 uses ``_record_path`` as-is so that
@@ -320,6 +333,12 @@ class WebOrchestrator:
                     event_callback=self._sessions.fanout_event_to_spectators,
                     dealer_seat=self._dealer_seat,
                     hand_index_in_match=self._hand_index,
+                )
+
+                # Spec 40: fold this hand's settlement into the running match
+                # total before the next snapshot is built (mirrors TableHandle).
+                self._match_score.record_hand(
+                    final_state["terminal"] if final_state is not None else None
                 )
 
                 # Check match-end condition before sleeping/rotating.

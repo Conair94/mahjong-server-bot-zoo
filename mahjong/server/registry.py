@@ -44,6 +44,7 @@ from mahjong.sessions import TableSessions
 from mahjong.sessions.mux import DEFAULT_HOLD_SECONDS, SeatState
 from mahjong.table import manager as mgr
 from mahjong.table.manager import DecideTimeouts
+from mahjong.table.match_score import MatchScore
 from mahjong.table.rotation import next_dealer
 
 _logger = logging.getLogger(__name__)
@@ -299,6 +300,9 @@ class TableHandle:
         self._initial_state: GameState = initial_state(
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
+        # Running cumulative match score across the hands played at this table
+        # (Spec 40). Display-only, not persisted; rides each per-seat snapshot.
+        self._match_score = MatchScore()
 
         # ``kind: "bot"`` seats are backed by the v0 offense bot (Spec 27).
         # The ``canned_seat_actions`` injection seam is retained for tests that
@@ -475,6 +479,7 @@ class TableHandle:
     def _snapshot_provider(self, seat: int | None) -> dict[str, Any]:
         snapshot = cast(dict[str, Any], project_state(self._initial_state, seat))
         self._annotate_seat_names(snapshot)
+        self._annotate_match_scores(snapshot)
         return snapshot
 
     def _seat_name_map(self) -> dict[int, dict[str, Any]]:
@@ -515,6 +520,23 @@ class TableHandle:
             if info is not None:
                 seat_view["name"] = info["name"]
                 seat_view["is_bot"] = info["is_bot"]
+
+    def _annotate_match_scores(self, snapshot: dict[str, Any]) -> None:
+        """Splice the running cumulative match score onto the snapshot (Spec 40).
+
+        Like the seat-name annotation, this is a table/match concept the pure
+        projection never carries. ``match_scores`` (top-level) feeds the score
+        widget's per-seat line graph; per-seat ``match_score`` feeds the inline
+        total beside each player's name. The client reducer preserves both
+        across in-hand events, so this between-hand snapshot enrichment holds
+        for the whole hand (it only changes when the next hand begins).
+        """
+        snapshot["match_scores"] = self._match_score.to_wire()
+        cumulative = self._match_score.cumulative
+        for seat_view in snapshot.get("seats", []):
+            seat = seat_view.get("seat")
+            if isinstance(seat, int) and 0 <= seat < len(cumulative):
+                seat_view["match_score"] = cumulative[seat]
 
     # --- per-hand path helpers ---
 
@@ -827,6 +849,14 @@ class TableHandle:
                         record_path=current_record_path,
                         final_state=final_state,
                     )
+
+                # Spec 40: fold this hand's zero-sum settlement into the running
+                # match total *before* the next snapshot is built, so the new
+                # hand's board shows up-to-date standings. A draw / aborted hand
+                # (final_state is None) moves no points but still counts.
+                self._match_score.record_hand(
+                    final_state["terminal"] if final_state is not None else None
+                )
 
                 next_hand_index = self._hand_index + 1
                 if self._max_hands is not None and next_hand_index >= self._max_hands:
