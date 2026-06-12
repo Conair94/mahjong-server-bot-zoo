@@ -18,11 +18,25 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-import pytest_asyncio
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+import pytest
 
-from mahjong.web import static_root
-from mahjong.wire.server import Connection, WebSocketServer
+# The web-client suite drives a real browser via Playwright's async API. CI
+# installs only the runtime + lint/type deps (no playwright, no browser
+# binaries), so skip the whole tests/web tree there instead of erroring at
+# collection. Local dev with playwright installed runs it normally. Wiring
+# browser E2E into CI is deferred — see DEF-22 in docs/specs/feedback-backlog.md.
+pytest.importorskip("playwright")
+
+import pytest_asyncio  # noqa: E402
+from playwright.async_api import (  # noqa: E402
+    Browser,
+    BrowserContext,
+    Page,
+    async_playwright,
+)
+
+from mahjong.web import static_root  # noqa: E402
+from mahjong.wire.server import Connection, WebSocketServer  # noqa: E402
 
 
 class FakeWireServer:
