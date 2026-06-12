@@ -45,9 +45,7 @@ async def test_no_holds_renders_no_rejoin_block(
     assert has_block is False
 
 
-async def test_held_seat_renders_rejoin_row(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_held_seat_renders_rejoin_row(page: Page, fake_wire_server: FakeWireServer) -> None:
     holds = [{"table_id": 3, "seat": 1, "state": "HELD", "hand_index": 4}]
     await _mount_lobby(page, fake_wire_server, {"seatHolds": holds})
     info = await page.evaluate(
@@ -62,9 +60,7 @@ async def test_held_seat_renders_rejoin_row(
     assert "Rejoin" in info["label"]
 
 
-async def test_live_seat_renders_take_over(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_live_seat_renders_take_over(page: Page, fake_wire_server: FakeWireServer) -> None:
     holds = [{"table_id": 5, "seat": 0, "state": "LIVE", "hand_index": 0}]
     await _mount_lobby(page, fake_wire_server, {"seatHolds": holds})
     label = await page.evaluate(
@@ -73,9 +69,7 @@ async def test_live_seat_renders_take_over(
     assert "Take over" in label
 
 
-async def test_clicking_rejoin_emits_intent(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_clicking_rejoin_emits_intent(page: Page, fake_wire_server: FakeWireServer) -> None:
     holds = [{"table_id": 3, "seat": 2, "state": "HELD", "hand_index": 1}]
     await _mount_lobby(page, fake_wire_server, {"seatHolds": holds})
     detail = await page.evaluate(

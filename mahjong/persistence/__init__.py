@@ -56,9 +56,7 @@ __all__ = [
 ]
 
 # Valid SQLite WAL-checkpoint modes (PRAGMA wal_checkpoint argument).
-_WAL_CHECKPOINT_MODES: frozenset[str] = frozenset(
-    {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}
-)
+_WAL_CHECKPOINT_MODES: frozenset[str] = frozenset({"PASSIVE", "FULL", "RESTART", "TRUNCATE"})
 
 
 class Persistence:
@@ -225,9 +223,7 @@ class Persistence:
     def get_session(self, session_id: str) -> SessionRow | None:
         return _accounts.get_session(self._conn, session_id)
 
-    def renew_session(
-        self, session_id: str, *, expires_at_ms: int, last_seen_ms: int
-    ) -> None:
+    def renew_session(self, session_id: str, *, expires_at_ms: int, last_seen_ms: int) -> None:
         with self._conn:
             _accounts.renew_session(
                 self._conn,
@@ -337,9 +333,7 @@ class Persistence:
     def account_achievements(self, account_id: int) -> list[dict[str, object]]:
         return _achievements.account_achievements(self._conn, account_id)
 
-    def account_score_series(
-        self, account_id: int, *, limit: int = 200
-    ) -> list[ScorePoint]:
+    def account_score_series(self, account_id: int, *, limit: int = 200) -> list[ScorePoint]:
         return _hands.account_score_series(self._conn, account_id, limit=limit)
 
     # ------------------------------------------------------------------
@@ -350,6 +344,4 @@ class Persistence:
         return _rebuild.integrity_check(self._conn, self._data_dir)
 
     def rebuild_index_from_records(self, *, dry_run: bool = False) -> RebuildReport:
-        return _rebuild.rebuild_index_from_records(
-            self._conn, self._data_dir, dry_run=dry_run
-        )
+        return _rebuild.rebuild_index_from_records(self._conn, self._data_dir, dry_run=dry_run)

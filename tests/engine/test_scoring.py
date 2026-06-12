@@ -20,8 +20,17 @@ from mahjong.engine.scoring import lookup_x, score_delta
 
 # The canonical house fan->X table (scoring-config.md § house-table).
 HOUSE_TIERS = [
-    [1, 2], [2, 4], [3, 8], [6, 16], [9, 32], [15, 64],
-    [23, 80], [43, 160], [63, 240], [87, 360], [88, 500],
+    [1, 2],
+    [2, 4],
+    [3, 8],
+    [6, 16],
+    [9, 32],
+    [15, 64],
+    [23, 80],
+    [43, 160],
+    [63, 240],
+    [87, 360],
+    [88, 500],
 ]
 HOUSE_CONVERSION = {
     "scheme": "house-table",
@@ -71,9 +80,25 @@ def test_official_winner_seat_independence() -> None:
 def test_house_lookup_x_tier_edges() -> None:
     """X(fan) at every tier boundary and one over-cap fan."""
     expected = {
-        1: 2, 2: 4, 3: 8, 4: 16, 6: 16, 7: 32, 9: 32, 10: 64, 15: 64,
-        16: 80, 23: 80, 24: 160, 43: 160, 44: 240, 63: 240, 64: 360,
-        87: 360, 88: 500, 120: 500,  # 120 > 88 clamps to the top tier
+        1: 2,
+        2: 4,
+        3: 8,
+        4: 16,
+        6: 16,
+        7: 32,
+        9: 32,
+        10: 64,
+        15: 64,
+        16: 80,
+        23: 80,
+        24: 160,
+        43: 160,
+        44: 240,
+        63: 240,
+        64: 360,
+        87: 360,
+        88: 500,
+        120: 500,  # 120 > 88 clamps to the top tier
     }
     for fan, x in expected.items():
         assert lookup_x(fan, HOUSE_TIERS) == x, f"fan={fan}"

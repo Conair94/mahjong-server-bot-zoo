@@ -94,9 +94,9 @@ def test_exposed_melds_not_scored_as_concealed() -> None:
         ruleset_config={"fan_cliff": 3},
     )
     names = {entry["name"] for entry in fans}
-    assert not (names & _CONCEALED_BONUS_FANS), (
-        f"exposed melds wrongly scored as concealed: {names & _CONCEALED_BONUS_FANS}"
-    )
+    assert not (
+        names & _CONCEALED_BONUS_FANS
+    ), f"exposed melds wrongly scored as concealed: {names & _CONCEALED_BONUS_FANS}"
     assert "Self-Drawn" in names, "a self-draw with exposed melds still earns +1 Self-Drawn"
     # The B7B8B9 chow contains the terminal B9, so All Simples must NOT apply.
     # A CHI emitted as its claimed tile (B7) instead of its middle (B8) made the

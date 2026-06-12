@@ -105,9 +105,7 @@ async def test_get_profile_returns_stats_for_authed_account(tmp_path: Path) -> N
             hello = json.loads(cast(str, await ws.recv()))
             assert "profile" in hello.get("features", [])
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "connor", "password": "connorpw12"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "connor", "password": "connorpw12"})
             )
             auth = json.loads(cast(str, await ws.recv()))
             assert auth["ok"] is True
@@ -132,7 +130,10 @@ async def test_get_profile_returns_stats_for_authed_account(tmp_path: Path) -> N
             assert achievements["first-win"]["earned"] is True
             assert achievements["streak-3"]["progress"] == 2  # two straight wins
             assert achievements["wins-10"] == {
-                **achievements["wins-10"], "earned": False, "progress": 2, "target": 10,
+                **achievements["wins-10"],
+                "earned": False,
+                "progress": 2,
+                "target": 10,
             }
     finally:
         await orch.close()

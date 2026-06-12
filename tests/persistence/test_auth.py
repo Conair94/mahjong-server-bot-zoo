@@ -223,9 +223,9 @@ def test_failure_shape_byte_identical() -> None:
     unknown = handle_auth_request(db, "ghost", "anypassword")
 
     # Both should be ok=False with all optional fields None/absent
-    assert dataclasses.asdict(wrong_pw) == dataclasses.asdict(unknown), (
-        f"Failure shapes differ:\n  wrong_pw: {wrong_pw}\n  unknown:  {unknown}"
-    )
+    assert dataclasses.asdict(wrong_pw) == dataclasses.asdict(
+        unknown
+    ), f"Failure shapes differ:\n  wrong_pw: {wrong_pw}\n  unknown:  {unknown}"
 
 
 # ---------------------------------------------------------------------------
@@ -384,9 +384,7 @@ def test_lazy_rehash_upgrades_hash_on_login() -> None:
         time_cost=2, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16
     )
     old_hash = downgraded_hasher.hash("alicepw123")
-    db.execute(
-        "UPDATE accounts SET password_hash=? WHERE account_id=?", (old_hash, account_id)
-    )
+    db.execute("UPDATE accounts SET password_hash=? WHERE account_id=?", (old_hash, account_id))
 
     # Verify the stored hash is downgraded
     stored_before = db.execute(
@@ -402,9 +400,7 @@ def test_lazy_rehash_upgrades_hash_on_login() -> None:
     stored_after = db.execute(
         "SELECT password_hash FROM accounts WHERE account_id=?", (account_id,)
     ).fetchone()[0]
-    assert "t=3" in stored_after, (
-        f"Expected rehashed hash with t=3, got: {stored_after[:80]!r}"
-    )
+    assert "t=3" in stored_after, f"Expected rehashed hash with t=3, got: {stored_after[:80]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -415,9 +411,18 @@ def test_lazy_rehash_upgrades_hash_on_login() -> None:
 def test_create_account_rejects_case_insensitive_duplicate() -> None:
     """Fixture 15: Creating 'Alice' after 'alice' raises ValueError."""
     db = _make_db()
-    create_account(db, username="alice", display_name="Alice", kind="human", role="user", password="pw12345678")
+    create_account(
+        db, username="alice", display_name="Alice", kind="human", role="user", password="pw12345678"
+    )
     with pytest.raises(ValueError, match=r"[Aa]lready exists|[Dd]uplicate|[Ee]xists"):
-        create_account(db, username="Alice", display_name="Alice2", kind="human", role="user", password="pw12345678")
+        create_account(
+            db,
+            username="Alice",
+            display_name="Alice2",
+            kind="human",
+            role="user",
+            password="pw12345678",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -453,9 +458,9 @@ def test_bot_account_auth_same_as_human() -> None:
 def test_static_invalid_hash_is_valid_phc() -> None:
     """Fixture 17a: STATIC_INVALID_HASH is non-empty and PHC-formatted."""
     assert STATIC_INVALID_HASH, "STATIC_INVALID_HASH is empty"
-    assert STATIC_INVALID_HASH.startswith("$argon2id$"), (
-        f"STATIC_INVALID_HASH not argon2id PHC: {STATIC_INVALID_HASH[:30]!r}"
-    )
+    assert STATIC_INVALID_HASH.startswith(
+        "$argon2id$"
+    ), f"STATIC_INVALID_HASH not argon2id PHC: {STATIC_INVALID_HASH[:30]!r}"
 
 
 def test_static_invalid_hash_does_not_verify_against_empty() -> None:
@@ -470,6 +475,6 @@ def test_static_invalid_hash_does_not_verify_against_common_passwords() -> None:
     a real user's attempt, never the sentinel phrase baked into the hash.
     """
     for pw in ("password", "123456", "admin", ""):
-        assert PasswordHasher.verify(STATIC_INVALID_HASH, pw) is False, (
-            f"STATIC_INVALID_HASH unexpectedly verified against {pw!r}"
-        )
+        assert (
+            PasswordHasher.verify(STATIC_INVALID_HASH, pw) is False
+        ), f"STATIC_INVALID_HASH unexpectedly verified against {pw!r}"

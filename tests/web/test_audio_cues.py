@@ -13,6 +13,7 @@ records ``lastCue`` before the synth, and no-ops silently when muted.)
 
 from __future__ import annotations
 
+import itertools
 from typing import Any, cast
 
 import pytest
@@ -36,21 +37,30 @@ def _hello() -> dict[str, Any]:
 def _attached(own_seat: int = 0) -> dict[str, Any]:
     snapshot = cast(dict[str, Any], project(initial_state(_RULESET, seed=_SEED), own_seat))
     return {
-        "kind": "ATTACHED", "seq": 2, "table_id": 1, "seat": own_seat,
-        "hand_index": 0, "snapshot": snapshot, "resume_buffer_size": 0,
+        "kind": "ATTACHED",
+        "seq": 2,
+        "table_id": 1,
+        "seat": own_seat,
+        "hand_index": 0,
+        "snapshot": snapshot,
+        "resume_buffer_size": 0,
     }
 
 
 def _own_draw() -> dict[str, Any]:
     return {
-        "kind": "EVENT", "seq": 3,
+        "kind": "EVENT",
+        "seq": 3,
         "event": {"event": "DRAW", "seat": 0, "tile": "B5", "turn_index": 1, "phase": "DISCARD"},
     }
 
 
 def _peng_prompt() -> dict[str, Any]:
     return {
-        "kind": "PROMPT", "seq": 4, "prompt_id": "p1", "phase": "CLAIM_WINDOW",
+        "kind": "PROMPT",
+        "seq": 4,
+        "prompt_id": "p1",
+        "phase": "CLAIM_WINDOW",
         "deadline": 0,
         "legal_actions": [{"type": "PENG", "tile": "B5"}, {"type": "PASS"}],
         "default_action": {"type": "PASS"},
@@ -60,11 +70,16 @@ def _peng_prompt() -> dict[str, Any]:
 def _peng_resolution(winning_seat: int = 2) -> dict[str, Any]:
     """An opponent's claim landing — a public declaration we (seat 0) should hear."""
     return {
-        "kind": "EVENT", "seq": 5,
+        "kind": "EVENT",
+        "seq": 5,
         "event": {
-            "event": "CLAIM_RESOLUTION", "outcome": "CLAIMED",
-            "winning_seat": winning_seat, "winning_claim": "PENG",
-            "called_tile": "B5", "turn_index": 2, "phase": "DISCARD",
+            "event": "CLAIM_RESOLUTION",
+            "outcome": "CLAIMED",
+            "winning_seat": winning_seat,
+            "winning_claim": "PENG",
+            "called_tile": "B5",
+            "turn_index": 2,
+            "phase": "DISCARD",
         },
     }
 
@@ -72,23 +87,33 @@ def _peng_resolution(winning_seat: int = 2) -> dict[str, Any]:
 def _self_kong_decision(seat: int = 2) -> dict[str, Any]:
     """A self-declared concealed kong — no resolution event, public gang cue."""
     return {
-        "kind": "EVENT", "seq": 6,
+        "kind": "EVENT",
+        "seq": 6,
         "event": {
-            "event": "CLAIM_DECISION", "seat": seat, "decision": "GANG",
-            "kind": "CONCEALED", "tile": "B5", "turn_index": 2, "phase": "DISCARD",
+            "event": "CLAIM_DECISION",
+            "seat": seat,
+            "decision": "GANG",
+            "kind": "CONCEALED",
+            "tile": "B5",
+            "turn_index": 2,
+            "phase": "DISCARD",
         },
     }
 
 
 def _hand_end(*, winner: list[int]) -> dict[str, Any]:
     return {
-        "kind": "HAND_END", "seq": 7, "table_id": 1, "hand_index": 0,
+        "kind": "HAND_END",
+        "seq": 7,
+        "table_id": 1,
+        "hand_index": 0,
         "terminal": {
             "kind": "HU" if winner else "DRAW",
             "winner": winner,
             "win_tile": "B5" if winner else None,
             "win_type": "SELF_DRAW" if winner else None,
-            "fan": [], "fan_total": 8 if winner else 0,
+            "fan": [],
+            "fan_total": 8 if winner else 0,
             "score_delta": [10, -3, -3, -4] if winner else [0, 0, 0, 0],
             "final_hands": None,
         },
@@ -129,7 +154,9 @@ async def _attach(page: Page, server: FakeWireServer) -> None:
     )
     await server.send(_hello())
     await server.send(_attached())
-    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(
+        timeout=5000
+    )
 
 
 async def test_own_draw_plays_draw_cue(page: Page, fake_wire_server: FakeWireServer) -> None:
@@ -139,9 +166,7 @@ async def test_own_draw_plays_draw_cue(page: Page, fake_wire_server: FakeWireSer
     await _wait_for_cue(page, "draw")
 
 
-async def test_claim_prompt_plays_alert_cue(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_claim_prompt_plays_alert_cue(page: Page, fake_wire_server: FakeWireServer) -> None:
     # Your own claim window → the "call or pass" notification, not a call sound.
     await _attach(page, fake_wire_server)
     await _set_audio(page, muted=False)
@@ -159,9 +184,7 @@ async def test_claimed_peng_plays_public_declaration(
     await _wait_for_cue(page, "peng")
 
 
-async def test_self_kong_plays_gang(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_self_kong_plays_gang(page: Page, fake_wire_server: FakeWireServer) -> None:
     # A concealed kong has no resolution event — the gang cue rides the decision.
     await _attach(page, fake_wire_server)
     await _set_audio(page, muted=False)
@@ -169,18 +192,14 @@ async def test_self_kong_plays_gang(
     await _wait_for_cue(page, "gang")
 
 
-async def test_winning_hand_end_plays_hu(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_winning_hand_end_plays_hu(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _attach(page, fake_wire_server)
     await _set_audio(page, muted=False)
     await fake_wire_server.send(_hand_end(winner=[0]))
     await _wait_for_cue(page, "hu")
 
 
-async def test_drawn_hand_end_is_silent(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_drawn_hand_end_is_silent(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _attach(page, fake_wire_server)
     await _set_audio(page, muted=False)
     await fake_wire_server.send(_hand_end(winner=[]))
@@ -210,9 +229,7 @@ async def _voices(page: Page, fake_wire_server: FakeWireServer) -> dict:
     return await page.evaluate("async () => (await import('/static/audio.js')).VOICES")
 
 
-async def test_chi_is_a_fast_ascending_run(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_chi_is_a_fast_ascending_run(page: Page, fake_wire_server: FakeWireServer) -> None:
     voices = await _voices(page, fake_wire_server)
     notes = voices["chi"]["notes"]
     pitches = [n["f"] for n in notes]
@@ -221,9 +238,7 @@ async def test_chi_is_a_fast_ascending_run(
     assert max(n["t"] + n["d"] for n in notes) < 0.35, "chi is a quick flick"
 
 
-async def test_peng_is_three_identical_knocks(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_peng_is_three_identical_knocks(page: Page, fake_wire_server: FakeWireServer) -> None:
     voices = await _voices(page, fake_wire_server)
     v = voices["peng"]
     pitches = {n["f"] for n in v["notes"]}
@@ -231,7 +246,7 @@ async def test_peng_is_three_identical_knocks(
     assert len(pitches) == 1, "peng knocks on ONE pitch (opposite contour of chi)"
     assert v["wave"] == "square", "peng is percussive"
     starts = sorted(n["t"] for n in v["notes"])
-    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(starts)]
     assert all(g > 0.05 for g in gaps), "knocks are separated, not a chord"
 
 
@@ -248,9 +263,7 @@ async def test_gang_is_four_heavy_low_hits_with_a_slam(
     assert voices["gang"]["wave"] == "sawtooth", "gang is the heaviest timbre"
 
 
-async def test_hu_is_the_biggest_flourish(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_hu_is_the_biggest_flourish(page: Page, fake_wire_server: FakeWireServer) -> None:
     voices = await _voices(page, fake_wire_server)
     hu = voices["hu"]["notes"]
     for other in ("chi", "peng", "gang"):

@@ -46,6 +46,6 @@ def _reject_floats(obj: Any) -> None:
         for k, v in obj.items():
             _reject_floats(k)
             _reject_floats(v)
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, list | tuple):
         for v in obj:
             _reject_floats(v)

@@ -28,17 +28,17 @@ from typing import Any
 from mahjong.adapters.base import HumanIdentity
 from mahjong.engine.types import RuleSetRef
 from mahjong.persistence import Persistence
-from mahjong.records.reader import RecordCorruptError, read_record
-from mahjong.records.replay_stream import (
-    initial_snapshot_for_seat,
-    projected_events_for_seat,
-)
 from mahjong.persistence.auth import (
     AuthResult,
     RegisterError,
     handle_auth_request,
     handle_register,
     handle_resume,
+)
+from mahjong.records.reader import RecordCorruptError, read_record
+from mahjong.records.replay_stream import (
+    initial_snapshot_for_seat,
+    projected_events_for_seat,
 )
 from mahjong.server.admin_status import make_admin_status_handler
 from mahjong.server.health import HealthHandler, make_health_handler
@@ -699,13 +699,17 @@ class MultiTableOrchestrator:
         report_type = msg.get("type")
         if report_type not in ("bug", "feature"):
             with contextlib.suppress(Exception):
-                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": "invalid type"})
+                await conn.send(
+                    {"kind": "ERROR", "code": "feedback_error", "message": "invalid type"}
+                )
             return
 
         raw_text = msg.get("text")
         if not isinstance(raw_text, str):
             with contextlib.suppress(Exception):
-                await conn.send({"kind": "ERROR", "code": "feedback_error", "message": "text must be a string"})
+                await conn.send(
+                    {"kind": "ERROR", "code": "feedback_error", "message": "text must be a string"}
+                )
             return
 
         try:
@@ -829,8 +833,7 @@ class MultiTableOrchestrator:
             },
             "recent": recent,
             "series": [
-                {"ended_at_ms": pt.ended_at_ms, "cumulative": pt.cumulative}
-                for pt in series
+                {"ended_at_ms": pt.ended_at_ms, "cumulative": pt.cumulative} for pt in series
             ],
             # Spec 39: derive-at-read, additive field (old clients ignore it).
             "achievements": p.account_achievements(account_id),

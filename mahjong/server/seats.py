@@ -98,9 +98,7 @@ def parse_seats_from_wire(seats_obj: Any) -> SeatsTuple:
             raw_bot_id = entry.get("bot_id")
             if raw_bot_id is not None:
                 if not isinstance(raw_bot_id, str) or not is_known_bot(raw_bot_id):
-                    raise SeatsParseError(
-                        f"seats[{i}].bot_id is not a known bot: {raw_bot_id!r}"
-                    )
+                    raise SeatsParseError(f"seats[{i}].bot_id is not a known bot: {raw_bot_id!r}")
                 bot_id = raw_bot_id
         else:
             saw_human = True

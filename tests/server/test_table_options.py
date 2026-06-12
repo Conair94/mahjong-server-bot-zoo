@@ -62,9 +62,7 @@ def test_timeouts_disabled_makes_human_deadlines_effectively_unlimited() -> None
 
 def test_timeouts_disabled_overrides_explicit_decide_timeout() -> None:
     """timeouts_enabled=false wins over a decide_timeout_seconds value."""
-    r = parse_table_options(
-        {"timeouts_enabled": False, "decide_timeout_seconds": 90}, **_DEFAULTS
-    )
+    r = parse_table_options({"timeouts_enabled": False, "decide_timeout_seconds": 90}, **_DEFAULTS)
     assert r.decide_timeouts.human_discard_s > 1_000_000
 
 

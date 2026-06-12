@@ -266,7 +266,11 @@ async def test_tunnel_commands_route_to_supervisor_and_status_reflects_it() -> N
             self.running = False
 
         def to_wire(self) -> dict:
-            return {"running": self.running, "url": "https://x.trycloudflare.com" if self.running else None, "error": None}
+            return {
+                "running": self.running,
+                "url": "https://x.trycloudflare.com" if self.running else None,
+                "error": None,
+            }
 
     tun = _FakeTunnel()
     sup = _FakeSupervisor(ServerState.RUNNING)

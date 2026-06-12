@@ -23,9 +23,9 @@ def _invite_to_wire(iv: InviteRow) -> dict[str, Any]:
     expires_iso = (
         None
         if iv.expires_at_ms is None
-        else datetime.datetime.fromtimestamp(
-            iv.expires_at_ms / 1000, tz=datetime.UTC
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else datetime.datetime.fromtimestamp(iv.expires_at_ms / 1000, tz=datetime.UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
     )
     return {
         "code": iv.code,
@@ -71,9 +71,7 @@ class AdminDataService:
             created_by = self._first_admin_id()
             now = int(time.time() * 1000)
             expires = None if expires_days <= 0 else now + expires_days * 86_400_000
-            self._p.mint_invite(
-                created_by=created_by, max_uses=max_uses, expires_at_ms=expires
-            )
+            self._p.mint_invite(created_by=created_by, max_uses=max_uses, expires_at_ms=expires)
 
         await self._run(_do)
         return await self.list_invites()
@@ -104,9 +102,7 @@ class AdminDataService:
         await self._run(_do)
         return await self.list_accounts()
 
-    async def set_account_disabled(
-        self, account_id: int, disabled: bool
-    ) -> list[dict[str, Any]]:
+    async def set_account_disabled(self, account_id: int, disabled: bool) -> list[dict[str, Any]]:
         await self._run(self._p.set_account_disabled, account_id, disabled)
         return await self.list_accounts()
 

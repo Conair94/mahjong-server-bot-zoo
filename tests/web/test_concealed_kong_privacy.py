@@ -112,9 +112,7 @@ async def test_opponent_concealed_kong_is_hidden(
     assert seat1["concealed"]["count"] == 9  # 13 - 4
 
 
-async def test_own_concealed_kong_keeps_tiles(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_own_concealed_kong_keeps_tiles(page: Page, fake_wire_server: FakeWireServer) -> None:
     """The owner sees their own kong's tiles (not redacted to self)."""
     view = _view(own_concealed=["W4", "W4", "W4", "W4", "B5", "B6"])
     event = {

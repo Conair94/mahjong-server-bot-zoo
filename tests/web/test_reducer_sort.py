@@ -59,7 +59,9 @@ def _own_view(concealed: list[str], *, last_drawn: dict[str, Any] | None = None)
     }
 
 
-async def _apply_draw(page: Page, server: FakeWireServer, view: dict[str, Any], tile: str) -> list[str]:
+async def _apply_draw(
+    page: Page, server: FakeWireServer, view: dict[str, Any], tile: str
+) -> list[str]:
     """Apply a DRAW event for seat 0 via the real reducer; return seat 0's
     concealed list afterwards."""
     await page.goto(server.url)

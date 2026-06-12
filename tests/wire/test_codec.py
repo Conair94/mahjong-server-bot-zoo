@@ -103,8 +103,13 @@ _AUTH_RESPONSE_OK_SEAT_HOLDS: dict[str, Any] = {
     "session_token": "s_8f1c0000",
     "expires_at_ms": 1748908800000,
     "seat_holds": [
-        {"table_id": 3, "seat": 1, "state": "HELD", "hand_index": 4,
-         "rejoin_deadline_ms": 1748908800000},
+        {
+            "table_id": 3,
+            "seat": 1,
+            "state": "HELD",
+            "hand_index": 4,
+            "rejoin_deadline_ms": 1748908800000,
+        },
         {"table_id": 5, "seat": 0, "state": "LIVE", "hand_index": 0},
     ],
 }
@@ -125,8 +130,16 @@ _HISTORY: dict[str, Any] = {
     "kind": "HISTORY",
     "seq": 9,
     "hands": [
-        {"hand_id": "h_0041", "started_at_ms": 1748900000000, "ended_at_ms": 1748900300000,
-         "terminal_kind": "HU", "won": True, "score_delta": 48, "fan_total": 8, "seat": 1},
+        {
+            "hand_id": "h_0041",
+            "started_at_ms": 1748900000000,
+            "ended_at_ms": 1748900300000,
+            "terminal_kind": "HU",
+            "won": True,
+            "score_delta": 48,
+            "fan_total": 8,
+            "seat": 1,
+        },
     ],
     "next_before_hand_id": "h_0041",
 }

@@ -25,8 +25,12 @@ def _persistence(tmp_path: Path) -> Persistence:
 
 def _seed_admin(p: Persistence) -> None:
     create_account(
-        p._conn, username="root", display_name="Root", kind="human",
-        role="admin", password="pw-12345678",
+        p._conn,
+        username="root",
+        display_name="Root",
+        kind="human",
+        role="admin",
+        password="pw-12345678",
     )
 
 
@@ -127,9 +131,7 @@ def _plane(data: object | None) -> ControlPlane:
 async def test_invite_create_command_returns_invite_list() -> None:
     data = _FakeData()
     plane = _plane(data)
-    reply = await plane.handle_command(
-        {"kind": "INVITE_CREATE", "max_uses": 5, "expires_days": 3}
-    )
+    reply = await plane.handle_command({"kind": "INVITE_CREATE", "max_uses": 5, "expires_days": 3})
     assert reply["kind"] == "INVITE_LIST"
     assert reply["invites"] == [{"code": "inv_new"}]
     assert "create_invite:5:3" in data.calls

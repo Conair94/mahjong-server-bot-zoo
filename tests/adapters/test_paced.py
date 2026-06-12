@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -33,7 +33,7 @@ class _InstantAdapter:
     """A bot-like adapter that records every ``decide`` call and returns
     the prompt's ``default_action`` without sleeping."""
 
-    identity: dict[str, Any] = {"kind": "canned", "script": "instant-test"}
+    identity: ClassVar[dict[str, Any]] = {"kind": "canned", "script": "instant-test"}
     kind = "bot"
 
     def __init__(self) -> None:
@@ -79,7 +79,7 @@ class _SleepRecorder:
         self.durations: list[float] = []
         self._original: Any = None
 
-    def __enter__(self) -> "_SleepRecorder":
+    def __enter__(self) -> _SleepRecorder:
         self._original = asyncio.sleep
 
         async def fake_sleep(delay: float, *args: Any, **kwargs: Any) -> None:
@@ -192,7 +192,12 @@ async def test_fixture_4_inner_decision_returned() -> None:
 class _RecordingAdapter:
     """Captures every Protocol method call so pass-through can be asserted."""
 
-    identity: dict[str, Any] = {"kind": "bot", "bot_id": "rec", "version": "1", "runtime": "in_process"}
+    identity: ClassVar[dict[str, Any]] = {
+        "kind": "bot",
+        "bot_id": "rec",
+        "version": "1",
+        "runtime": "in_process",
+    }
     kind = "bot"
 
     def __init__(self) -> None:
@@ -287,7 +292,7 @@ async def test_fixture_8_build_adapters_wraps_only_non_human(tmp_path: Any) -> N
         server_info={"version": "test", "git_sha": "test", "host": "test"},
         seats=(
             SeatComposition("human"),  # unbound → AutoPassAdapter (kind=canned, paced)
-            SeatComposition("bot"),    # CannedAdapter (kind=canned, paced)
+            SeatComposition("bot"),  # CannedAdapter (kind=canned, paced)
             SeatComposition("bot"),
             SeatComposition("bot"),
         ),

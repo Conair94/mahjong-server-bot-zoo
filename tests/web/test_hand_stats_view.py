@@ -122,9 +122,9 @@ async def _attach(page: Page, server: FakeWireServer) -> None:
     await page.goto(server.url)
     await server.send(_hello())
     await server.send(_attached())
-    await expect(
-        page.locator("game-pane").locator(".table-ascii, .minimal-wrap")
-    ).to_be_visible(timeout=5000)
+    await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(
+        timeout=5000
+    )
 
 
 # --- fixture 11: the strip ---

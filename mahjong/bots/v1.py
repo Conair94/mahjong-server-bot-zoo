@@ -156,9 +156,7 @@ def _best_viable_gang(
     else:
         # CLAIM: the PASS baseline (PENG/CHI alternatives are evaluated by
         # the claim logic if the kong is refused).
-        alternative = effective_distance(
-            concealed, melds, seat_wind, round_wind, config, remaining
-        )
+        alternative = effective_distance(concealed, melds, seat_wind, round_wind, config, remaining)
 
     viable: list[Action] = []
     for action in gangs:
@@ -187,9 +185,7 @@ def _apply_gang(
     if kind == "CONCEALED":
         for _ in range(4):
             new_concealed.remove(tile)
-        new_melds.append(
-            {"type": "GANG_CONCEALED", "tiles": [tile] * 4, "called_from_seat": seat}
-        )
+        new_melds.append({"type": "GANG_CONCEALED", "tiles": [tile] * 4, "called_from_seat": seat})
     elif kind == "EXPOSED":
         for _ in range(3):
             new_concealed.remove(tile)
@@ -423,12 +419,16 @@ def _decide_discard(
     if max_threat >= CAUTION_THREAT and best_d >= 1.0:
         fastest = [c for c in scored if c[0] == best_d]
         if min(danger for _, danger, _, _ in fastest) > SAFE_DANGER:
-            safe = [
-                c for c in scored if c[1] <= SAFE_DANGER and c[0] <= best_d + CAUTION_WINDOW
-            ]
+            safe = [c for c in scored if c[1] <= SAFE_DANGER and c[0] <= best_d + CAUTION_WINDOW]
             if safe:
                 return _pick_by_offense(
-                    safe, melds, seat_wind, round_wind, config, conversion, remaining,
+                    safe,
+                    melds,
+                    seat_wind,
+                    round_wind,
+                    config,
+                    conversion,
+                    remaining,
                     danger_weight=0.0,
                 )
 
@@ -437,7 +437,13 @@ def _decide_discard(
         return tied[0][2]
     # Push: offense first (live-copy weighted), danger separates near-ties.
     return _pick_by_offense(
-        tied, melds, seat_wind, round_wind, config, conversion, remaining,
+        tied,
+        melds,
+        seat_wind,
+        round_wind,
+        config,
+        conversion,
+        remaining,
         danger_weight=DEFENSE_WEIGHT,
     )
 

@@ -75,11 +75,7 @@ def _fixed_ts(counter: dict[str, int]):
 
 
 async def _auth(ws: Any, *, username: str, password: str) -> dict[str, Any]:
-    await ws.send(
-        json.dumps(
-            {"kind": "AUTH_REQUEST", "username": username, "password": password}
-        )
-    )
+    await ws.send(json.dumps({"kind": "AUTH_REQUEST", "username": username, "password": password}))
     resp = json.loads(cast(str, await ws.recv()))
     assert resp["kind"] == "AUTH_RESPONSE" and resp.get("ok"), resp
     return cast(dict[str, Any], resp)
@@ -184,28 +180,18 @@ async def test_fixture_19_and_22_two_human_full_hand(
         bob_ready = asyncio.Event()
 
         async def run_alice() -> None:
-            async with websockets.connect(
-                url, subprotocols=["mahjong-v1"]
-            ) as ws:
+            async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
                 await ws.recv()  # HELLO
                 await _auth(ws, username="alice", password="alicealice")
                 # Wait for bob to be attached before triggering START_HAND.
                 await bob_ready.wait()
                 # Now attach; the seat-1 session is already LIVE.
-                await ws.send(
-                    json.dumps(
-                        {"kind": "ATTACH", "table_id": table_id, "seat": 0}
-                    )
-                )
+                await ws.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 0}))
                 attached = json.loads(cast(str, await ws.recv()))
                 assert attached["kind"] == "ATTACHED"
                 alice_received.append(attached)
                 # Both humans LIVE; ignite.
-                await ws.send(
-                    json.dumps(
-                        {"kind": "START_HAND", "table_id": table_id}
-                    )
-                )
+                await ws.send(json.dumps({"kind": "START_HAND", "table_id": table_id}))
                 alice_ready.set()
                 deadline = asyncio.get_event_loop().time() + 120.0
                 while True:
@@ -232,16 +218,10 @@ async def test_fixture_19_and_22_two_human_full_hand(
                         return
 
         async def run_bob() -> None:
-            async with websockets.connect(
-                url, subprotocols=["mahjong-v1"]
-            ) as ws:
+            async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
                 await ws.recv()  # HELLO
                 await _auth(ws, username="bob", password="bobbobbobbob")
-                await ws.send(
-                    json.dumps(
-                        {"kind": "ATTACH", "table_id": table_id, "seat": 1}
-                    )
-                )
+                await ws.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1}))
                 attached = json.loads(cast(str, await ws.recv()))
                 assert attached["kind"] == "ATTACHED"
                 bob_received.append(attached)
@@ -286,12 +266,12 @@ async def test_fixture_19_and_22_two_human_full_hand(
 
         assert len(hands_alice) == 1, f"alice should have 1 hand: {hands_alice}"
         assert len(hands_bob) == 1, f"bob should have 1 hand: {hands_bob}"
-        assert hands_alice[0].hand_id == hands_bob[0].hand_id, (
-            "alice and bob should share the same hand_id"
-        )
-        assert hands_nonexistent == [], (
-            f"nonexistent account should have no hands: {hands_nonexistent}"
-        )
+        assert (
+            hands_alice[0].hand_id == hands_bob[0].hand_id
+        ), "alice and bob should share the same hand_id"
+        assert (
+            hands_nonexistent == []
+        ), f"nonexistent account should have no hands: {hands_nonexistent}"
 
         row = hands_alice[0]
         assert row.terminal_kind in {"HU", "EXHAUSTIVE_DRAW"}, row
@@ -450,7 +430,7 @@ async def test_fixture_21a_disconnect_and_reconnect_within_hold_window(
     orch, persistence, _alice_id, _bob_id, table_id = await _setup_2h2b(
         tmp_path=tmp_path,
         decide_timeout_seconds=30.0,  # plenty of time to reconnect
-        hold_seconds=30.0,             # plenty of hold window
+        hold_seconds=30.0,  # plenty of hold window
         strike_limit=3,
     )
     url = f"ws://127.0.0.1:{orch.port}"
@@ -460,21 +440,15 @@ async def test_fixture_21a_disconnect_and_reconnect_within_hold_window(
     bob_reconnected = asyncio.Event()
 
     async def run_alice() -> None:
-        async with websockets.connect(
-            url, subprotocols=["mahjong-v1"]
-        ) as ws:
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()  # HELLO
             await _auth(ws, username="alice", password="alicealice")
             # Wait for bob to be LIVE before starting the hand.
             await bob_first_attached.wait()
-            await ws.send(
-                json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 0})
-            )
+            await ws.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 0}))
             attached = json.loads(cast(str, await ws.recv()))
             assert attached["kind"] == "ATTACHED"
-            await ws.send(
-                json.dumps({"kind": "START_HAND", "table_id": table_id})
-            )
+            await ws.send(json.dumps({"kind": "START_HAND", "table_id": table_id}))
             deadline = asyncio.get_event_loop().time() + 120.0
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
@@ -504,9 +478,7 @@ async def test_fixture_21a_disconnect_and_reconnect_within_hold_window(
         try:
             await ws1.recv()  # HELLO
             await _auth(ws1, username="bob", password="bobbobbobbob")
-            await ws1.send(
-                json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1})
-            )
+            await ws1.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1}))
             attached = json.loads(cast(str, await ws1.recv()))
             assert attached["kind"] == "ATTACHED"
             bob_first_attached.set()
@@ -534,19 +506,14 @@ async def test_fixture_21a_disconnect_and_reconnect_within_hold_window(
                 break
             await asyncio.sleep(0.02)
         assert handle.sessions.seat(1).state.name == "HELD", (
-            f"seat 1 should be HELD after drop; "
-            f"got {handle.sessions.seat(1).state}"
+            f"seat 1 should be HELD after drop; " f"got {handle.sessions.seat(1).state}"
         )
 
         # Reconnect with the same account → same-user resume path.
-        async with websockets.connect(
-            url, subprotocols=["mahjong-v1"]
-        ) as ws2:
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws2:
             await ws2.recv()  # HELLO
             await _auth(ws2, username="bob", password="bobbobbobbob")
-            await ws2.send(
-                json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1})
-            )
+            await ws2.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1}))
             re_attached = json.loads(cast(str, await ws2.recv()))
             assert re_attached["kind"] == "ATTACHED", re_attached
             bob_reconnected.set()
@@ -612,28 +579,22 @@ async def test_fixture_21b_disconnect_no_reconnect_autopass_takeover(
     orch, persistence, alice_id, bob_id, table_id = await _setup_2h2b(
         tmp_path=tmp_path,
         decide_timeout_seconds=30.0,  # >> hold so SeatHoldExpired fires first
-        hold_seconds=1.0,              # short hold → quick expiry after drop
-        strike_limit=1,                 # one failure → autopass swap
+        hold_seconds=1.0,  # short hold → quick expiry after drop
+        strike_limit=1,  # one failure → autopass swap
     )
     url = f"ws://127.0.0.1:{orch.port}"
 
     bob_attached = asyncio.Event()
 
     async def run_alice() -> None:
-        async with websockets.connect(
-            url, subprotocols=["mahjong-v1"]
-        ) as ws:
+        async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()  # HELLO
             await _auth(ws, username="alice", password="alicealice")
             await bob_attached.wait()
-            await ws.send(
-                json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 0})
-            )
+            await ws.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 0}))
             attached = json.loads(cast(str, await ws.recv()))
             assert attached["kind"] == "ATTACHED"
-            await ws.send(
-                json.dumps({"kind": "START_HAND", "table_id": table_id})
-            )
+            await ws.send(json.dumps({"kind": "START_HAND", "table_id": table_id}))
             deadline = asyncio.get_event_loop().time() + 120.0
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
@@ -662,9 +623,7 @@ async def test_fixture_21b_disconnect_no_reconnect_autopass_takeover(
         try:
             await ws.recv()  # HELLO
             await _auth(ws, username="bob", password="bobbobbobbob")
-            await ws.send(
-                json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1})
-            )
+            await ws.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1}))
             attached = json.loads(cast(str, await ws.recv()))
             assert attached["kind"] == "ATTACHED"
             bob_attached.set()
@@ -694,9 +653,9 @@ async def test_fixture_21b_disconnect_no_reconnect_autopass_takeover(
         full = persistence.get_hand(hands[0].hand_id)
         assert full is not None
         seat1 = next(p for p in full.participants if p.seat == 1)
-        assert seat1.account_id == bob_id, (
-            f"seat 1 should still credit bob (account_id={bob_id}): {seat1}"
-        )
+        assert (
+            seat1.account_id == bob_id
+        ), f"seat 1 should still credit bob (account_id={bob_id}): {seat1}"
 
         # Mechanical confirmation of the strike/swap path: the record
         # should contain at least one seat-1 event annotated with the
@@ -712,8 +671,7 @@ async def test_fixture_21b_disconnect_no_reconnect_autopass_takeover(
                 if line:
                     events.append(json.loads(line))
         seat1_failures = [
-            e for e in events
-            if e.get("seat") == 1 and (e.get("crashed") or e.get("auto_pass"))
+            e for e in events if e.get("seat") == 1 and (e.get("crashed") or e.get("auto_pass"))
         ]
         assert seat1_failures, (
             "expected at least one crashed/auto_pass event on seat 1 "

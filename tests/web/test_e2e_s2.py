@@ -225,9 +225,9 @@ async def test_s2_e2e_no_double_emit_hand_end(
         await orch.close()
 
     hand_end_frames = [m for m in captured if m["kind"] == "HAND_END"]
-    assert len(hand_end_frames) == 1, (
-        f"expected exactly one HAND_END frame, got {len(hand_end_frames)}: {hand_end_frames}"
-    )
+    assert (
+        len(hand_end_frames) == 1
+    ), f"expected exactly one HAND_END frame, got {len(hand_end_frames)}: {hand_end_frames}"
     # The single HAND_END must carry a non-empty terminal payload (not the
     # empty dict that the pre-7.6.i double-emit path produced).
     assert hand_end_frames[0]["terminal"], hand_end_frames[0]
@@ -391,9 +391,9 @@ async def test_s2_e2e_spectator_sees_public_events_only(
         for k, v in hand_end_record.items()
         if k not in {"event", "seq", "turn_index", "phase", "ts"}
     }
-    assert hand_ends[0]["terminal"] == stripped, (
-        f"HAND_END terminal mismatch:\n  expected: {stripped}\n  got: {hand_ends[0]['terminal']}"
-    )
+    assert (
+        hand_ends[0]["terminal"] == stripped
+    ), f"HAND_END terminal mismatch:\n  expected: {stripped}\n  got: {hand_ends[0]['terminal']}"
 
 
 # --- F2 — drop and reconnect within hold window ---
@@ -508,9 +508,9 @@ async def test_s2_e2e_drop_and_reconnect_within_hold_is_byte_identical(
     finally:
         await orch.close()
 
-    assert out.read_bytes() == F1_FIXTURE.read_bytes(), (
-        "F2 record diverged from F1 — drop/reconnect leaked into the record"
-    )
+    assert (
+        out.read_bytes() == F1_FIXTURE.read_bytes()
+    ), "F2 record diverged from F1 — drop/reconnect leaked into the record"
 
 
 # --- F3 — drop without reconnect; hand completes via prompt-deadline defaults ---
@@ -599,9 +599,9 @@ async def test_s2_e2e_drop_without_reconnect_strikes_then_autopasses(
 
     timeout_count = sum(1 for e in seat0_actions if e.get("timeout"))
     autopass_count = sum(1 for e in seat0_actions if e.get("auto_pass"))
-    assert timeout_count > 0, (
-        f"expected at least one timeout marker on seat-0 events; got: {seat0_actions[:3]}"
-    )
+    assert (
+        timeout_count > 0
+    ), f"expected at least one timeout marker on seat-0 events; got: {seat0_actions[:3]}"
     assert autopass_count > 0, (
         f"expected at least one auto_pass marker (strike→autopass swap); "
         f"got: timeouts={timeout_count}, autopass={autopass_count}"

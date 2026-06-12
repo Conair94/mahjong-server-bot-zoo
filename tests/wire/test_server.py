@@ -281,9 +281,7 @@ async def test_admin_status_handler_receives_authorization_header() -> None:
     async def ws_handler(conn: Connection) -> None:  # pragma: no cover
         return
 
-    async with _running_server(
-        ws_handler, admin_status_handler=admin_status_handler
-    ) as server:
+    async with _running_server(ws_handler, admin_status_handler=admin_status_handler) as server:
         url = f"http://127.0.0.1:{server.port}/admin/status"
         loop = asyncio.get_running_loop()
         body, status = await loop.run_in_executor(

@@ -60,9 +60,9 @@ def test_engine_module_has_no_forbidden_imports(path: Path) -> None:
     for module, attr in _imports(tree):
         # Bare forbidden module: `import random`, `from random import ...`
         top = module.split(".")[0]
-        assert top not in FORBIDDEN_TOP_LEVEL_MODULES, (
-            f"{path}: forbidden import of {module!r} (see determinism.md fixture 9 — engine purity)"
-        )
+        assert (
+            top not in FORBIDDEN_TOP_LEVEL_MODULES
+        ), f"{path}: forbidden import of {module!r} (see determinism.md fixture 9 — engine purity)"
         # Dotted forbidden: `import numpy.random` / `from numpy import random`
         for parent, child in FORBIDDEN_DOTTED:
             if module == f"{parent}.{child}":

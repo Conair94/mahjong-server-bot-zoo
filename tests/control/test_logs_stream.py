@@ -76,9 +76,7 @@ async def test_log_recent_and_since() -> None:
 async def test_subscribe_backlog_then_live_tail() -> None:
     buf = LogRingBuffer(maxlen=100)
     buf.append("startup-line", "stdout")
-    server = AdminWebServer(
-        plane=_plane(buf), host="127.0.0.1", port=0, status_interval_s=0.1
-    )
+    server = AdminWebServer(plane=_plane(buf), host="127.0.0.1", port=0, status_interval_s=0.1)
     await server.start()
     try:
         url = f"ws://127.0.0.1:{server.port}/"
@@ -91,6 +89,8 @@ async def test_subscribe_backlog_then_live_tail() -> None:
             # New line appears after subscribe → streamed by the broadcast loop.
             buf.append("live-line", "stderr")
             batch = await _recv_kind(ws, "LOG_BATCH", tries=30)
-            assert any(ln["text"] == "live-line" and ln["stream"] == "stderr" for ln in batch["lines"])
+            assert any(
+                ln["text"] == "live-line" and ln["stream"] == "stderr" for ln in batch["lines"]
+            )
     finally:
         await server.close()

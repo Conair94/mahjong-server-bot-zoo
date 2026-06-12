@@ -86,9 +86,30 @@ async def test_pond_seeds_and_appends_in_arrival_order(
 ) -> None:
     """Three discards from different seats land in the pond in order."""
     events = [
-        {"event": "DISCARD", "seat": 0, "tile": "W3", "from_hand": True, "turn_index": 1, "phase": "DISCARD"},
-        {"event": "DISCARD", "seat": 1, "tile": "B5", "from_hand": True, "turn_index": 2, "phase": "DISCARD"},
-        {"event": "DISCARD", "seat": 2, "tile": "T7", "from_hand": True, "turn_index": 3, "phase": "DISCARD"},
+        {
+            "event": "DISCARD",
+            "seat": 0,
+            "tile": "W3",
+            "from_hand": True,
+            "turn_index": 1,
+            "phase": "DISCARD",
+        },
+        {
+            "event": "DISCARD",
+            "seat": 1,
+            "tile": "B5",
+            "from_hand": True,
+            "turn_index": 2,
+            "phase": "DISCARD",
+        },
+        {
+            "event": "DISCARD",
+            "seat": 2,
+            "tile": "T7",
+            "from_hand": True,
+            "turn_index": 3,
+            "phase": "DISCARD",
+        },
     ]
     view = await _apply_chain(page, fake_wire_server, _fresh_view(), events)
     assert view["discard_pond"] == [
@@ -98,14 +119,26 @@ async def test_pond_seeds_and_appends_in_arrival_order(
     ]
 
 
-async def test_pond_drops_a_claimed_tile(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_pond_drops_a_claimed_tile(page: Page, fake_wire_server: FakeWireServer) -> None:
     """A PENG resolution lifts the claimed tile off the pond (it joins a meld
     and is no longer 'in the pond')."""
     events = [
-        {"event": "DISCARD", "seat": 0, "tile": "W3", "from_hand": True, "turn_index": 1, "phase": "DISCARD"},
-        {"event": "DISCARD", "seat": 1, "tile": "B5", "from_hand": True, "turn_index": 2, "phase": "DISCARD"},
+        {
+            "event": "DISCARD",
+            "seat": 0,
+            "tile": "W3",
+            "from_hand": True,
+            "turn_index": 1,
+            "phase": "DISCARD",
+        },
+        {
+            "event": "DISCARD",
+            "seat": 1,
+            "tile": "B5",
+            "from_hand": True,
+            "turn_index": 2,
+            "phase": "DISCARD",
+        },
         # Seat 2 pengs seat 1's B5.
         {
             "event": "CLAIM_RESOLUTION",

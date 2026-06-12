@@ -76,9 +76,7 @@ async def _play_one_hand(url: str, *, username: str, password: str) -> int:
     async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
         await ws.recv()  # HELLO
         await ws.send(
-            json.dumps(
-                {"kind": "AUTH_REQUEST", "username": username, "password": password}
-            )
+            json.dumps({"kind": "AUTH_REQUEST", "username": username, "password": password})
         )
         auth = json.loads(cast(str, await ws.recv()))
         assert auth["ok"], auth
@@ -99,9 +97,7 @@ async def _play_one_hand(url: str, *, username: str, password: str) -> int:
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
             assert remaining > 0, "client hung waiting for HAND_END"
-            msg = json.loads(
-                cast(str, await asyncio.wait_for(ws.recv(), timeout=remaining))
-            )
+            msg = json.loads(cast(str, await asyncio.wait_for(ws.recv(), timeout=remaining)))
             if msg["kind"] == "PROMPT":
                 await ws.send(
                     json.dumps(
@@ -157,9 +153,7 @@ async def test_s3_gate_account_play_drain_query(tmp_path: Path) -> None:
         text=True,
         timeout=30,
     )
-    assert create_proc.returncode == 0, (
-        f"account create failed: {create_proc.stderr}"
-    )
+    assert create_proc.returncode == 0, f"account create failed: {create_proc.stderr}"
     assert "account_id=1" in create_proc.stdout, create_proc.stdout
 
     # 2. Launch the server.
@@ -176,9 +170,7 @@ async def test_s3_gate_account_play_drain_query(tmp_path: Path) -> None:
 
         # 3. Play one hand against the live server.
         url = f"ws://127.0.0.1:{port}"
-        table_id = await _play_one_hand(
-            url, username="alice", password="alicealice"
-        )
+        table_id = await _play_one_hand(url, username="alice", password="alicealice")
         assert table_id > 0
 
         # Give the server a tiny moment to finalize.
@@ -194,9 +186,9 @@ async def test_s3_gate_account_play_drain_query(tmp_path: Path) -> None:
             raise AssertionError(
                 f"server did not exit within 20s of SIGTERM\nstderr:\n{stderr}"
             ) from exc
-        assert server_proc.returncode == 0, (
-            f"server exited {server_proc.returncode}\nstderr:\n{stderr}"
-        )
+        assert (
+            server_proc.returncode == 0
+        ), f"server exited {server_proc.returncode}\nstderr:\n{stderr}"
         # Fixture 21: the whole startup→hand→shutdown run logged structured JSON.
         _assert_stdout_is_json_logs(stdout)
     finally:

@@ -131,12 +131,12 @@ class IntegrityReport:
     """Result of Persistence.integrity_check()."""
 
     pragma_ok: bool
-    checked_db: int           # rows examined in hand_index
-    ok_files: int             # record files present + checksum OK
-    missing_files: int        # DB rows whose record file is absent
+    checked_db: int  # rows examined in hand_index
+    ok_files: int  # record files present + checksum OK
+    missing_files: int  # DB rows whose record file is absent
     checksum_mismatches: int  # finalized rows where recomputed hash ≠ stored
-    orphaned_files: int       # record files with no hand_index row
-    in_progress_hands: int    # rows without ended_at_ms (not yet finalized)
+    orphaned_files: int  # record files with no hand_index row
+    in_progress_hands: int  # rows without ended_at_ms (not yet finalized)
 
     @property
     def ok(self) -> bool:
@@ -145,11 +145,7 @@ class IntegrityReport:
         Warnings (orphaned / in-progress hands) are not fatal.
         Critical failures: pragma not ok, missing files, checksum mismatches.
         """
-        return (
-            self.pragma_ok
-            and self.missing_files == 0
-            and self.checksum_mismatches == 0
-        )
+        return self.pragma_ok and self.missing_files == 0 and self.checksum_mismatches == 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -158,8 +154,8 @@ class RebuildReport:
 
     processed_files: int
     inserted: int
-    updated: int   # rows that already existed and were refreshed
-    errors: int    # files that could not be parsed
+    updated: int  # rows that already existed and were refreshed
+    errors: int  # files that could not be parsed
 
 
 __all__ = [

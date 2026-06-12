@@ -19,15 +19,27 @@ NO_RENCHAN: dict[str, Any] = {}  # absent flag == official MCR (always rotate)
 
 def _hu(winner: int) -> Terminal:
     return {
-        "kind": "HU", "winner": winner, "win_tile": "B9", "win_type": "SELF_DRAW",
-        "deal_in_seat": None, "fan": [], "fan_total": 6, "score_delta": [0, 0, 0, 0],
+        "kind": "HU",
+        "winner": winner,
+        "win_tile": "B9",
+        "win_type": "SELF_DRAW",
+        "deal_in_seat": None,
+        "fan": [],
+        "fan_total": 6,
+        "score_delta": [0, 0, 0, 0],
     }
 
 
 def _draw() -> Terminal:
     return {
-        "kind": "DRAW", "winner": None, "win_tile": None, "win_type": None,
-        "deal_in_seat": None, "fan": [], "fan_total": 0, "score_delta": [0, 0, 0, 0],
+        "kind": "DRAW",
+        "winner": None,
+        "win_tile": None,
+        "win_type": None,
+        "deal_in_seat": None,
+        "fan": [],
+        "fan_total": 0,
+        "score_delta": [0, 0, 0, 0],
     }
 
 

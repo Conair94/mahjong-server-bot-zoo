@@ -71,8 +71,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         print(
-            f"created account_id={account_id} username={args.username} "
-            f"kind={kind} role={role}"
+            f"created account_id={account_id} username={args.username} " f"kind={kind} role={role}"
         )
         return 0
     finally:
@@ -120,9 +119,7 @@ def _cmd_invite_create(args: argparse.Namespace) -> int:
                 )
                 return 1
         now = int(time.time() * 1000)
-        expires = (
-            None if args.expires_days <= 0 else now + args.expires_days * 86_400_000
-        )
+        expires = None if args.expires_days <= 0 else now + args.expires_days * 86_400_000
         code = mint_invite(
             p._conn,
             created_by=created_by,

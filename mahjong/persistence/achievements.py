@@ -11,8 +11,9 @@ persisted, so the catalog is numeric-metric only (spec § Non-goals).
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from mahjong.persistence.hands import account_stats
 
@@ -40,7 +41,13 @@ _CATALOG: tuple[_Def, ...] = (
     _Def("fan-24", "Limit Break", "Win with 24+ fan", 24, "best_fan"),
     _Def("streak-3", "Hot Streak", "Win 3 hands in a row", 3, "streak"),
     _Def("streak-5", "Unstoppable", "Win 5 hands in a row", 5, "streak"),
-    _Def("in-the-black", "In the Black", "20+ hands played with a positive lifetime score", 20, "in_black"),
+    _Def(
+        "in-the-black",
+        "In the Black",
+        "20+ hands played with a positive lifetime score",
+        20,
+        "in_black",
+    ),
     _Def("draws-10", "Wall Warrior", "Survive 10 exhaustive draws", 10, "draws"),
 )
 

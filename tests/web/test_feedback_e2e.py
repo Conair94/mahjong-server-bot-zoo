@@ -81,7 +81,7 @@ async def test_feedback_e2e_login_submit_writes_file(
     # --- sign in -------------------------------------------------------------
     await page.fill('input[name="username"]', "alice")
     await page.fill('input[name="password"]', "alicealice")
-    await page.click('button.auth-submit')
+    await page.click("button.auth-submit")
 
     # --- feedback button appears once authed (token set) ---------------------
     launcher = page.locator(".launcher")
@@ -91,9 +91,7 @@ async def test_feedback_e2e_login_submit_writes_file(
 
     # --- fill + submit -------------------------------------------------------
     await page.select_option("select#fb-type", "feature")
-    await page.fill(
-        "textarea#fb-text", "Please add a colour-blind friendly tile palette."
-    )
+    await page.fill("textarea#fb-text", "Please add a colour-blind friendly tile palette.")
     await page.click("button.act")
 
     # --- confirmation in UI --------------------------------------------------

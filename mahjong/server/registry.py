@@ -645,8 +645,7 @@ class TableHandle:
         return sum(
             1
             for i in range(4)
-            if self._seats[i].kind == "human"
-            and self._sessions.seat(i).state is not SeatState.LIVE
+            if self._seats[i].kind == "human" and self._sessions.seat(i).state is not SeatState.LIVE
         )
 
     async def start_hand(self, conn: Any) -> StartHandOutcome:

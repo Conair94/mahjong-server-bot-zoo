@@ -101,9 +101,7 @@ async def test_crash_during_startup_returns_false() -> None:
 
 async def test_startup_timeout_kills_child_and_reports_failure() -> None:
     """Child stays alive but never signals ready → timeout, child killed, STOPPED."""
-    sup = ServerSupervisor(
-        argv=_SLEEPER, readiness_probe=_never_ready, startup_timeout_s=0.5
-    )
+    sup = ServerSupervisor(argv=_SLEEPER, readiness_probe=_never_ready, startup_timeout_s=0.5)
     ok = await sup.start()
     pid = sup.pid
     assert ok is False
@@ -114,7 +112,11 @@ async def test_startup_timeout_kills_child_and_reports_failure() -> None:
 async def test_log_lines_forwarded_to_callback() -> None:
     """Child stdout lines reach the on_log callback (feeds the ring buffer)."""
     lines: list[tuple[str, str]] = []
-    argv = [sys.executable, "-c", "print('hello-from-child', flush=True)\nimport time; time.sleep(30)"]
+    argv = [
+        sys.executable,
+        "-c",
+        "print('hello-from-child', flush=True)\nimport time; time.sleep(30)",
+    ]
     sup = ServerSupervisor(
         argv=argv,
         readiness_probe=_always_ready,

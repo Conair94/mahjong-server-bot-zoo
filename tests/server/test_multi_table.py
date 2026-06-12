@@ -111,9 +111,7 @@ async def _drive_one_hand(url: str, *, table_id: str, user_suffix: str = "test")
         hello = json.loads(cast(str, await ws.recv()))
         assert hello["kind"] == "HELLO"
 
-        await ws.send(
-            json.dumps({"kind": "ATTACH", "table_id": int(table_id), "seat": 0})
-        )
+        await ws.send(json.dumps({"kind": "ATTACH", "table_id": int(table_id), "seat": 0}))
         attached = json.loads(cast(str, await ws.recv()))
         assert attached["kind"] == "ATTACHED", attached
 
@@ -121,9 +119,7 @@ async def _drive_one_hand(url: str, *, table_id: str, user_suffix: str = "test")
         # must explicitly ask to start.  For a single-human table the only
         # human seat is LIVE the instant ATTACH succeeds, so START_HAND wins
         # without further synchronisation.
-        await ws.send(
-            json.dumps({"kind": "START_HAND", "table_id": int(table_id)})
-        )
+        await ws.send(json.dumps({"kind": "START_HAND", "table_id": int(table_id)}))
 
         deadline = asyncio.get_event_loop().time() + 60.0
         while True:
@@ -291,14 +287,12 @@ async def test_mt_f17_two_table_isolation(
         handle_b = orch.registry.get_table(table_id_b)
 
         # Record paths are distinct
-        assert handle_a.record_path != handle_b.record_path, (
-            "Tables A and B should write to independent record files"
-        )
+        assert (
+            handle_a.record_path != handle_b.record_path
+        ), "Tables A and B should write to independent record files"
 
         # hand_ids are distinct
-        assert handle_a.hand_id != handle_b.hand_id, (
-            "Tables A and B should have distinct hand_ids"
-        )
+        assert handle_a.hand_id != handle_b.hand_id, "Tables A and B should have distinct hand_ids"
 
         # Close table A; table B should be unaffected
         await orch.registry.close_table(table_id_a, reason="test_close_a")
@@ -308,12 +302,12 @@ async def test_mt_f17_two_table_isolation(
             await check_ws.recv()  # HELLO
             tables = await _list_tables(check_ws)
             listed_ids = {str(t["table_id"]) for t in tables}
-            assert table_id_a not in listed_ids, (
-                f"Table A should have been removed from LIST_TABLES; got: {listed_ids}"
-            )
-            assert table_id_b in listed_ids, (
-                f"Table B should still appear in LIST_TABLES; got: {listed_ids}"
-            )
+            assert (
+                table_id_a not in listed_ids
+            ), f"Table A should have been removed from LIST_TABLES; got: {listed_ids}"
+            assert (
+                table_id_b in listed_ids
+            ), f"Table B should still appear in LIST_TABLES; got: {listed_ids}"
 
         # Table B match_done fires after the hand completes; it already did
         assert handle_b.match_done.is_set(), "Table B's hand should have completed"
@@ -381,7 +375,12 @@ async def test_mt_create_table_with_options_applies_overrides(tmp_path: Path) ->
                     {
                         "kind": "CREATE_TABLE",
                         "ruleset": "mcr-2006",
-                        "seats": [{"kind": "human"}, {"kind": "bot"}, {"kind": "bot"}, {"kind": "bot"}],
+                        "seats": [
+                            {"kind": "human"},
+                            {"kind": "bot"},
+                            {"kind": "bot"},
+                            {"kind": "bot"},
+                        ],
                         "options": {"bot_pacing": "slow", "decide_timeout_seconds": 90},
                     }
                 )
@@ -415,7 +414,12 @@ async def test_mt_create_table_invalid_options_rejected(tmp_path: Path) -> None:
                     {
                         "kind": "CREATE_TABLE",
                         "ruleset": "mcr-2006",
-                        "seats": [{"kind": "human"}, {"kind": "bot"}, {"kind": "bot"}, {"kind": "bot"}],
+                        "seats": [
+                            {"kind": "human"},
+                            {"kind": "bot"},
+                            {"kind": "bot"},
+                            {"kind": "bot"},
+                        ],
                         "options": {"bot_pacing": {"min_s": -1.0, "max_s": 2.0}},
                     }
                 )

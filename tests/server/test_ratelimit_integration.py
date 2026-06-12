@@ -31,9 +31,7 @@ MCR_REF: dict[str, Any] = {
 }
 
 
-def _orch(
-    tmp_path: Path, p: Persistence, *, trust_proxy: bool = False
-) -> MultiTableOrchestrator:
+def _orch(tmp_path: Path, p: Persistence, *, trust_proxy: bool = False) -> MultiTableOrchestrator:
     return MultiTableOrchestrator(
         host="127.0.0.1",
         port=0,
@@ -88,9 +86,7 @@ async def test_login_over_budget_short_circuits_before_verify(tmp_path: Path) ->
         async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()  # HELLO
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "alice", "password": "whatever1"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "alice", "password": "whatever1"})
             )
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["kind"] == "ERROR"
@@ -123,9 +119,7 @@ async def test_successful_login_does_not_consume_budget(tmp_path: Path) -> None:
         async with websockets.connect(url, subprotocols=["mahjong-v1"]) as ws:
             await ws.recv()
             await ws.send(
-                json.dumps(
-                    {"kind": "AUTH_REQUEST", "username": "alice", "password": "alicealice"}
-                )
+                json.dumps({"kind": "AUTH_REQUEST", "username": "alice", "password": "alicealice"})
             )
             resp = json.loads(cast(str, await ws.recv()))
             assert resp["ok"] is True

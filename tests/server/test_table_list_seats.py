@@ -218,16 +218,12 @@ async def test_fixture_14_phase_in_progress_after_hand_starts(tmp_path: Path) ->
             assert attached["kind"] == "ATTACHED"
 
             async with await _connect(url) as bob_ws:
-                await bob_ws.send(
-                    json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1})
-                )
+                await bob_ws.send(json.dumps({"kind": "ATTACH", "table_id": table_id, "seat": 1}))
                 bob_attached = json.loads(cast(str, await bob_ws.recv()))
                 assert bob_attached["kind"] == "ATTACHED"
 
                 # Both humans LIVE; alice ignites the hand.
-                await alice_ws.send(
-                    json.dumps({"kind": "START_HAND", "table_id": table_id})
-                )
+                await alice_ws.send(json.dumps({"kind": "START_HAND", "table_id": table_id}))
                 # Yield so the hand task can be scheduled.
                 await asyncio.sleep(0)
 

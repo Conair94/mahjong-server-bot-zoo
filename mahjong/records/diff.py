@@ -290,9 +290,7 @@ def _draw_event(state_after: GameState, ts: str) -> dict[str, Any]:
     # surfaced 2026-05-26).
     last_drawn = state_after["last_drawn"]
     drawn_tile = (
-        last_drawn["tile"]
-        if last_drawn is not None and last_drawn["seat"] == actor
-        else None
+        last_drawn["tile"] if last_drawn is not None and last_drawn["seat"] == actor else None
     )
     return {
         "event": "DRAW",

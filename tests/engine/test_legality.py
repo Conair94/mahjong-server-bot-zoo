@@ -178,9 +178,9 @@ def test_discard_hu_self_draw_on_big_three_dragons() -> None:
     )
     s = _make_state(phase="DISCARD", current_actor=0, concealed=[hand] + [["W1"] * 13] * 3)
     actions = legal_actions(s, 0)  # type: ignore[arg-type]
-    assert any(a["type"] == "HU" for a in actions), (
-        f"HU should be legal for a winning self-draw hand; got {actions!r}"
-    )
+    assert any(
+        a["type"] == "HU" for a in actions
+    ), f"HU should be legal for a winning self-draw hand; got {actions!r}"
 
 
 def test_discard_no_hu_for_non_winning_hand() -> None:

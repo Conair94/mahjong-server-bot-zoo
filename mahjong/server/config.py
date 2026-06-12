@@ -160,18 +160,12 @@ def load_config_from_env(
     # default is the absolute XDG path so launch directory never decides which
     # database is opened.
     data_dir_raw = e.get("MAHJONG_DATA_DIR")
-    data_dir = (
-        Path(data_dir_raw).expanduser()
-        if data_dir_raw is not None
-        else _default_data_dir(e)
-    )
+    data_dir = Path(data_dir_raw).expanduser() if data_dir_raw is not None else _default_data_dir(e)
 
     cfg = ServerConfig(
         listen_host=host,
         listen_port=port,
-        trust_proxy=_parse_bool(
-            "MAHJONG_TRUST_PROXY", e.get("MAHJONG_TRUST_PROXY", "0")
-        ),
+        trust_proxy=_parse_bool("MAHJONG_TRUST_PROXY", e.get("MAHJONG_TRUST_PROXY", "0")),
         data_dir=data_dir,
         seat_hold_seconds=_parse_int(
             # 180s (was 60s): long enough for a deliberate refresh + re-auth +
@@ -244,9 +238,7 @@ def load_config_from_env(
             f"require 0 <= min <= max; got min={cfg.bot_min_delay_s} max={cfg.bot_max_delay_s}"
         )
 
-    unknown = sorted(
-        k for k in e if k.startswith("MAHJONG_") and k not in _KNOWN_VARS
-    )
+    unknown = sorted(k for k in e if k.startswith("MAHJONG_") and k not in _KNOWN_VARS)
     return cfg, unknown
 
 

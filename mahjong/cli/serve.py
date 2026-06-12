@@ -117,9 +117,7 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         persistence.close()
         return 1
     if report.missing_files:
-        _logger.warning(
-            "startup.missing_record_files count=%d", report.missing_files
-        )
+        _logger.warning("startup.missing_record_files count=%d", report.missing_files)
     if report.orphaned_files:
         _logger.warning(
             "startup.orphaned_record_files count=%d "
@@ -137,7 +135,9 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         trust_proxy=cfg.trust_proxy,
         data_dir=cfg.data_dir,
         ruleset=_ruleset_ref(cfg),
-        seed=int(time.time()),  # nondeterministic for live play; deterministic seeds are for self-play
+        seed=int(
+            time.time()
+        ),  # nondeterministic for live play; deterministic seeds are for self-play
         server_info={
             "version": cfg.server_version,
             "server_id": cfg.server_id,
@@ -167,9 +167,7 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
     periodic_tasks = [
         asyncio.create_task(periodic_session_cleanup(persistence)),
         asyncio.create_task(
-            periodic_wal_checkpoint(
-                persistence, interval_s=float(cfg.wal_checkpoint_interval_s)
-            )
+            periodic_wal_checkpoint(persistence, interval_s=float(cfg.wal_checkpoint_interval_s))
         ),
     ]
 
@@ -214,9 +212,7 @@ async def _serve(cfg: ServerConfig, static_dir: Path | None) -> int:
         # Phase 2 (graceful wait): give in-flight hands up to shutdown_timeout_s
         # to reach their FOOTER naturally.  A hung bot never resolves, so this
         # is where a stuck table blocks until the timeout.
-        pending = await orch.registry.await_tables_drained(
-            timeout_s=float(cfg.shutdown_timeout_s)
-        )
+        pending = await orch.registry.await_tables_drained(timeout_s=float(cfg.shutdown_timeout_s))
         if pending:
             _logger.error(
                 "shutdown.timeout",

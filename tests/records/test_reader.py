@@ -205,9 +205,9 @@ def test_replay_per_seat_projection_has_no_foreign_concealed(tmp_path: Path) -> 
                 if opp_seat["seat"] == viewer:
                     continue
                 # SeatViewOpponent.concealed is a count dict, never a list.
-                assert isinstance(opp_seat["concealed"], dict), (
-                    f"replay leaked seat {opp_seat['seat']}'s concealed to viewer {viewer}"
-                )
+                assert isinstance(
+                    opp_seat["concealed"], dict
+                ), f"replay leaked seat {opp_seat['seat']}'s concealed to viewer {viewer}"
 
 
 def test_reader_rejects_unsupported_format_version(tmp_path: Path) -> None:

@@ -96,16 +96,14 @@ async def test_graph_single_point_is_flat_no_crash(
     assert "●" in out
 
 
-async def test_graph_scaling_max_on_top_row(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_graph_scaling_max_on_top_row(page: Page, fake_wire_server: FakeWireServer) -> None:
     """Fixture 12: requested height; the max value labels the top row."""
     series = [{"ended_at_ms": i, "cumulative": v} for i, v in enumerate([-8, 0, 24])]
     out = await _graph(page, fake_wire_server, series, {"width": 24, "height": 7})
     lines = out.split("\n")
     assert len(lines) == 7
-    assert "+24" in lines[0]   # max at the top
-    assert "-8" in lines[-1]   # min at the bottom
+    assert "+24" in lines[0]  # max at the top
+    assert "-8" in lines[-1]  # min at the bottom
     assert "NaN" not in out
 
 
@@ -143,26 +141,34 @@ async def test_settings_lists_all_rows_with_values(
     await _mount_settings(
         page,
         fake_wire_server,
-        {"theme": "dark", "tile-style": "ascii", "pane-chat": "off", "pane-stats": "on", "pane-spectator": "off"},
+        {
+            "theme": "dark",
+            "tile-style": "ascii",
+            "pane-chat": "off",
+            "pane-stats": "on",
+            "pane-spectator": "off",
+        },
         table_active=True,
     )
-    text = await page.evaluate(
-        "document.getElementById('__sm').shadowRoot.textContent"
-    )
+    text = await page.evaluate("document.getElementById('__sm').shadowRoot.textContent")
     for label in ("Theme", "Tiles", "Chat pane", "Stats pane", "Spectator pane"):
         assert label in text
     assert "Alt+T" in text and "Alt+," not in text  # hotkeys shown, no stray
     assert "dark" in text and "ascii" in text
 
 
-async def test_settings_cycle_emits_event(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
+async def test_settings_cycle_emits_event(page: Page, fake_wire_server: FakeWireServer) -> None:
     """S-A2: clicking the Theme value emits setting-cycle {key:'theme'}."""
     await _mount_settings(
         page,
         fake_wire_server,
-        {"theme": "dark", "tile-style": "ascii", "pane-chat": "off", "pane-stats": "off", "pane-spectator": "off"},
+        {
+            "theme": "dark",
+            "tile-style": "ascii",
+            "pane-chat": "off",
+            "pane-stats": "off",
+            "pane-spectator": "off",
+        },
         table_active=True,
     )
     # First .val button is the Theme row.
@@ -235,9 +241,9 @@ async def test_profile_renders_stats_and_graph(
     graph + recent rows render."""
     text = await _mount_profile(page, fake_wire_server, _PROFILE)
     assert "Connor" in text
-    assert "25.0%" in text      # win rate 1/4
-    assert "+24" in text        # avg win size (1 win of +24) and/or recent
-    assert "+12" in text        # total standing
+    assert "25.0%" in text  # win rate 1/4
+    assert "+24" in text  # avg win size (1 win of +24) and/or recent
+    assert "+12" in text  # total standing
     # Graph present (some plotted marker), recent table present.
     graph = await page.evaluate(
         "document.getElementById('__pp').shadowRoot.querySelector('pre.graph').textContent"
@@ -307,10 +313,22 @@ async def test_profile_renders_achievements_earned_vs_progress(
     an ASCII progress bar toward target. Wire order preserved."""
     prof = dict(_PROFILE)
     prof["achievements"] = [
-        {"id": "first-win", "name": "First Blood", "desc": "Win a hand",
-         "earned": True, "progress": 1, "target": 1},
-        {"id": "wins-10", "name": "Seasoned", "desc": "Win 10 hands",
-         "earned": False, "progress": 4, "target": 10},
+        {
+            "id": "first-win",
+            "name": "First Blood",
+            "desc": "Win a hand",
+            "earned": True,
+            "progress": 1,
+            "target": 1,
+        },
+        {
+            "id": "wins-10",
+            "name": "Seasoned",
+            "desc": "Win 10 hands",
+            "earned": False,
+            "progress": 4,
+            "target": 10,
+        },
     ]
     text = await _mount_profile(page, fake_wire_server, prof)
     assert "Achievements" in text

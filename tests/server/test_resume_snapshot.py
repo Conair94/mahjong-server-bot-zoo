@@ -127,9 +127,7 @@ async def test_mid_hand_resume_snapshot_is_current_not_the_deal(tmp_path) -> Non
 
     attached = sink_b.by_kind("ATTACHED")[0]
     snap = attached["snapshot"]
-    assert snap["seats"][0]["discards"], (
-        "resume snapshot must reflect play so far, not the deal"
-    )
+    assert snap["seats"][0]["discards"], "resume snapshot must reflect play so far, not the deal"
     assert snap["turn_index"] > 0
     assert attached["resume_buffer_size"] == 0
     assert sink_b.by_kind("EVENT") == []  # no replay on top of a current snapshot
@@ -154,9 +152,7 @@ async def test_mid_hand_takeover_snapshot_is_current(tmp_path) -> None:
     assert await handle.attach(sink_b, identity=_IDENTITY, seat=0)
 
     snap = sink_b.by_kind("ATTACHED")[0]["snapshot"]
-    assert snap["seats"][0]["discards"], (
-        "takeover snapshot must reflect play so far, not the deal"
-    )
+    assert snap["seats"][0]["discards"], "takeover snapshot must reflect play so far, not the deal"
     assert snap["turn_index"] > 0
 
     await handle.close(reason="test_done")

@@ -158,7 +158,12 @@ def test_diff_added_gang_emits_replacement_draw() -> None:
     actor = s0["current_actor"]
     sd = s0["seats"][actor]
     sd["melds"].append(
-        {"type": "PENG", "tiles": ["W1", "W1", "W1"], "called_tile": "W1", "called_from_seat": (actor + 1) % 4}
+        {
+            "type": "PENG",
+            "tiles": ["W1", "W1", "W1"],
+            "called_tile": "W1",
+            "called_from_seat": (actor + 1) % 4,
+        }
     )
     if "W1" not in sd["concealed"]:
         sd["concealed"][0] = "W1"
@@ -199,9 +204,7 @@ def test_diff_exposed_gang_emits_replacement_draw() -> None:
         {
             "seat": 0,
             "seat_wind": "F1",
-            "concealed": sorted(
-                ["T3", "T3", "T3"] + ["W2"] * 11, key=tile_sort_key
-            ),
+            "concealed": sorted(["T3", "T3", "T3"] + ["W2"] * 11, key=tile_sort_key),
             "melds": [],
             "discards": [],
             "flowers": [],
@@ -250,7 +253,9 @@ def test_diff_exposed_gang_emits_replacement_draw() -> None:
     # client can authoritatively apply the winning meld and roll back any losing
     # claim in the same window.
     resolutions = [e for e in events if e["event"] == "CLAIM_RESOLUTION"]
-    assert len(resolutions) == 1, f"expected one CLAIM_RESOLUTION; got {[e['event'] for e in events]}"
+    assert (
+        len(resolutions) == 1
+    ), f"expected one CLAIM_RESOLUTION; got {[e['event'] for e in events]}"
     res = resolutions[0]
     assert res["outcome"] == "CLAIMED"
     assert res["winning_seat"] == 0
@@ -307,9 +312,9 @@ def test_diff_concealed_gang_emits_no_resolution() -> None:
     gang = {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}
     s1 = apply_action(s, 0, gang)  # type: ignore[arg-type]
     events = diff_to_events(s, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
-    assert not [e for e in events if e["event"] == "CLAIM_RESOLUTION"], (
-        f"concealed kong must NOT emit a resolution; got {[e['event'] for e in events]}"
-    )
+    assert not [
+        e for e in events if e["event"] == "CLAIM_RESOLUTION"
+    ], f"concealed kong must NOT emit a resolution; got {[e['event'] for e in events]}"
 
 
 def _empty_wall_concealed_gang_state() -> dict[str, Any]:

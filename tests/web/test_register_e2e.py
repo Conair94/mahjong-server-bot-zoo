@@ -19,8 +19,9 @@ event loop — see feedback_playwright_async_only memory).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import pytest
 import pytest_asyncio

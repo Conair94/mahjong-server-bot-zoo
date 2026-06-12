@@ -202,7 +202,9 @@ def _decide_claim(
         # Claiming forces an immediate discard, so the achievable distance is the
         # best over the subsequent legal discards.
         reachable = min(
-            fan_aware_distance(_without(after_concealed, d), after_melds, seat_wind, round_wind, config)
+            fan_aware_distance(
+                _without(after_concealed, d), after_melds, seat_wind, round_wind, config
+            )
             for d in set(after_concealed)
         )
         if reachable < best_distance:

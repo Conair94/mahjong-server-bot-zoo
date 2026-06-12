@@ -31,7 +31,7 @@ def hand_deltas(terminal: Mapping[str, Any] | None) -> list[int]:
     deltas = terminal.get("score_delta") if terminal else None
     if (
         isinstance(deltas, Sequence)
-        and not isinstance(deltas, (str, bytes))
+        and not isinstance(deltas, str | bytes)
         and len(deltas) == SEATS
     ):
         return [int(d) for d in deltas]
