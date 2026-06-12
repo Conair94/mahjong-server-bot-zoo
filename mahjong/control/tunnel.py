@@ -11,6 +11,9 @@ the supervisor degrades gracefully: if it's not installed, ``start`` returns a
 
 This is a smaller cousin of ``ServerSupervisor``: spawn, scrape the URL from the
 child's output, keep draining the pipe so it can't block, and SIGTERM on stop.
+The drain loop also keeps the URL **current** — a quick tunnel re-registers with
+a fresh ``*.trycloudflare.com`` hostname on an edge reconnect, so pinning only
+the first-scraped URL would leave the console advertising a dead address.
 The URL parser (``parse_tunnel_url``) is a pure function so the contract is
 unit-testable against a recorded cloudflared line.
 """
@@ -145,6 +148,16 @@ class TunnelSupervisor:
                 raw = await self._proc.stdout.readline()
                 if not raw:
                     return
+                # Keep watching for URL changes. A quick tunnel re-registers
+                # with a NEW *.trycloudflare.com hostname when its edge
+                # connection drops; if we kept only the first-scraped URL the
+                # console would advertise a dead (NXDOMAIN) address after a
+                # reconnect. Draining is still mandatory (an unread pipe stalls
+                # the child) — we just no longer throw the lines away blind.
+                url = parse_tunnel_url(raw.decode("utf-8", errors="replace"))
+                if url is not None and url != self._url:
+                    _logger.info("tunnel.url_changed url=%s", url)
+                    self._url = url
 
     async def _terminate(self) -> None:
         proc = self._proc
