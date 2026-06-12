@@ -5,6 +5,22 @@ metadata:
   type: reference
 ---
 
+## 2026-06-12
+
+Memory set scanned: project memory dir, HEAD efd1965 (main). Focus: post-audit-sweep merges (PRs #26–#42), CI mypy handoff, FB-13 status.
+
+Finding counts: STALE: 1, CONTRADICT: 0 (counted as NEEDS-UPDATE: 2), MERGE: 0, DATE_FIX: 0
+
+Issues:
+
+1. STALE — `project_seat_bot_picker.md:12,15` "only `v0` registered today". `seat_bots.py:54-67` now registers v0 AND v1 (v1 landed PR #26 merged). `DEFAULT_BOT_ID`=v0 sub-claim still holds.
+2. NEEDS-UPDATE — `project_ci_mypy_handoff.md`: PR #42 now MERGED (efd1965) → stats landed, "must be merged" satisfied. Handoff doc path `docs/handoff-ci-mypy.md` does NOT exist on main — lives only on unmerged branch `docs/ci-mypy-handoff` (PR #43, still OPEN). Core claim "main CI red at mypy step" STILL TRUE (last 3 main runs = failure).
+3. NEEDS-UPDATE — `project_feature_queue_2026_06.md`: PR #35 (Spec 40, in-game scoreboard) now MERGED; memory frames it as just-landed/in-flight. "Fan-on-board" still genuinely queued (no ledger row/code). DEF-19 confirmed real (backlog:87).
+
+Verified clean: engine/scoring.py, table/rotation.py, mcr-house-3fan.json, config.py default_ruleset=mcr-house-3fan + _default_data_dir (~/.local/share/mahjong-server), bots/v0.py + bots/v1.py + bots/belief.py, adapters/v0.py::V0Adapter, table/match_score.py, manager.py:113 hand_step_stalled [DEF-12], FB-13 still in-progress (backlog:48), PRs #26/#27 merged.
+
+Pattern: PR-status memories ("must be merged", "open PR") decay the moment the PR merges — every memory naming an open PR number is a NEEDS-UPDATE candidate each run. Also: handoff-doc path references should note WHICH branch the doc lives on if the PR is unmerged, else the path 404s on main.
+
 ## 2026-06-11
 
 Memory set scanned: project memory dir (PRs #16–#20 merged, HEAD d0e2289). Focus: 2026-06-11 ruleset-default flip + stall watchdog.

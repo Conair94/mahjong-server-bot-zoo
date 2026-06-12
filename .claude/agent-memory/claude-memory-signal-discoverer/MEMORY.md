@@ -2,7 +2,19 @@
 
 ## Run history
 
-### 2026-05-21 — Sessions 95f2c9b9, 7b9d8b26
+### 2026-06-12 — Sessions acabd6b0, 4143e080, 9e8af94f
+- Scanned 6-session window (2026-06-11 to 2026-06-12); main session acabd6b0 (stats UX + Cloudflare tunnel debug + ruff pin + stacked-PR re-land + handoff) plus FB-17/18/19 fix session (4143e080) and achievements/views session (9e8af94f).
+- Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 2 new written, NOISE: ~5
+- Accepted (written to project memory):
+  - FILL_GAP `feedback_quick_tunnel_url_churn` — trycloudflare hostnames are ephemeral PER edge connection (change on reconnect, not just startup); old goes NXDOMAIN; check DNS + cloudflared readyConnections before suspecting origin. Distinct from the already-captured startup-NXDOMAIN gotcha in project_public_deployment.
+  - FILL_GAP `feedback_console_inherits_parent_env` — admin console spawns `serve` with parent env; MAHJONG_TRUST_PROXY must be exported before launching the console or proxy-trust silently runs off.
+- Already covered (NOT re-proposed):
+  - Ruff/mypy floating-version drift from pre-commit pins; "CI checks whole tree, pre-commit only changed files"; stacked-PR merge-order strand trap — ALL in project_ci_mypy_handoff.md (lines 24-33).
+  - trust_proxy + CF-Connecting-IP gating; two-phase quick→named tunnel cost model; fresh-tunnel startup NXDOMAIN — in project_public_deployment.md.
+  - Bug-triage-from-reports, FB-17 stale-snapshot fix, drawn-tile targeting (authoritative-state class), guard hand-loop crashes, mirror both hand loops — all existing memories (4143e080 session reinforced them, no new principle).
+- Discarded as NOISE: stats panel discard-only/opt-out product mechanics (in hand-stats.md spec + Spec 37); branch-pruning housekeeping (one-off); per-table stats-disabled UX wording; submodule ruff-recursion exclude (one-off config fix, captured in pyproject).
+
+
 - Scanned 2 sessions (2026-05-21), both in mahjong-server-bot-zoo.
 - Candidate counts: UPDATE: 0, CONTRADICT: 0, FILL_GAP: 3, NOISE: 2
 - Accepted candidates (all 3 written to project memory):
