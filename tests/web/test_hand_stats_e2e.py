@@ -1,6 +1,9 @@
-"""Spec 37 composition-root check: a real `WebOrchestrator` PROMPT carries
-a well-formed `stats` payload (the adapter-level tests use a fake provider;
-this pins the actual `analysis.stats_for_prompt` wiring end-to-end)."""
+"""Spec 37 composition-root check: a real `WebOrchestrator` DISCARD PROMPT
+carries a well-formed `stats` payload (the adapter-level tests use a fake
+provider; this pins the actual `analysis.stats_for_prompt` wiring end-to-end).
+
+Post-2026-06-12 revision: stats are discard-only, so a non-DISCARD prompt
+carries no `stats` at all."""
 
 from __future__ import annotations
 
@@ -58,16 +61,17 @@ async def test_real_prompt_carries_stats(tmp_path: Any) -> None:
                         prompt = msg
 
             stats = prompt.get("stats")
-            assert stats is not None, "real PROMPT must carry Spec 37 stats"
-            assert stats["floor"] == 8  # mcr-2006 cliff
-            assert isinstance(stats["wall_remaining"], int)
             if prompt["phase"] == "DISCARD":
+                assert stats is not None, "real DISCARD PROMPT must carry Spec 37 stats"
+                assert stats["floor"] == 8  # mcr-2006 cliff
+                assert isinstance(stats["wall_remaining"], int)
                 rows = stats["discards"]
                 assert rows and all({"tile", "shanten", "tiles"} <= set(r) for r in rows)
                 # Sorted: best candidate first.
                 assert rows[0]["shanten"] == min(r["shanten"] for r in rows)
             else:
-                assert "hand" in stats
+                # Discard-only gating: nothing rides a CLAIM/other prompt.
+                assert stats is None
     finally:
         with contextlib.suppress(Exception):
             await orch.close()

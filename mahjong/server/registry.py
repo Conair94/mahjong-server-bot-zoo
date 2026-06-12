@@ -264,6 +264,7 @@ class TableHandle:
         bot_pacing_enabled: bool = False,
         bot_min_delay_s: float = 5.0,
         bot_max_delay_s: float = 10.0,
+        stats_enabled: bool = True,
     ) -> None:
         self._table_id = table_id
         self._ruleset = ruleset
@@ -286,6 +287,10 @@ class TableHandle:
         self._bot_pacing_enabled = bot_pacing_enabled
         self._bot_min_delay_s = bot_min_delay_s
         self._bot_max_delay_s = bot_max_delay_s
+        # Spec 37 (2026-06-12): per-table opt-out of decision-time stats. When
+        # False, no stats provider is bound (no analysis runs) and the snapshot
+        # carries the flag so the client shows "stats disabled".
+        self._stats_enabled = stats_enabled
         # Boot-scope the match id too (DEF-13) so cross-restart hands with the
         # same table id don't group together in find_hands_by_match. Empty
         # boot_id keeps the legacy format for direct-construction tests.
@@ -488,6 +493,11 @@ class TableHandle:
         snapshot = cast(dict[str, Any], project_state(source, seat))
         self._annotate_seat_names(snapshot)
         self._annotate_match_scores(snapshot)
+        # Spec 37: tell the client whether this table runs decision-time stats,
+        # so the Alt+S pane can show "stats disabled" rather than a bare
+        # placeholder. Preserved across in-hand events by the reducer's
+        # top-level spread (apply_event.js cloneSeatView).
+        snapshot["stats_enabled"] = self._stats_enabled
         return snapshot
 
     def _on_hand_state(self, state: GameState) -> None:
@@ -800,7 +810,7 @@ class TableHandle:
                             HumanAdapter(
                                 session=session,
                                 identity=identity,
-                                stats_provider=stats_for_prompt,
+                                stats_provider=(stats_for_prompt if self._stats_enabled else None),
                             ),
                         )
                     )
@@ -1135,6 +1145,7 @@ class TableRegistry:
         bot_pacing_enabled: bool = False,
         bot_min_delay_s: float = 5.0,
         bot_max_delay_s: float = 10.0,
+        stats_enabled: bool = True,
     ) -> str:
         """Allocate and register a new ``TableHandle``.  Returns the table_id.
 
@@ -1180,6 +1191,7 @@ class TableRegistry:
             bot_pacing_enabled=bot_pacing_enabled,
             bot_min_delay_s=bot_min_delay_s,
             bot_max_delay_s=bot_max_delay_s,
+            stats_enabled=stats_enabled,
         )
         self._tables[table_id] = handle
         _logger.info("table.created", extra={"table_id": table_id, "ruleset": ruleset_id})

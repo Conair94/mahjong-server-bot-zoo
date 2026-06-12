@@ -290,7 +290,8 @@ class CreateTable(TypedDict):
     ruleset: str
     seats: list[dict[str, Any]]
     # Optional per-table creation knobs (§22.6 Part A): bot_pacing (preset
-    # name or {min_s,max_s}), decide_timeout_seconds, timeouts_enabled.
+    # name or {min_s,max_s}), decide_timeout_seconds, timeouts_enabled, and
+    # stats_enabled (Spec 37 opt-out; default true).
     # Parsed by mahjong.server.table_options.parse_table_options.
     options: NotRequired[dict[str, Any]]
 
