@@ -37,6 +37,7 @@ import {
   tileIndexForKeyCode,
   isClaimAvailable,
 } from "/static/prompt.js";
+import { renderStatsStrip, renderStatsDetail } from "/static/stats.js";
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
 
@@ -414,6 +415,31 @@ class GamePane extends LitElement {
         padding: 0;
       }
 
+      /* --- Hand-stats strip (Spec 37). Renders when the current PROMPT
+       * carries a stats payload; tracks the selected discard candidate. */
+      .stats-strip {
+        margin: 0.5rem 0 0;
+        padding: 0.35rem 0.75rem;
+        border: 1px dashed var(--fg-dim);
+        border-left: 3px solid var(--accent);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem 1.1rem;
+        align-items: baseline;
+        font-size: 0.95em;
+      }
+      .stats-strip .lead { color: var(--accent); white-space: nowrap; }
+      .stats-strip .accept { color: var(--fg-dim); white-space: nowrap; }
+      .stats-strip .best-hint { color: var(--accent-red); white-space: nowrap; }
+      .stats-strip .stat-tile { white-space: nowrap; margin-right: 0.5rem; }
+      .stats-strip .stat-tile .fan { color: var(--fg-dim); }
+      .stats-strip .stat-tile.sub-floor { opacity: 0.55; }
+      .stats-strip .stat-tile.sub-floor .floor-mark { color: var(--error); margin-left: 0.15rem; }
+      .stats-strip .stat-tile.dead { text-decoration: line-through; opacity: 0.55; }
+      .stats-strip .claim-option.improves { color: var(--accent); white-space: nowrap; }
+      .stats-strip .claim-option.neutral { color: var(--fg-dim); white-space: nowrap; }
+      .stats-strip .more { color: var(--fg-dim); }
+
       /* --- Claim-available alert (§22.2). When a CLAIM_WINDOW prompt offers
        * a real (non-PASS) option, the bar pulses and a chip pins to the pane
        * header so the cue survives the player glancing at another tab.
@@ -672,12 +698,25 @@ class GamePane extends LitElement {
     this.selectedTile = null;
     this.chiChoosing = null;
     this._clearIllegalBanner();
+    this._notifyPromptChanged();
   }
 
   clearPrompt() {
     this.currentPrompt = null;
     this.selectedTile = null;
     this.chiChoosing = null;
+    this._notifyPromptChanged();
+  }
+
+  _notifyPromptChanged() {
+    // Spec 37: <table-page> mirrors the prompt into the Alt+S stats pane.
+    this.dispatchEvent(
+      new CustomEvent("prompt-changed", {
+        bubbles: true,
+        composed: true,
+        detail: { prompt: this.currentPrompt },
+      }),
+    );
   }
 
   showIllegalBanner(message) {
@@ -880,6 +919,14 @@ class GamePane extends LitElement {
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
           : ""}
+        ${this.currentPrompt
+          ? renderStatsStrip(
+              this.currentPrompt,
+              this.selectedTile,
+              this.seatView?.seats?.[this.ownSeat]?.concealed ?? [],
+              { tileStyle: this.tileStyle },
+            )
+          : ""}
         ${this.currentPrompt ? renderPromptBar(this.currentPrompt, this.chiChoosing) : ""}
 
         <button class="log-toggle" @click=${this._toggleLog}>
@@ -923,19 +970,58 @@ class ChatPane extends LitElement {
 
 customElements.define("chat-pane", ChatPane);
 
-// --- <stats-pane> (stub) ------------------------------------------------
+// --- <stats-pane> (Spec 37: hand analysis) --------------------------------
+//
+// Renders the live PROMPT.stats payload as a full per-candidate table:
+// every legal discard with the shanten it leaves, the advancing tiles with
+// remaining counts, and per-wait fan at tenpai. Fed by <table-page> via the
+// game-pane's `prompt-changed` event; shows a hint between prompts.
+// (Career / cross-game stats live on the profile page, not here.)
 
 class StatsPane extends LitElement {
-  static styles = paneChromeStyles;
+  static properties = {
+    prompt: { attribute: false },
+    tileStyle: { type: String },
+  };
+
+  static styles = [
+    paneChromeStyles,
+    css`
+      .stats-meta { color: var(--fg-dim); margin: 0.25rem 0 0.5rem; }
+      table.stats-table { border-collapse: collapse; width: 100%; }
+      table.stats-table th {
+        text-align: left;
+        color: var(--accent);
+        font-weight: normal;
+        padding: 0.15rem 0.6rem 0.15rem 0;
+      }
+      table.stats-table td {
+        padding: 0.15rem 0.6rem 0.15rem 0;
+        vertical-align: baseline;
+      }
+      table.stats-table tbody tr:first-child td { color: var(--accent); }
+      .stat-tile { white-space: nowrap; margin-right: 0.45rem; }
+      .stat-tile .fan { color: var(--fg-dim); }
+      .stat-tile.sub-floor { opacity: 0.55; }
+      .stat-tile.sub-floor .floor-mark { color: var(--error); margin-left: 0.15rem; }
+      .stat-tile.dead { text-decoration: line-through; opacity: 0.55; }
+      .stats-hand .lead { color: var(--accent); margin-bottom: 0.25rem; }
+      .total { color: var(--fg-dim); }
+      .more { color: var(--fg-dim); }
+    `,
+  ];
+
+  constructor() {
+    super();
+    this.prompt = null;
+    this.tileStyle = "ascii";
+  }
 
   render() {
     return html`
       <div class="pane">
-        ${paneHeader("Stats", "Alt+S", () => this.dispatchEvent(new CustomEvent("pane-close", { bubbles: true, composed: true, detail: { pane: "stats" } })))}
-        <div class="placeholder">
-          (stats pane — not yet implemented)<br />
-          Cross-game stats require Layer 8 / SQLite persistence and a STATS request/response on the wire.
-        </div>
+        ${paneHeader("Hand stats", "Alt+S", () => this.dispatchEvent(new CustomEvent("pane-close", { bubbles: true, composed: true, detail: { pane: "stats" } })))}
+        ${renderStatsDetail(this.prompt, { tileStyle: this.tileStyle })}
       </div>
     `;
   }
@@ -1541,6 +1627,7 @@ class TablePage extends LitElement {
     panes: { type: Object },
     tileStyle: { type: String },
     viewMode: { type: String },
+    _prompt: { state: true },
   };
 
   static styles = css`
@@ -1591,19 +1678,26 @@ class TablePage extends LitElement {
     super();
     this.panes = { chat: false, stats: false, spectator: false };
     this.tileStyle = "ascii";
+    this._prompt = null;
     this._onKeydown = this._handleKeydown.bind(this);
     this._onPaneClose = this._handlePaneClose.bind(this);
+    this._onPromptChanged = (e) => {
+      this._prompt = e.detail?.prompt ?? null;
+    };
   }
 
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this._onKeydown);
     this.addEventListener("pane-close", this._onPaneClose);
+    // Spec 37: mirror the game-pane's live prompt into the stats pane.
+    this.addEventListener("prompt-changed", this._onPromptChanged);
   }
 
   disconnectedCallback() {
     window.removeEventListener("keydown", this._onKeydown);
     this.removeEventListener("pane-close", this._onPaneClose);
+    this.removeEventListener("prompt-changed", this._onPromptChanged);
     super.disconnectedCallback();
   }
 
@@ -1664,7 +1758,9 @@ class TablePage extends LitElement {
           ? html`
               <div class="slot-side">
                 ${this.panes.chat ? html`<chat-pane></chat-pane>` : ""}
-                ${this.panes.stats ? html`<stats-pane></stats-pane>` : ""}
+                ${this.panes.stats
+                  ? html`<stats-pane .prompt=${this._prompt} .tileStyle=${this.tileStyle}></stats-pane>`
+                  : ""}
               </div>
             `
           : ""}

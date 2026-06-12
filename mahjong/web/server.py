@@ -44,6 +44,7 @@ from mahjong.adapters.base import HumanIdentity, SeatAdapter
 from mahjong.adapters.canned import CannedAdapter
 from mahjong.adapters.human import HumanAdapter
 from mahjong.adapters.v0 import V0Adapter
+from mahjong.analysis import stats_for_prompt
 from mahjong.engine import initial_state
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.state import project as project_state
@@ -295,7 +296,11 @@ class WebOrchestrator:
             while True:
                 hand_seed = self._seed + self._hand_index
                 human_session = self._sessions.seat(HUMAN_SEAT)
-                human = HumanAdapter(session=human_session, identity=human_identity)
+                human = HumanAdapter(
+                    session=human_session,
+                    identity=human_identity,
+                    stats_provider=stats_for_prompt,
+                )
                 adapters: list[SeatAdapter] = [cast(SeatAdapter, human)]
                 for seat in (1, 2, 3):
                     if seat in self._scripted_seats:

@@ -254,6 +254,23 @@ _PROMPT: dict[str, Any] = {
     "prompt_id": "p_17_0_23",
 }
 
+_PROMPT_WITH_STATS: dict[str, Any] = {
+    **_PROMPT,
+    # Spec 37: optional decision-time analysis payload — must survive the
+    # round trip untouched (the codec preserves unknown optional fields).
+    "stats": {
+        "floor": 3,
+        "wall_remaining": 42,
+        "discards": [
+            {
+                "tile": "J3",
+                "shanten": 0,
+                "tiles": [{"tile": "B6", "remaining": 4, "fan_discard": 4, "fan_self_draw": 6}],
+            },
+        ],
+    },
+}
+
 _ACTION: dict[str, Any] = {
     "kind": "ACTION",
     "ref": 23,
@@ -382,6 +399,7 @@ ALL_FIXTURES: list[tuple[str, dict[str, Any]]] = [
     ("STOP_SPECTATING", _STOP_SPECTATING),
     ("EVENT", _EVENT),
     ("PROMPT", _PROMPT),
+    ("PROMPT_with_stats", _PROMPT_WITH_STATS),
     ("ACTION", _ACTION),
     ("HAND_END", _HAND_END),
     ("CREATE_TABLE", _CREATE_TABLE),
