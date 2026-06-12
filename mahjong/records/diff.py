@@ -13,6 +13,7 @@ from typing import Any, cast
 
 from mahjong.engine.hashing import canonical_hash
 from mahjong.engine.legality.claim import claim_actions
+from mahjong.engine.state import final_hands_view
 from mahjong.engine.types import Action, GameState
 
 
@@ -198,15 +199,7 @@ def _hand_end_event(state_after: GameState, ts: str) -> dict[str, Any]:
         "fan": [dict(f) for f in terminal["fan"]],
         "fan_total": terminal["fan_total"],
         "score_delta": list(terminal["score_delta"]),
-        "final_hands": [
-            {
-                "seat": s["seat"],
-                "concealed": list(s["concealed"]),
-                "melds": [dict(m) for m in s["melds"]],
-                "flowers": list(s["flowers"]),
-            }
-            for s in state_after["seats"]
-        ],
+        "final_hands": final_hands_view(state_after),
         "state_hash": canonical_hash(cast(dict[str, Any], state_after)),
     }
 

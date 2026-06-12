@@ -204,11 +204,30 @@ class GameState(TypedDict):
     rng: RngState
 
 
+class FinalHand(TypedDict):
+    """One seat's settlement reveal inside `terminal.final_hands` (FB-17).
+
+    Identical shape to the HAND_END record event's `final_hands` entries —
+    both are built by `state.final_hands_view` so they cannot drift.
+    """
+
+    seat: int
+    concealed: list[Tile]
+    melds: list[Meld]
+    flowers: list[Tile]
+
+
 class SeatView(TypedDict):
     """Per-seat projection (state-schema.md § Per-seat projection).
 
     Same shape as GameState minus `rng`, with `wall` replaced by `WallView`
     and opponent seats' `concealed` collapsed to a count.
+
+    FB-17 additions so a reconnect snapshot is self-sufficient:
+    - `last_drawn` (per-seat views only; tile redacted unless own) — the
+      public/spectator view omits the key entirely.
+    - at TERMINAL, `terminal` additionally carries `final_hands` (the
+      settlement reveal; see `FinalHand`).
     """
 
     ruleset: RuleSetRef
@@ -219,6 +238,7 @@ class SeatView(TypedDict):
     wall: WallView
     seats: list[Seat | SeatViewOpponent]
     last_discard: LastDiscard | None
+    last_drawn: NotRequired[LastDrawn | None]
     pending_claims: list[PendingClaim]
     phase: Phase
     current_actor: int

@@ -171,9 +171,18 @@ Where `SeatView` is the same shape as `GameState` except:
 - `seats[i].concealed` is replaced with a count (`{"count": 13}`) for every `i != seat`.
 - `wall.remaining` is replaced with just `{"remaining_count": 70}` — order and contents are hidden.
 - `rng` is omitted entirely.
-- `last_drawn` is omitted entirely — it's an engine hint, not a public field. Opponents already see the act of drawing via turn order; they don't see the tile.
+- `last_drawn` is included with the same redaction rule as the `DRAW` event
+  (*amended 2026-06-12, FB-17*): `{"seat": s, "tile": <tile>}` when `s == seat`,
+  `{"seat": s, "tile": null}` otherwise. Who drew is public knowledge (turn
+  order shows it); the tile stays private. Carried so a reconnect snapshot is
+  self-sufficient — the just-drawn hand offset and the Enter-to-tsumogiri
+  shortcut must survive a refresh.
 - `pending_claims` is filtered to only include this seat's own opportunities.
-- `terminal.fan` and `terminal.score_delta` are full (everyone sees the score).
+- `terminal.fan` and `terminal.score_delta` are full (everyone sees the score),
+  and `terminal` additionally carries `final_hands` — the same settlement
+  reveal as the `HAND_END` record event, built by the shared
+  `state.final_hands_view` helper (*amended 2026-06-12, FB-17*) so a post-hand
+  reconnect can render the summary without the frame.
 
 ### Public (spectator) projection: `seat = None`
 
@@ -181,7 +190,8 @@ Where `SeatView` is the same shape as `GameState` except:
 
 - For **every** seat (no own-seat exception), `seats[i].concealed` is replaced with `{"count": N}`. A spectator never sees concealed tiles.
 - `pending_claims` is `[]`. A public observer holds no claim opportunities of their own.
-- All other rules carry over from the per-seat projection: `wall.remaining` hidden, `rng` omitted, `last_drawn` omitted, `terminal` fully visible (fan, score_delta, final_hands, winner).
+- `last_drawn` is omitted entirely (the per-seat views carry it redacted; a spectator gets the act of drawing from the event stream).
+- All other rules carry over from the per-seat projection: `wall.remaining` hidden, `rng` omitted, `terminal` fully visible (fan, score_delta, final_hands, winner).
 - Meld tile-identity (including for `GANG_CONCEALED`) is preserved, matching the existing opponent-view behavior. Tightening this is out of scope for the v1 amendment; if/when we tighten it, it lands as a second amendment in its own step.
 
 Two callers, one function. The `seat: int | None` widening is *additive*: existing `seat: int` callers behave identically; the new `None` value adds the spectator/public path.

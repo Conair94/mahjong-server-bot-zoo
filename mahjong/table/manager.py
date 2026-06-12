@@ -273,6 +273,7 @@ async def run_hand(
     strike_limit: int = 3,
     meta: dict[str, Any] | None = None,
     event_callback: EventCallback | None = None,
+    state_callback: Callable[[GameState], None] | None = None,
     dealer_seat: int = 0,
     hand_index_in_match: int = 0,
 ) -> GameState:
@@ -304,6 +305,12 @@ async def run_hand(
         step_stall_seconds = _stall_cap_seconds(decide_timeouts)
 
     state = initial_state(ruleset, seed=seed, dealer_seat=dealer_seat)
+    # FB-17: hand the caller a reference to the *current* state object so its
+    # snapshot provider can serve live (not deal-time) projections. `state` is
+    # rebound on every step (apply_action returns a fresh state), so the
+    # callback fires again after each transition.
+    if state_callback is not None:
+        state_callback(state)
     writer = RecordWriter(record_path)
 
     # --- HEADER ---
@@ -387,6 +394,8 @@ async def run_hand(
             turn_index=state["turn_index"],
             next_seq=writer.seq,
         )
+        if state_callback is not None:
+            state_callback(state)
 
     # --- left ---
     await asyncio.gather(

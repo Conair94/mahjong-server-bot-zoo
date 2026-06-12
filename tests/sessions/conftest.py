@@ -101,11 +101,12 @@ def make_seat_session(
     buffer_capacity: int = 256,
     hold_seconds: float = 60.0,
     on_strike=None,
+    snapshot_provider=make_snapshot,
 ) -> SeatSession:
     return SeatSession(
         table_id=table_id,
         seat=seat,
-        snapshot_provider=make_snapshot,
+        snapshot_provider=snapshot_provider,
         hand_index_provider=lambda: hand_index,
         buffer_capacity=buffer_capacity,
         hold_seconds=hold_seconds,

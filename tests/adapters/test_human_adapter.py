@@ -135,9 +135,11 @@ async def test_seated_observe_decide_left_round_trip() -> None:
     assert session.state is SeatState.LIVE
 
 
-async def test_observe_while_held_lands_in_buffer_and_replays_on_resume() -> None:
-    """Spec § Ring buffer: 'No event lost in the LIVE→HELD edge.' The adapter
-    must not lose events delivered between socket-drop and reconnect."""
+async def test_observe_while_held_buffers_but_resume_relies_on_snapshot() -> None:
+    """FB-17 revision: events arriving between socket-drop and reconnect are
+    *not* lost — they're reflected in the fresh current snapshot the resume
+    carries. The mux no longer replays buffered EVENT frames on top of that
+    snapshot (it would double-apply them in the client reducer)."""
     session = _make_seat_session()
     sink_a = FakeSink()
     await session.attach(sink_a, user_id="alice")
@@ -150,7 +152,8 @@ async def test_observe_while_held_lands_in_buffer_and_replays_on_resume() -> Non
     await adapter.observe({"event": "DISCARD", "seat": 1, "tile": "W2"}, cast(SeatView, {}))
     assert len(sink_a.by_kind("EVENT")) == 2
 
-    # Drop. Three more observes — these must end up buffered.
+    # Drop. Three more observes land in the buffer (not silently dropped on
+    # the LIVE→HELD edge).
     await session.on_socket_dropped(sink_a)
     for i in range(3):
         await adapter.observe(
@@ -158,12 +161,13 @@ async def test_observe_while_held_lands_in_buffer_and_replays_on_resume() -> Non
         )
     assert session.buffer_size == 3
 
-    # Reconnect within window; buffer replays in order on the new sink.
+    # Reconnect within window: a fresh ATTACHED snapshot, no EVENT replay.
     sink_b = FakeSink()
     outcome = await session.attach(sink_b, user_id="alice")
     assert outcome.ok
-    replayed = [m["event"]["tile"] for m in sink_b.by_kind("EVENT")]
-    assert replayed == ["B1", "B2", "B3"]
+    attached = sink_b.by_kind("ATTACHED")[0]
+    assert attached["resume_buffer_size"] == 0
+    assert sink_b.by_kind("EVENT") == []
 
 
 async def test_decide_translates_seat_hold_expired_to_seat_error() -> None:

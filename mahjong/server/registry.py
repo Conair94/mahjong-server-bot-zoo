@@ -300,6 +300,13 @@ class TableHandle:
         self._initial_state: GameState = initial_state(
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
+        # FB-17: the *current* engine state of the running (or just-finished)
+        # hand, updated by run_hand's state_callback on every transition.
+        # None between hands / before the first hand — the snapshot provider
+        # then falls back to `_initial_state` (the next deal). Serving this
+        # instead of the deal is what makes reconnect snapshots honest
+        # (session-mux.md fixture 3: snapshot == current project(state, seat)).
+        self._live_state: GameState | None = None
         # Running cumulative match score across the hands played at this table
         # (Spec 40). Display-only, not persisted; rides each per-seat snapshot.
         self._match_score = MatchScore()
@@ -477,10 +484,15 @@ class TableHandle:
     # --- snapshot provider (for TableSessions) ---
 
     def _snapshot_provider(self, seat: int | None) -> dict[str, Any]:
-        snapshot = cast(dict[str, Any], project_state(self._initial_state, seat))
+        source = self._live_state if self._live_state is not None else self._initial_state
+        snapshot = cast(dict[str, Any], project_state(source, seat))
         self._annotate_seat_names(snapshot)
         self._annotate_match_scores(snapshot)
         return snapshot
+
+    def _on_hand_state(self, state: GameState) -> None:
+        """run_hand's state_callback — keep the snapshot source current."""
+        self._live_state = state
 
     def _seat_name_map(self) -> dict[int, dict[str, Any]]:
         """seat index -> ``{"name": str | None, "is_bot": bool}`` from the roster.
@@ -840,6 +852,7 @@ class TableHandle:
                         decide_timeouts=self._decide_timeouts,
                         strike_limit=self._strike_limit,
                         event_callback=self._sessions.fanout_event_to_spectators,
+                        state_callback=self._on_hand_state,
                         dealer_seat=self._dealer_seat,
                         hand_index_in_match=self._hand_index,
                     )
@@ -895,6 +908,12 @@ class TableHandle:
                     dealer_seat=self._dealer_seat,
                     hand_index=self._hand_index,
                 )
+                # FB-17: between hands the snapshot must show the *next* deal,
+                # not the finished hand — drop the live ref before the
+                # begin_next_hand fanout re-snapshots every seat. (After the
+                # final hand the loop breaks above instead, so the terminal
+                # state stays visible to post-game reconnects.)
+                self._live_state = None
                 await self._sessions.begin_next_hand()
         except asyncio.CancelledError:
             # Normal shutdown / drain — never swallow cancellation. But DO log
