@@ -42,6 +42,24 @@ DEFAULT_BUFFER_CAPACITY: int = 256
 DEFAULT_HOLD_SECONDS: float = 60.0
 DEFAULT_MAX_SPECTATORS: int = 32
 
+# Spec 38: chat text length cap (post-cleaning). Validation, not moderation.
+MAX_CHAT_TEXT_LEN: int = 500
+
+
+def _clean_chat_text(raw: str) -> str:
+    """Single-line chat hygiene: drop control characters (chat is one line;
+    the client renders text nodes, but the wire shouldn't carry terminal
+    escapes either), then trim."""
+    return "".join(c for c in raw if c >= "\x20").strip()
+
+
+def _chat_ts() -> str:
+    """Wire timestamp for CHAT_MESSAGE (UTC, ISO-8601, ms, Z — matches the
+    record/manager `ts` convention)."""
+    now = time.time()
+    base = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now))
+    return f"{base}.{int((now % 1) * 1000):03d}Z"
+
 # Record-event wrapper fields that must NOT appear in the wire HAND_END
 # `terminal` payload (record-format.md vs wire-protocol.md § HAND_END).
 _HAND_END_WRAPPER_FIELDS: frozenset[str] = frozenset({"event", "seq", "turn_index", "phase", "ts"})
@@ -209,6 +227,19 @@ class Spectator:
             "table_id": self.table_id,
             "hand_index": hand_index,
             "event": public_event,
+        }
+        await self.sink.send(msg)
+
+    async def send_chat(self, *, hand_index: int, seat: int, text: str, ts: str) -> None:
+        """Spec 38: relay one table-chat line to this spectator."""
+        msg = {
+            "kind": "CHAT_MESSAGE",
+            "seq": self._outbound.assign_seq(),
+            "table_id": self.table_id,
+            "hand_index": hand_index,
+            "seat": seat,
+            "ts": ts,
+            "text": text,
         }
         await self.sink.send(msg)
 
@@ -595,6 +626,26 @@ class SeatSession:
             return
         await self._send_prompt(self._pending.prompt)
 
+    async def send_chat(self, *, seat: int, text: str, ts: str) -> None:
+        """Spec 38: relay one table-chat line. LIVE only — chat is table
+        talk, not an event: HELD seats get nothing and nothing is buffered
+        (the ring buffer stays events-only by design)."""
+        if self._state is not SeatState.LIVE or self._outbound is None:
+            return
+        msg = {
+            "kind": "CHAT_MESSAGE",
+            "seq": self._outbound.assign_seq(),
+            "table_id": self.table_id,
+            "hand_index": self._hand_index_provider(),
+            "seat": seat,
+            "ts": ts,
+            "text": text,
+        }
+        try:
+            await self._outbound.sink.send(msg)
+        except Exception:
+            return
+
     # --- inbound: ACTION dispatch ---
 
     async def handle_action(self, *, prompt_id: str, action: dict[str, Any]) -> None:
@@ -973,7 +1024,33 @@ class TableSessions:
         if kind == "STOP_SPECTATING":
             await self.stop_spectating(sink)
             return
+        if kind == "CHAT":
+            await self._handle_chat(sink, msg)
+            return
         await self._send_error(sink, "unknown_kind")
+
+    async def _handle_chat(self, sink: OutboundSink, msg: Mapping[str, Any]) -> None:
+        """Spec 38 § Delivery: validate, then broadcast to every LIVE seat
+        (sender included — the echo is the client's render truth) and every
+        spectator. One dead recipient never blocks the rest."""
+        owner = self._seat_owning(sink)
+        if owner is None:
+            await self._send_error(sink, "chat_not_seated")
+            return
+        raw = msg.get("text")
+        text = _clean_chat_text(raw) if isinstance(raw, str) else ""
+        if not text or len(text) > MAX_CHAT_TEXT_LEN:
+            await self._send_error(sink, "chat_invalid")
+            return
+        ts = _chat_ts()
+        for s in self._seats:
+            await s.send_chat(seat=owner.seat, text=text, ts=ts)
+        hand_index = self._hand_index_provider()
+        for spec in list(self._spectators.values()):
+            try:
+                await spec.send_chat(hand_index=hand_index, seat=owner.seat, text=text, ts=ts)
+            except Exception:
+                continue
 
     async def _send_error(self, sink: OutboundSink, code: str) -> None:
         try:

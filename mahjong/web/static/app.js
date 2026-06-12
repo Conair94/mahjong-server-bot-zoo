@@ -950,18 +950,101 @@ class GamePane extends LitElement {
 
 customElements.define("game-pane", GamePane);
 
-// --- <chat-pane> (stub) -------------------------------------------------
+// --- <chat-pane> (Spec 38: table chat) ------------------------------------
+//
+// Scrollback + input over the CHAT/CHAT_MESSAGE frames. Messages arrive
+// denormalized ({seat, name, text, ts}) from <table-page>.addChatMessage —
+// the pane renders verbatim (Lit text interpolation; never HTML). The
+// window-level game keymap ignores keys typed here via the FB-16
+// isEditableTarget guard; Enter-to-send is handled on the input itself.
 
 class ChatPane extends LitElement {
-  static styles = paneChromeStyles;
+  static properties = {
+    messages: { attribute: false },
+  };
+
+  static styles = [
+    paneChromeStyles,
+    css`
+      .chat-log {
+        max-height: 16rem;
+        overflow-y: auto;
+        margin: 0.25rem 0 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+      .chat-line { word-break: break-word; }
+      .chat-line .who { color: var(--accent); }
+      .chat-empty { color: var(--fg-dim); }
+      .chat-input-row { display: flex; gap: 0.5rem; }
+      .chat-input-row input {
+        flex: 1;
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid var(--fg-dim);
+        font-family: inherit;
+        font-size: inherit;
+        padding: 0.25rem 0.5rem;
+      }
+      .chat-input-row input:focus { outline: none; border-color: var(--accent); }
+      .chat-input-row button {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+        font-family: inherit;
+        cursor: pointer;
+        padding: 0.25rem 0.75rem;
+      }
+    `,
+  ];
+
+  constructor() {
+    super();
+    this.messages = [];
+  }
+
+  updated() {
+    const log = this.renderRoot.querySelector(".chat-log");
+    if (log) log.scrollTop = log.scrollHeight;
+  }
+
+  _send() {
+    const input = this.renderRoot.querySelector("input");
+    const text = (input?.value ?? "").trim();
+    if (!text) return;
+    input.value = "";
+    this.dispatchEvent(
+      new CustomEvent("chat-send", { bubbles: true, composed: true, detail: { text } }),
+    );
+  }
+
+  _onInputKeydown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      this._send();
+    }
+  }
 
   render() {
     return html`
       <div class="pane">
         ${paneHeader("Chat", "Alt+C", () => this.dispatchEvent(new CustomEvent("pane-close", { bubbles: true, composed: true, detail: { pane: "chat" } })))}
-        <div class="placeholder">
-          (chat pane — not yet implemented)<br />
-          Wire-protocol amendment for CHAT frames is required before this can do anything real.
+        <div class="chat-log">
+          ${this.messages.length
+            ? this.messages.map(
+                (m) => html`<div class="chat-line"><span class="who">${m.name}:</span> ${m.text}</div>`,
+              )
+            : html`<div class="chat-empty">(no messages yet — say hi)</div>`}
+        </div>
+        <div class="chat-input-row">
+          <input
+            type="text"
+            maxlength="500"
+            placeholder="message the table…"
+            @keydown=${this._onInputKeydown}
+          />
+          <button @click=${this._send}>Send</button>
         </div>
       </div>
     `;
@@ -1627,6 +1710,8 @@ class TablePage extends LitElement {
     panes: { type: Object },
     tileStyle: { type: String },
     viewMode: { type: String },
+    _chatLog: { state: true },
+    _chatUnread: { state: true },
     _prompt: { state: true },
   };
 
@@ -1645,6 +1730,7 @@ class TablePage extends LitElement {
     .table-header .panes-indicator { color: var(--fg-dim); }
     .table-header .panes-indicator .on { color: var(--accent); }
     .table-header .panes-indicator .always-on { color: var(--accent-red); }
+    .table-header .panes-indicator .unread { color: var(--accent-red); }
 
     .grid {
       display: grid;
@@ -1678,12 +1764,28 @@ class TablePage extends LitElement {
     super();
     this.panes = { chat: false, stats: false, spectator: false };
     this.tileStyle = "ascii";
+    this._chatLog = [];
+    this._chatUnread = false;
     this._prompt = null;
     this._onKeydown = this._handleKeydown.bind(this);
     this._onPaneClose = this._handlePaneClose.bind(this);
     this._onPromptChanged = (e) => {
       this._prompt = e.detail?.prompt ?? null;
     };
+  }
+
+  // Spec 38: append one CHAT_MESSAGE frame, denormalizing the sender label
+  // from the live view (names are hand-stable, so append-time is correct).
+  // Capped scrollback; a line arriving while the pane is closed lights the
+  // header's [C] indicator.
+  addChatMessage(frame) {
+    const name =
+      this.gamePane?.seatView?.seats?.[frame.seat]?.name ?? `Seat ${frame.seat}`;
+    this._chatLog = [
+      ...this._chatLog.slice(-199),
+      { seat: frame.seat, name, text: frame.text, ts: frame.ts },
+    ];
+    if (!this.panes.chat) this._chatUnread = true;
   }
 
   connectedCallback() {
@@ -1716,6 +1818,7 @@ class TablePage extends LitElement {
 
   _togglePane(pane) {
     this.panes = { ...this.panes, [pane]: !this.panes[pane] };
+    if (pane === "chat" && this.panes.chat) this._chatUnread = false;
     this.dispatchEvent(
       new CustomEvent("panes-changed", {
         bubbles: true,
@@ -1746,10 +1849,11 @@ class TablePage extends LitElement {
         <span class="panes-indicator">
           Panes:
           ${this._alwaysOnIndicator("[G]")}
-          ${this._paneIndicator("C", this.panes.chat)}·${this._paneIndicator(
-            "S",
-            this.panes.stats,
-          )}·${this._paneIndicator("W", this.panes.spectator)}
+          <span class=${this.panes.chat ? "on" : this._chatUnread ? "unread" : ""}>C</span
+          >·${this._paneIndicator("S", this.panes.stats)}·${this._paneIndicator(
+            "W",
+            this.panes.spectator,
+          )}
         </span>
       </div>
       <div class=${gridClasses.join(" ")}>
@@ -1757,7 +1861,7 @@ class TablePage extends LitElement {
         ${!sideEmpty
           ? html`
               <div class="slot-side">
-                ${this.panes.chat ? html`<chat-pane></chat-pane>` : ""}
+                ${this.panes.chat ? html`<chat-pane .messages=${this._chatLog}></chat-pane>` : ""}
                 ${this.panes.stats
                   ? html`<stats-pane .prompt=${this._prompt} .tileStyle=${this.tileStyle}></stats-pane>`
                   : ""}
@@ -2917,6 +3021,8 @@ class MahjongApp extends LitElement {
         } else if (frame.kind === "PROMPT") {
           pane.setPrompt(frame);
           audioCues.play(cueForPrompt(frame)); // FB-06: escalating claim cue
+        } else if (frame.kind === "CHAT_MESSAGE") {
+          tablePage?.addChatMessage(frame); // Spec 38: table chat
         } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {
           pane.showIllegalBanner(frame.message ?? "Server rejected that action — try again.");
         } else if (frame.kind === "ERROR" && frame.code === "humans_not_ready") {
@@ -2960,6 +3066,15 @@ class MahjongApp extends LitElement {
           this._conn.send({ kind: "READY", table_id: this._attachedTableId });
         } catch (err) {
           console.warn("READY send failed:", err);
+        }
+      });
+      // Spec 38: chat-send bubbles composed from <chat-pane> through
+      // <table-page>; listen at the shell, where the connection lives.
+      this.addEventListener("chat-send", (e) => {
+        try {
+          this._conn.send({ kind: "CHAT", text: e.detail.text });
+        } catch (err) {
+          console.warn("CHAT send failed:", err);
         }
       });
       this._conn.connect();
