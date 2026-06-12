@@ -183,6 +183,7 @@ class GamePane extends LitElement {
     ownSeat: { state: true },
     tileStyle: { type: String },
     viewMode: { type: String },
+    discardLayout: { type: String },
     frames: { state: true },
     showLog: { state: true },
     currentPrompt: { state: true },
@@ -618,6 +619,23 @@ class GamePane extends LitElement {
         border-radius: 0.15em;
         padding: 0 0.1em;
       }
+      /* Per-player discard rows (Spec 40, the default): one row per seat in
+       * seat order, each that player's discards. */
+      .mv-drows { padding: 0.25rem 0; }
+      .mv-drow {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.15rem 0.6rem;
+        padding: 0.1rem 0;
+      }
+      .mv-drow-label {
+        color: var(--fg-dim);
+        min-width: 11ch;
+        font-size: 0.85em;
+      }
+      .mv-drow-tiles { line-height: 1.6; }
+      .mv-drow-tiles .tile { font-size: 1.2em; }
       /* Your own block: roster head + the large concealed hand. */
       .mv-own {
         border-top: 1px solid var(--border);
@@ -680,6 +698,16 @@ class GamePane extends LitElement {
     if (!seatView?.terminal) this.readySent = false;
     this.seatView = seatView;
     this.ownSeat = ownSeat;
+    // The live table header (round/wall/hand) lives in <table-page>, which
+    // doesn't hold the view. Every view update funnels through here (ATTACHED,
+    // EVENT, HAND_END), so this is the single seam to keep the header current.
+    this.dispatchEvent(
+      new CustomEvent("view-changed", {
+        bubbles: true,
+        composed: true,
+        detail: { view: seatView },
+      }),
+    );
   }
 
   _submitReady() {
@@ -869,6 +897,7 @@ class GamePane extends LitElement {
       ? renderFn(this.seatView, this.ownSeat, {
           tileStyle: this.tileStyle,
           selectedTile: this.selectedTile,
+          discardLayout: this.discardLayout,
         })
       : null;
     const pinwheel =
@@ -1111,6 +1140,85 @@ class StatsPane extends LitElement {
 }
 
 customElements.define("stats-pane", StatsPane);
+
+// --- <score-pane> (Spec 40: running match scoreboard) ---------------------
+//
+// One cumulative line graph per seat across the match's completed hands, plus
+// each seat's current running total. Fed the live view by <table-page>; reads
+// the server-authoritative `match_scores` block (cumulative + per-hand series)
+// and reuses the profile page's renderScoreGraph. Empty until the first hand
+// completes (no series points yet).
+const _WIND_INITIAL = { F1: "E", F2: "S", F3: "W", F4: "N" };
+
+class ScorePane extends LitElement {
+  static properties = {
+    view: { attribute: false },
+  };
+
+  static styles = [
+    paneChromeStyles,
+    css`
+      .sp-empty { color: var(--fg-dim); padding: 0.5rem 0; }
+      .sp-player { margin-bottom: 0.6rem; }
+      .sp-head { display: flex; justify-content: space-between; color: var(--accent); }
+      .sp-total.pos { color: var(--accent); }
+      .sp-total.neg { color: var(--accent-red); }
+      .sp-graph {
+        white-space: pre;
+        line-height: 1.05;
+        color: var(--fg-dim);
+        margin-top: 0.1rem;
+      }
+    `,
+  ];
+
+  constructor() {
+    super();
+    this.view = null;
+  }
+
+  _label(seat) {
+    const sv = (this.view?.seats ?? []).find((s) => s.seat === seat);
+    const name = sv?.name ?? `Seat ${seat + 1}`;
+    const wind = _WIND_INITIAL[sv?.seat_wind] ?? "";
+    const bot = sv?.is_bot ? " ·bot" : "";
+    return wind ? `${name}${bot} (${wind})` : `${name}${bot}`;
+  }
+
+  render() {
+    const ms = this.view?.match_scores;
+    const hasData = ms && Array.isArray(ms.series) && ms.series.length > 0;
+    const close = () =>
+      this.dispatchEvent(
+        new CustomEvent("pane-close", {
+          bubbles: true,
+          composed: true,
+          detail: { pane: "score" },
+        }),
+      );
+    return html`
+      <div class="pane">
+        ${paneHeader("Scores", "Alt+P", close)}
+        ${!hasData
+          ? html`<div class="sp-empty">(no completed hands yet — standings appear after the first hand)</div>`
+          : [0, 1, 2, 3].map((seat) => {
+              const total = ms.cumulative?.[seat] ?? 0;
+              const series = ms.series.map((row) => ({ cumulative: row[seat] ?? 0 }));
+              const cls = total > 0 ? "pos" : total < 0 ? "neg" : "";
+              return html`<div class="sp-player">
+                <div class="sp-head">
+                  <span>${this._label(seat)}</span>
+                  <span class="sp-total ${cls}">${total > 0 ? `+${total}` : total}</span>
+                </div>
+                <div class="sp-graph">${renderScoreGraph(series, { width: 34, height: 6 })}</div>
+              </div>`;
+            })}
+      </div>
+    `;
+  }
+}
+
+customElements.define("score-pane", ScorePane);
 
 // --- <spectator-pane> (stub) --------------------------------------------
 
@@ -1703,20 +1811,32 @@ const PANE_HOTKEYS = {
   KeyC: "chat",
   KeyS: "stats",
   KeyW: "spectator",
+  KeyP: "score", // Spec 40: running scoreboard widget
 };
+
+// Round (prevailing) wind label for the table header. Engine encodes winds as
+// F1..F4; mirror render.js's WIND_NAME without exporting it across modules.
+const ROUND_WIND_NAME = { F1: "East", F2: "South", F3: "West", F4: "North" };
 
 class TablePage extends LitElement {
   static properties = {
     panes: { type: Object },
     tileStyle: { type: String },
     viewMode: { type: String },
+    discardLayout: { type: String },
+    tableId: {},                  // attached table id, for the header label
     _chatLog: { state: true },
     _chatUnread: { state: true },
     _prompt: { state: true },
+    _headerView: { state: true }, // latest seatView, for the live header
   };
 
   static styles = css`
     :host { display: block; }
+    /* A custom element with an explicit :host display ignores the UA [hidden]
+       rule, so the lobby's ?hidden never took effect — the table header bled
+       through. Restore it. */
+    :host([hidden]) { display: none; }
 
     .table-header {
       color: var(--accent);
@@ -1732,45 +1852,44 @@ class TablePage extends LitElement {
     .table-header .panes-indicator .always-on { color: var(--accent-red); }
     .table-header .panes-indicator .unread { color: var(--accent-red); }
 
-    .grid {
-      display: grid;
-      gap: 0.75rem;
-      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-      grid-template-areas:
-        "game side"
-        "spectator spectator";
-    }
-    /* When the right column has no panes, the side column collapses. */
-    .grid.no-side {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-areas:
-        "game"
-        "spectator";
-    }
-    .grid.no-spectator { grid-template-areas: "game side"; }
-    .grid.no-side.no-spectator { grid-template-areas: "game"; }
-
-    .slot-game { grid-area: game; }
+    /* Spec 40 layout: chat lives in a narrow side column (no longer a third of
+       the board); stats + score panes stack *under* the game pane full-width.
+       Flex (not grid) so empty regions collapse without area juggling. */
+    .table-body { display: flex; flex-direction: column; gap: 0.75rem; }
+    .main-row { display: flex; gap: 0.75rem; align-items: flex-start; }
+    .slot-game { flex: 1 1 auto; min-width: 0; }
     .slot-side {
-      grid-area: side;
+      flex: 0 0 28ch;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
     }
-    .slot-spectator { grid-area: spectator; }
+    .under-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-start;
+    }
+    .under-row > * { flex: 1 1 320px; min-width: 0; }
+    .slot-spectator { width: 100%; }
   `;
 
   constructor() {
     super();
-    this.panes = { chat: false, stats: false, spectator: false };
+    this.panes = { chat: false, stats: false, score: false, spectator: false };
     this.tileStyle = "ascii";
     this._chatLog = [];
     this._chatUnread = false;
     this._prompt = null;
+    this._headerView = null;
     this._onKeydown = this._handleKeydown.bind(this);
     this._onPaneClose = this._handlePaneClose.bind(this);
     this._onPromptChanged = (e) => {
       this._prompt = e.detail?.prompt ?? null;
+    };
+    this._onViewChanged = (e) => {
+      this._headerView = e.detail?.view ?? null;
     };
   }
 
@@ -1794,12 +1913,15 @@ class TablePage extends LitElement {
     this.addEventListener("pane-close", this._onPaneClose);
     // Spec 37: mirror the game-pane's live prompt into the stats pane.
     this.addEventListener("prompt-changed", this._onPromptChanged);
+    // Spec 40: keep the table header (round/wall/hand) current.
+    this.addEventListener("view-changed", this._onViewChanged);
   }
 
   disconnectedCallback() {
     window.removeEventListener("keydown", this._onKeydown);
     this.removeEventListener("pane-close", this._onPaneClose);
     this.removeEventListener("prompt-changed", this._onPromptChanged);
+    this.removeEventListener("view-changed", this._onViewChanged);
     super.disconnectedCallback();
   }
 
@@ -1828,6 +1950,20 @@ class TablePage extends LitElement {
     );
   }
 
+  // Live table status line (Spec 40). Reads the latest seatView; before the
+  // first snapshot arrives it shows the table id with placeholders so the
+  // header never reads as a stale "demo" row.
+  _renderHeaderInfo() {
+    const v = this._headerView;
+    const table = this.tableId != null && this.tableId !== "" ? this.tableId : "—";
+    const round = v ? (ROUND_WIND_NAME[v.round_wind] ?? v.round_wind ?? "—") : "—";
+    const hand = v ? (v.hand_index ?? 0) + 1 : "—";
+    const wall = v?.wall?.remaining_count ?? "—";
+    return html`<span
+      >Table ${table}  ·  Hand ${hand}  ·  Round ${round}  ·  Wall ${wall}</span
+    >`;
+  }
+
   _paneIndicator(label, isOn) {
     return html`<span class=${isOn ? "on" : ""}>${label}</span>`;
   }
@@ -1837,36 +1973,36 @@ class TablePage extends LitElement {
   }
 
   render() {
-    const sideEmpty = !this.panes.chat && !this.panes.stats;
-    const spectatorOff = !this.panes.spectator;
-    const gridClasses = ["grid"];
-    if (sideEmpty) gridClasses.push("no-side");
-    if (spectatorOff) gridClasses.push("no-spectator");
+    const chatOn = this.panes.chat;
+    const underOn = this.panes.stats || this.panes.score;
 
     return html`
       <div class="table-header">
-        <span>Table — demo  ·  Hand —/—  ·  Wind —  ·  Wall —</span>
+        ${this._renderHeaderInfo()}
         <span class="panes-indicator">
           Panes:
           ${this._alwaysOnIndicator("[G]")}
           <span class=${this.panes.chat ? "on" : this._chatUnread ? "unread" : ""}>C</span
           >·${this._paneIndicator("S", this.panes.stats)}·${this._paneIndicator(
-            "W",
-            this.panes.spectator,
-          )}
+            "P",
+            this.panes.score,
+          )}·${this._paneIndicator("W", this.panes.spectator)}
         </span>
       </div>
-      <div class=${gridClasses.join(" ")}>
-        <div class="slot-game"><game-pane .tileStyle=${this.tileStyle} .viewMode=${this.viewMode}></game-pane></div>
-        ${!sideEmpty
-          ? html`
-              <div class="slot-side">
-                ${this.panes.chat ? html`<chat-pane .messages=${this._chatLog}></chat-pane>` : ""}
-                ${this.panes.stats
-                  ? html`<stats-pane .prompt=${this._prompt} .tileStyle=${this.tileStyle}></stats-pane>`
-                  : ""}
-              </div>
-            `
+      <div class="table-body">
+        <div class="main-row">
+          <div class="slot-game"><game-pane .tileStyle=${this.tileStyle} .viewMode=${this.viewMode} .discardLayout=${this.discardLayout}></game-pane></div>
+          ${chatOn
+            ? html`<div class="slot-side"><chat-pane .messages=${this._chatLog}></chat-pane></div>`
+            : ""}
+        </div>
+        ${underOn
+          ? html`<div class="under-row">
+              ${this.panes.stats
+                ? html`<stats-pane .prompt=${this._prompt} .tileStyle=${this.tileStyle}></stats-pane>`
+                : ""}
+              ${this.panes.score ? html`<score-pane .view=${this._headerView}></score-pane>` : ""}
+            </div>`
           : ""}
         ${this.panes.spectator
           ? html`<div class="slot-spectator"><spectator-pane></spectator-pane></div>`
@@ -2445,6 +2581,18 @@ function loadInitialViewMode() {
   return "minimal"; // minimal is the default play view
 }
 
+// Spec 40: discard layout — per-player rows (default) vs one combined pond.
+const DISCARD_LAYOUT_STORAGE_KEY = "mahjong-discard-layout";
+function loadInitialDiscardLayout() {
+  try {
+    const stored = localStorage.getItem(DISCARD_LAYOUT_STORAGE_KEY);
+    if (stored === "rows" || stored === "pond") return stored;
+  } catch {
+    // ignore.
+  }
+  return "rows"; // per-player rows in seat order is the default
+}
+
 // FB-06: sound on by default; persisted as "off" when the user mutes.
 function loadInitialMuted() {
   try {
@@ -2506,6 +2654,7 @@ class MahjongApp extends LitElement {
     theme: { state: true },
     tileStyle: { state: true },
     viewMode: { state: true },
+    discardLayout: { state: true },
     muted: { state: true },
     // Auth state — driven by HELLO.features and AUTH_RESPONSE.
     _authRequired: { state: true }, // bool: server sent features: ["auth"]
@@ -2653,10 +2802,11 @@ class MahjongApp extends LitElement {
     super();
     this.route = "table"; // walking skeleton: go straight to the table page
     // Pane visibility lives here so it survives route transitions.
-    this.panes = { chat: false, stats: false, spectator: false };
+    this.panes = { chat: false, stats: false, score: false, spectator: false };
     this.theme = loadInitialTheme();
     this.tileStyle = loadInitialTileStyle();
     this.viewMode = loadInitialViewMode();
+    this.discardLayout = loadInitialDiscardLayout();
     this.muted = loadInitialMuted();
     audioCues.setMuted(this.muted);
     this._conn = null;
@@ -2748,6 +2898,9 @@ class MahjongApp extends LitElement {
     } else if (e.code === "KeyU") {
       e.preventDefault();
       this._toggleTileStyle();
+    } else if (e.code === "KeyD") {
+      e.preventDefault();
+      this._toggleDiscardLayout();
     } else if (e.code === "Comma") {
       e.preventDefault();
       this._settingsOpen = !this._settingsOpen;
@@ -2767,6 +2920,15 @@ class MahjongApp extends LitElement {
     this.tileStyle = this.tileStyle === "ascii" ? "unicode" : "ascii";
     try {
       localStorage.setItem(TILE_STYLE_STORAGE_KEY, this.tileStyle);
+    } catch {
+      // ignore — non-fatal.
+    }
+  }
+
+  _toggleDiscardLayout() {
+    this.discardLayout = this.discardLayout === "rows" ? "pond" : "rows";
+    try {
+      localStorage.setItem(DISCARD_LAYOUT_STORAGE_KEY, this.discardLayout);
     } catch {
       // ignore — non-fatal.
     }
@@ -2801,7 +2963,9 @@ class MahjongApp extends LitElement {
       "tile-style": this.tileStyle,
       "pane-chat": this.panes.chat ? "on" : "off",
       "pane-stats": this.panes.stats ? "on" : "off",
+      "pane-score": this.panes.score ? "on" : "off",
       "pane-spectator": this.panes.spectator ? "on" : "off",
+      "discard-layout": this.discardLayout,
       sound: this.muted ? "off" : "on",
     };
   }
@@ -2816,7 +2980,9 @@ class MahjongApp extends LitElement {
       this._toggleTileStyle();
     } else if (key === "sound") {
       this._toggleSound();
-    } else if (key === "pane-chat" || key === "pane-stats" || key === "pane-spectator") {
+    } else if (key === "discard-layout") {
+      this._toggleDiscardLayout();
+    } else if (key.startsWith("pane-")) {
       // Route through table-page's _togglePane so its `panes` copy and ours
       // stay in sync via the existing `panes-changed` event (single source).
       const pane = key.slice("pane-".length);
@@ -3528,6 +3694,8 @@ class MahjongApp extends LitElement {
         .panes=${this.panes}
         .tileStyle=${this.tileStyle}
         .viewMode=${this.viewMode}
+        .discardLayout=${this.discardLayout}
+        .tableId=${this._attachedTableId}
         ?hidden=${showLobby || showAuth || showProfile || showResuming || showReplay}
       ></table-page>
       ${this._settingsOpen

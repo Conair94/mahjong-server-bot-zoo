@@ -66,20 +66,28 @@ def _view(
     }
 
 
-async def _render_minimal(page: Page, server: FakeWireServer, view: dict[str, Any], own_seat: int) -> None:
+async def _render_minimal(
+    page: Page,
+    server: FakeWireServer,
+    view: dict[str, Any],
+    own_seat: int,
+    discard_layout: str | None = None,
+) -> None:
     await page.goto(server.url)
     await page.wait_for_load_state("domcontentloaded")
     await page.evaluate(
-        """async ({ view, own_seat }) => {
+        """async ({ view, own_seat, discardLayout }) => {
           const lit = await import('lit');
           const { renderMinimal } = await import('/static/render.js');
           const root = document.createElement('div');
           root.id = '__mv_root';
           document.body.appendChild(root);
-          lit.render(renderMinimal(view, own_seat, { tileStyle: "ascii" }), root);
+          const opts = { tileStyle: "ascii" };
+          if (discardLayout) opts.discardLayout = discardLayout;
+          lit.render(renderMinimal(view, own_seat, opts), root);
           return null;
         }""",
-        {"view": view, "own_seat": own_seat},
+        {"view": view, "own_seat": own_seat, "discardLayout": discard_layout},
     )
 
 
@@ -114,13 +122,16 @@ async def test_combined_pond_in_arrival_order_latest_marked(
     page: Page, fake_wire_server: FakeWireServer
 ) -> None:
     """The pond renders ``discard_pond`` tiles in order; the last carries
-    ``.pond-latest``."""
+    ``.pond-latest``. (Pond is now opt-in via discardLayout; rows is default —
+    Spec 40.)"""
     pond = [
         {"seat": 0, "tile": "W3"},
         {"seat": 1, "tile": "B5"},
         {"seat": 2, "tile": "T7"},
     ]
-    await _render_minimal(page, fake_wire_server, _view(discard_pond=pond), own_seat=0)
+    await _render_minimal(
+        page, fake_wire_server, _view(discard_pond=pond), own_seat=0, discard_layout="pond"
+    )
     tokens = cast(
         list[str],
         await page.evaluate(
@@ -141,6 +152,37 @@ async def test_combined_pond_in_arrival_order_latest_marked(
         ),
     )
     assert latest_is_last
+
+
+async def test_default_layout_is_per_player_rows(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Spec 40: with no discardLayout option, discards render as one row per
+    seat (in seat order), not the combined pond."""
+    view = _view(own_seat=0)
+    view["seats"][0]["discards"] = ["W3"]
+    view["seats"][1]["discards"] = ["B5", "T7"]
+    await _render_minimal(page, fake_wire_server, view, own_seat=0)  # default → rows
+
+    row_count = cast(
+        int,
+        await page.evaluate(
+            "() => document.getElementById('__mv_root').querySelectorAll('.mv-drow').length"
+        ),
+    )
+    assert row_count == 4, row_count  # one row per seat, seat order
+
+    # The combined pond must NOT render in the default layout.
+    pond_count = cast(
+        int,
+        await page.evaluate(
+            "() => document.getElementById('__mv_root').querySelectorAll('.mv-pond-tiles').length"
+        ),
+    )
+    assert pond_count == 0, pond_count
+
+    rows_text = await _text_of(page, ".mv-drows")
+    assert "Alice" in rows_text and "Bob" in rows_text, rows_text
 
 
 async def test_turn_banner_marks_your_turn(
