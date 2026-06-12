@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from mahjong.analysis import prompt_stats, remaining_counts
+from mahjong.analysis import prompt_stats, remaining_counts, stats_for_prompt
 from mahjong.engine.rulesets import MANIFEST
 from mahjong.engine.tiles import tile_sort_key
 
@@ -258,3 +258,27 @@ def test_payload_is_deterministic_and_json_safe() -> None:
     a = prompt_stats(_view(hand14), 0, legal, "DISCARD")
     b = prompt_stats(_view(hand14), 0, legal, "DISCARD")
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+# --- Fixture 11: the live binding is gated to DISCARD prompts ---------------
+
+
+def _prompt_payload(view: dict[str, Any], legal: list[dict[str, Any]], kind: str) -> dict[str, Any]:
+    """The seat-port Prompt shape `stats_for_prompt` consumes."""
+    return {"view": view, "legal_actions": legal, "kind": kind}
+
+
+def test_stats_for_prompt_returns_payload_on_discard() -> None:
+    hand14 = sorted([*TENPAI_A, "J3"], key=tile_sort_key)
+    legal = [{"type": "PLAY", "tile": t} for t in sorted(set(hand14), key=tile_sort_key)]
+    out = stats_for_prompt(_prompt_payload(_view(hand14), legal, "DISCARD"), 0)
+    assert out is not None
+    assert "discards" in out
+
+
+def test_stats_for_prompt_is_none_off_discard() -> None:
+    """A 13-tile CLAIM hand has no single discard to rank — no stats surface
+    (Spec 37 revision: discard-only)."""
+    view = _view(TENPAI_A, last_discard={"seat": 1, "tile": "J3"}, phase="CLAIM_WINDOW")
+    legal = [{"type": "PASS"}, {"type": "PENG", "tile": "B6"}]
+    assert stats_for_prompt(_prompt_payload(view, legal, "CLAIM"), 0) is None

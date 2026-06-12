@@ -37,7 +37,7 @@ import {
   tileIndexForKeyCode,
   isClaimAvailable,
 } from "/static/prompt.js";
-import { renderStatsStrip, renderStatsDetail } from "/static/stats.js";
+import { renderStatsDetail } from "/static/stats.js";
 import { SETTINGS } from "/static/settings.js";
 import "/static/feedback.js";
 
@@ -415,31 +415,6 @@ class GamePane extends LitElement {
         border: none;
         padding: 0;
       }
-
-      /* --- Hand-stats strip (Spec 37). Renders when the current PROMPT
-       * carries a stats payload; tracks the selected discard candidate. */
-      .stats-strip {
-        margin: 0.5rem 0 0;
-        padding: 0.35rem 0.75rem;
-        border: 1px dashed var(--fg-dim);
-        border-left: 3px solid var(--accent);
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.4rem 1.1rem;
-        align-items: baseline;
-        font-size: 0.95em;
-      }
-      .stats-strip .lead { color: var(--accent); white-space: nowrap; }
-      .stats-strip .accept { color: var(--fg-dim); white-space: nowrap; }
-      .stats-strip .best-hint { color: var(--accent-red); white-space: nowrap; }
-      .stats-strip .stat-tile { white-space: nowrap; margin-right: 0.5rem; }
-      .stats-strip .stat-tile .fan { color: var(--fg-dim); }
-      .stats-strip .stat-tile.sub-floor { opacity: 0.55; }
-      .stats-strip .stat-tile.sub-floor .floor-mark { color: var(--error); margin-left: 0.15rem; }
-      .stats-strip .stat-tile.dead { text-decoration: line-through; opacity: 0.55; }
-      .stats-strip .claim-option.improves { color: var(--accent); white-space: nowrap; }
-      .stats-strip .claim-option.neutral { color: var(--fg-dim); white-space: nowrap; }
-      .stats-strip .more { color: var(--fg-dim); }
 
       /* --- Claim-available alert (§22.2). When a CLAIM_WINDOW prompt offers
        * a real (non-PASS) option, the bar pulses and a chip pins to the pane
@@ -948,14 +923,6 @@ class GamePane extends LitElement {
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
           : ""}
-        ${this.currentPrompt
-          ? renderStatsStrip(
-              this.currentPrompt,
-              this.selectedTile,
-              this.seatView?.seats?.[this.ownSeat]?.concealed ?? [],
-              { tileStyle: this.tileStyle },
-            )
-          : ""}
         ${this.currentPrompt ? renderPromptBar(this.currentPrompt, this.chiChoosing) : ""}
 
         <button class="log-toggle" @click=${this._toggleLog}>
@@ -1094,6 +1061,8 @@ class StatsPane extends LitElement {
   static properties = {
     prompt: { attribute: false },
     tileStyle: { type: String },
+    // Per-table opt-out (snapshot `stats_enabled`); false => "stats disabled".
+    statsEnabled: { type: Boolean },
   };
 
   static styles = [
@@ -1117,7 +1086,6 @@ class StatsPane extends LitElement {
       .stat-tile.sub-floor { opacity: 0.55; }
       .stat-tile.sub-floor .floor-mark { color: var(--error); margin-left: 0.15rem; }
       .stat-tile.dead { text-decoration: line-through; opacity: 0.55; }
-      .stats-hand .lead { color: var(--accent); margin-bottom: 0.25rem; }
       .total { color: var(--fg-dim); }
       .more { color: var(--fg-dim); }
     `,
@@ -1127,13 +1095,14 @@ class StatsPane extends LitElement {
     super();
     this.prompt = null;
     this.tileStyle = "ascii";
+    this.statsEnabled = true;
   }
 
   render() {
     return html`
       <div class="pane">
         ${paneHeader("Hand stats", "Alt+S", () => this.dispatchEvent(new CustomEvent("pane-close", { bubbles: true, composed: true, detail: { pane: "stats" } })))}
-        ${renderStatsDetail(this.prompt, { tileStyle: this.tileStyle })}
+        ${renderStatsDetail(this.prompt, { tileStyle: this.tileStyle }, this.statsEnabled)}
       </div>
     `;
   }
@@ -1268,6 +1237,7 @@ class LobbyView extends LitElement {
     customMax: { state: true },
     decideTimeout: { state: true },
     timeoutsEnabled: { state: true },
+    statsEnabled: { state: true },       // Spec 37 per-table stats opt-out
   };
 
   static styles = css`
@@ -1451,6 +1421,9 @@ class LobbyView extends LitElement {
     // Untimed by default: casual home play should wait for a human as long as
     // they like.  The creator opts into a turn timer via the prominent toggle.
     this.timeoutsEnabled = false;
+    // Decision-time stats (Spec 37) are on by default; the creator can disable
+    // the Alt+S analysis pane for the whole table ("no aids" games).
+    this.statsEnabled = true;
   }
 
   _emit(name, detail) {
@@ -1462,7 +1435,10 @@ class LobbyView extends LitElement {
   // message minimal and lets the server apply its own defaults).
   _buildOptions() {
     const atDefault =
-      this.pacingPreset === "normal" && this.decideTimeout === 60 && this.timeoutsEnabled;
+      this.pacingPreset === "normal" &&
+      this.decideTimeout === 60 &&
+      this.timeoutsEnabled &&
+      this.statsEnabled;
     if (atDefault) return null;
     const options = {};
     options.bot_pacing =
@@ -1471,6 +1447,8 @@ class LobbyView extends LitElement {
         : this.pacingPreset;
     options.timeouts_enabled = this.timeoutsEnabled;
     if (this.timeoutsEnabled) options.decide_timeout_seconds = Number(this.decideTimeout);
+    // Only send stats_enabled when opting out — absent means "on" server-side.
+    if (!this.statsEnabled) options.stats_enabled = false;
     return options;
   }
 
@@ -1779,6 +1757,22 @@ class LobbyView extends LitElement {
               : "off — players take as long as they like"}
           </span>
         </div>
+        <div class="pick-row">
+          <label class="timer-toggle">
+            <input
+              type="checkbox"
+              .checked=${!this.statsEnabled}
+              ?disabled=${!!this.busy}
+              @change=${(e) => (this.statsEnabled = !e.target.checked)}
+            />
+            Disable stats panel
+          </label>
+          <span class="pick-label">
+            ${this.statsEnabled
+              ? "Alt+S shanten/waits analysis available to players"
+              : "no hand-analysis aids in this game"}
+          </span>
+        </div>
         ${this._renderAdvancedOptions()}
         <div class="lobby-actions">
           <button
@@ -1999,7 +1993,11 @@ class TablePage extends LitElement {
         ${underOn
           ? html`<div class="under-row">
               ${this.panes.stats
-                ? html`<stats-pane .prompt=${this._prompt} .tileStyle=${this.tileStyle}></stats-pane>`
+                ? html`<stats-pane
+                    .prompt=${this._prompt}
+                    .tileStyle=${this.tileStyle}
+                    .statsEnabled=${this._headerView?.stats_enabled !== false}
+                  ></stats-pane>`
                 : ""}
               ${this.panes.score ? html`<score-pane .view=${this._headerView}></score-pane>` : ""}
             </div>`

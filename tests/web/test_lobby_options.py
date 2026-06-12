@@ -82,6 +82,33 @@ async def test_timeouts_disabled_omits_decide_timeout(
     assert "decide_timeout_seconds" not in opts
 
 
+async def test_stats_disabled_builds_option(page: Page, fake_wire_server: FakeWireServer) -> None:
+    """Checking 'Disable stats panel' (statsEnabled=false) puts stats_enabled
+    on the wire; an enabled table omits the key (server default is on)."""
+    off = await _build_options(
+        page,
+        fake_wire_server,
+        {
+            "pacingPreset": "normal",
+            "decideTimeout": 60,
+            "timeoutsEnabled": True,
+            "statsEnabled": False,
+        },
+    )
+    assert off["stats_enabled"] is False
+    on = await _build_options(
+        page,
+        fake_wire_server,
+        {
+            "pacingPreset": "slow",
+            "decideTimeout": 60,
+            "timeoutsEnabled": True,
+            "statsEnabled": True,
+        },
+    )
+    assert "stats_enabled" not in on
+
+
 async def test_default_is_untimed(page: Page, fake_wire_server: FakeWireServer) -> None:
     """A freshly-mounted lobby (no state override) defaults to NO turn timer, so
     new tables wait for humans indefinitely unless the creator opts in."""
