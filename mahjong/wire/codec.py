@@ -164,6 +164,8 @@ class Profile(TypedDict):
     stats: dict[str, Any]
     recent: list[dict[str, Any]]
     series: list[dict[str, Any]]
+    # Spec 39: full achievement catalog with earned/progress, derive-at-read.
+    achievements: NotRequired[list[dict[str, Any]]]
 
 
 class GetHistory(TypedDict):

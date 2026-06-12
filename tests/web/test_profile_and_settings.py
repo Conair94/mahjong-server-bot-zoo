@@ -281,3 +281,41 @@ async def test_profile_frame_switches_view_and_renders(
     assert result["view"] == "profile"
     assert result["hasPage"] is True
     assert "Connor" in result["text"]
+
+
+# ---------------------------------------------------------------------------
+# Achievements (Spec 39 fixture 7 — client leg)
+# ---------------------------------------------------------------------------
+
+
+async def test_profile_renders_achievements_earned_vs_progress(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Earned entries render bright with a filled star; unearned ones carry
+    an ASCII progress bar toward target. Wire order preserved."""
+    prof = dict(_PROFILE)
+    prof["achievements"] = [
+        {"id": "first-win", "name": "First Blood", "desc": "Win a hand",
+         "earned": True, "progress": 1, "target": 1},
+        {"id": "wins-10", "name": "Seasoned", "desc": "Win 10 hands",
+         "earned": False, "progress": 4, "target": 10},
+    ]
+    text = await _mount_profile(page, fake_wire_server, prof)
+    assert "Achievements" in text
+    assert "★" in text and "First Blood" in text
+    assert "☆" in text and "Seasoned" in text
+    assert "4/10" in text
+    assert "█" in text and "░" in text  # the progress bar
+
+    earned = await page.evaluate(
+        "document.getElementById('__pp').shadowRoot.querySelectorAll('.ach.earned').length"
+    )
+    assert earned == 1
+
+
+async def test_profile_without_achievements_field_renders_no_section(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Old/test servers omit the field — no section, no crash."""
+    text = await _mount_profile(page, fake_wire_server, _PROFILE)
+    assert "Achievements" not in text

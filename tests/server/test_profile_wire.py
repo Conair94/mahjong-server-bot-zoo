@@ -127,6 +127,13 @@ async def test_get_profile_returns_stats_for_authed_account(tmp_path: Path) -> N
             # series is cumulative, ascending by time
             cums = [pt["cumulative"] for pt in prof["series"]]
             assert cums == [24, 48]
+            # Spec 39: achievements ride the same PROFILE frame, derive-at-read.
+            achievements = {a["id"]: a for a in prof["achievements"]}
+            assert achievements["first-win"]["earned"] is True
+            assert achievements["streak-3"]["progress"] == 2  # two straight wins
+            assert achievements["wins-10"] == {
+                **achievements["wins-10"], "earned": False, "progress": 2, "target": 10,
+            }
     finally:
         await orch.close()
         p.close()

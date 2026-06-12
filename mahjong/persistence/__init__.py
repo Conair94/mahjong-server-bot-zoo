@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mahjong.persistence import accounts as _accounts
+from mahjong.persistence import achievements as _achievements
 from mahjong.persistence import hands as _hands
 from mahjong.persistence import invites as _invites
 from mahjong.persistence import rebuild as _rebuild
@@ -332,6 +333,9 @@ class Persistence:
 
     def account_stats(self, account_id: int) -> AccountStats:
         return _hands.account_stats(self._conn, account_id)
+
+    def account_achievements(self, account_id: int) -> list[dict[str, object]]:
+        return _achievements.account_achievements(self._conn, account_id)
 
     def account_score_series(
         self, account_id: int, *, limit: int = 200

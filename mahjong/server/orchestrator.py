@@ -814,6 +814,8 @@ class MultiTableOrchestrator:
                 {"ended_at_ms": pt.ended_at_ms, "cumulative": pt.cumulative}
                 for pt in series
             ],
+            # Spec 39: derive-at-read, additive field (old clients ignore it).
+            "achievements": p.account_achievements(account_id),
         }
 
     # --- history + replay (account-records-replay.md, FB-04) -----------------
