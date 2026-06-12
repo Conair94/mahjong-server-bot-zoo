@@ -11,11 +11,13 @@
 //   GANG   → G    (EXPOSED / CONCEALED)
 //   BUGANG → B    (GANG with kind=ADDED)
 //   HU     → H
-//   PLAY   → tile keys 1..9 0 - = [ ]  → concealed indices 0..13
-//            Arrow Left/Right nudge the selected index by one slot.
-//            Enter confirms PLAY for the selected tile (or, if no
-//            explicit selection, the last tile in concealed — the
-//            just-drawn one during DISCARD phase).
+//   PLAY   → tile keys 1..9 0 - = [ ]  → *display* positions 0..13 (the
+//            renderer pulls the just-drawn tile out of sort order to the
+//            end; the keys follow what's on screen — FB-18).
+//            Arrow Left/Right nudge the selection by one display slot.
+//            Enter confirms PLAY for the selected tile (or, with no
+//            explicit selection, the just-drawn tile from the view's
+//            authoritative `last_drawn` slot; no draw → no-op).
 
 import { html } from "lit";
 
@@ -49,6 +51,36 @@ export function tileIndexForKeyCode(code) {
   return idx === undefined ? null : idx;
 }
 
+/**
+ * The hand's *display* order: engine-sorted concealed with the just-drawn
+ * tile pulled out and appended last (mirroring the physical-table habit of
+ * keeping the draw separate). Single source of truth shared by the renderer
+ * and the keystroke layer so "the Nth tile on screen" and "the Nth tile key"
+ * can never disagree (FB-18).
+ *
+ * `lastDrawn` is the view's `{seat, tile}` slot (or null); `ownSeat` gates it
+ * to the owning seat. Returns [{token, origIdx, isJustDrawn}], where
+ * `origIdx` indexes the raw `concealed` array (the engine-facing identity a
+ * selection is stored as).
+ */
+export function handDisplayOrder(concealed, lastDrawn, ownSeat) {
+  const tiles = concealed ?? [];
+  const hasJustDrawn =
+    lastDrawn != null && lastDrawn.seat === ownSeat && lastDrawn.tile != null;
+  // findIndex removes exactly one copy when the hand holds duplicates.
+  const drawnIdx = hasJustDrawn ? tiles.findIndex((t) => t === lastDrawn.tile) : -1;
+
+  const order = [];
+  tiles.forEach((token, i) => {
+    if (i === drawnIdx) return;
+    order.push({ token, origIdx: i, isJustDrawn: false });
+  });
+  if (drawnIdx >= 0) {
+    order.push({ token: tiles[drawnIdx], origIdx: drawnIdx, isJustDrawn: true });
+  }
+  return order;
+}
+
 export function tileKeyLabel(index) {
   return TILE_KEY_LABELS[index] ?? "?";
 }
@@ -74,10 +106,14 @@ export function keyForAction(action) {
  * Match an action from `prompt.legal_actions` for the given keystroke.
  * Returns `null` if no legal action corresponds.
  *
- * `ownConcealed` is the owning seat's concealed tile list (Tile[]). Used to
- * resolve tile-selection keys and the Enter-confirm shortcut for PLAY.
+ * `ownConcealed` is the owning seat's concealed tile list (Tile[]), used to
+ * resolve an explicit `selectedTile` (a raw index into it). `lastDrawnTile`
+ * is the owning seat's just-drawn tile (or null) — the Enter fallback. The
+ * engine re-sorts concealed after every draw, so `ownConcealed[length-1]` is
+ * the highest-*sorting* tile, not the draw; only the view's `last_drawn`
+ * slot is authoritative (FB-18 / the 8.7.e lesson).
  */
-export function actionForKey(eventCode, prompt, selectedTile, ownConcealed) {
+export function actionForKey(eventCode, prompt, selectedTile, ownConcealed, lastDrawnTile = null) {
   if (!prompt) return null;
   const legal = prompt.legal_actions ?? [];
 
@@ -102,15 +138,16 @@ export function actionForKey(eventCode, prompt, selectedTile, ownConcealed) {
   }
 
   // Enter: confirm PLAY for the currently-selected tile. With no explicit
-  // selection, fall back to the last concealed tile — during DISCARD this is
-  // the just-drawn tile, which is the dominant choice.
+  // selection, fall back to the just-drawn tile (tsumogiri — the dominant
+  // choice during DISCARD). No selection and no draw (e.g. the forced
+  // discard after a claim) → no-op rather than guessing a tile.
   if (eventCode === "Enter") {
-    let idx = selectedTile;
-    if (idx == null && ownConcealed && ownConcealed.length > 0) {
-      idx = ownConcealed.length - 1;
+    let tile = null;
+    if (selectedTile != null) {
+      tile = ownConcealed?.[selectedTile] ?? null;
+    } else if (lastDrawnTile != null) {
+      tile = lastDrawnTile;
     }
-    if (idx == null) return null;
-    const tile = ownConcealed?.[idx];
     if (tile == null) return null;
     return findFirst(legal, (a) => a.type === "PLAY" && a.tile === tile);
   }

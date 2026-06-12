@@ -35,6 +35,7 @@ import {
   actionForKey,
   chiOptions,
   tileIndexForKeyCode,
+  handDisplayOrder,
   isClaimAvailable,
 } from "/static/prompt.js";
 import { renderStatsStrip, renderStatsDetail } from "/static/stats.js";
@@ -794,6 +795,14 @@ class GamePane extends LitElement {
     return Array.isArray(seat?.concealed) ? seat.concealed : [];
   }
 
+  // The own seat's just-drawn tile, from the view's authoritative
+  // `last_drawn` slot (FB-18 — never derived from concealed[-1]; the engine
+  // re-sorts the hand after every draw).
+  _ownLastDrawnTile() {
+    const ld = this.seatView?.last_drawn;
+    return ld != null && ld.seat === this.ownSeat ? (ld.tile ?? null) : null;
+  }
+
   _handleKeydown(e) {
     // Never hijack keystrokes meant for a text field (bug-report box, chat,
     // any input) — Space/H/Enter/letters are game shortcuts, so typing in one
@@ -845,25 +854,49 @@ class GamePane extends LitElement {
 
     // Tile-selection keys set the cursor; arrow keys nudge it; Enter
     // confirms PLAY. All other keys dispatch to actionForKey.
+    //
+    // FB-18: keys and arrows operate in *display* order (the renderer pulls
+    // the just-drawn tile out of sort order to the end), so "the Nth tile on
+    // screen" and "the Nth tile key" always agree. The selection itself is
+    // stored as a raw concealed index (`origIdx`) — the identity the
+    // renderer's .selected cursor and actionForKey resolve against.
     const tileIdx = tileIndexForKeyCode(e.code);
     const concealed = this._ownConcealedTiles();
+    const order = handDisplayOrder(
+      concealed,
+      this.seatView?.last_drawn,
+      this.ownSeat,
+    );
     if (tileIdx !== null) {
-      if (tileIdx >= 0 && tileIdx < concealed.length) {
+      if (tileIdx >= 0 && tileIdx < order.length) {
         e.preventDefault();
-        this.selectedTile = tileIdx;
+        this.selectedTile = order[tileIdx].origIdx;
       }
       return;
     }
     if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
-      if (concealed.length === 0) return;
-      const cur = this.selectedTile ?? concealed.length - 1;
-      const next = e.code === "ArrowLeft" ? Math.max(0, cur - 1) : Math.min(concealed.length - 1, cur + 1);
+      if (order.length === 0) return;
+      const curPos =
+        this.selectedTile == null
+          ? order.length - 1
+          : order.findIndex((o) => o.origIdx === this.selectedTile);
+      const basePos = curPos >= 0 ? curPos : order.length - 1;
+      const nextPos =
+        e.code === "ArrowLeft"
+          ? Math.max(0, basePos - 1)
+          : Math.min(order.length - 1, basePos + 1);
       e.preventDefault();
-      this.selectedTile = next;
+      this.selectedTile = order[nextPos].origIdx;
       return;
     }
 
-    const action = actionForKey(e.code, this.currentPrompt, this.selectedTile, concealed);
+    const action = actionForKey(
+      e.code,
+      this.currentPrompt,
+      this.selectedTile,
+      concealed,
+      this._ownLastDrawnTile(),
+    );
     if (!action) return; // illegal key for this prompt — no-op per spec.
     e.preventDefault();
     this._submitAction(action);

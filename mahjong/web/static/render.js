@@ -34,6 +34,7 @@
 //   the seat blocks stay stacked so wide opponent rows don't fight a grid.
 
 import { html } from "lit";
+import { handDisplayOrder } from "/static/prompt.js";
 
 const WIND_NAME = { F1: "East", F2: "South", F3: "West", F4: "North" };
 
@@ -292,30 +293,11 @@ export function renderOwnConcealedTiles(seat, view, ownSeat, options = {}) {
   if (concealed.length === 0) return emptyMarker();
 
   const selectedIdx = options.selectedTile;
-  const ld = view?.last_drawn;
-  const hasJustDrawn = ld && ld.seat === ownSeat && ld.tile != null;
 
-  // Find first concealed index whose token equals the just-drawn tile —
-  // findIndex correctly removes only one when the hand contains duplicates.
-  let drawnIdx = -1;
-  if (hasJustDrawn) {
-    drawnIdx = concealed.findIndex((t) => t === ld.tile);
-  }
-
-  // Build the rendered order: everything except just-drawn first, then
-  // just-drawn at the end when present.
-  const order = [];
-  concealed.forEach((tok, i) => {
-    if (i === drawnIdx) return;
-    order.push({ token: tok, origIdx: i, isJustDrawn: false });
-  });
-  if (drawnIdx >= 0) {
-    order.push({
-      token: concealed[drawnIdx],
-      origIdx: drawnIdx,
-      isJustDrawn: true,
-    });
-  }
+  // Render order shared with the keystroke layer (FB-18): the just-drawn
+  // tile is pulled out of sort order and appended last, and the tile keys
+  // index this same order, so screen position N and key N always agree.
+  const order = handDisplayOrder(concealed, view?.last_drawn, ownSeat);
 
   // Emit per-tile spans, tracking suit transitions on the way.  No
   // suit-break on the just-drawn tile — it carries .just-drawn instead,
