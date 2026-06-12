@@ -26,7 +26,25 @@ def test_none_options_yields_server_defaults() -> None:
         bot_min_delay_s=5.0,
         bot_max_delay_s=10.0,
         decide_timeouts=DecideTimeouts(60.0, 20.0, 30.0),
+        stats_enabled=True,
     )
+
+
+def test_stats_enabled_defaults_true() -> None:
+    """Absent stats_enabled, or any non-false value, keeps the analyzer on."""
+    assert parse_table_options(None, **_DEFAULTS).stats_enabled is True
+    assert parse_table_options({}, **_DEFAULTS).stats_enabled is True
+    assert parse_table_options({"stats_enabled": True}, **_DEFAULTS).stats_enabled is True
+
+
+def test_stats_enabled_false_disables() -> None:
+    """Only an explicit false opts the table out of decision-time stats."""
+    r = parse_table_options({"stats_enabled": False}, **_DEFAULTS)
+    assert r.stats_enabled is False
+    # Independent of the other knobs.
+    r2 = parse_table_options({"stats_enabled": False, "bot_pacing": "slow"}, **_DEFAULTS)
+    assert r2.stats_enabled is False
+    assert (r2.bot_min_delay_s, r2.bot_max_delay_s) == (15.0, 30.0)
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,10 @@
-"""Spec 37 hand-stats: wire→UI seam for the strip and the Alt+S detail pane.
+"""Spec 37 hand-stats: wire→UI seam for the Alt+S detail pane.
 
-Verification fixtures 11–12 of docs/specs/hand-stats.md. Real PROMPT frames
-through `FakeWireServer` into the real `<mahjong-app>` — never pre-set view
-state (the wire→UI dispatch branch is exactly what regressed before; see the
-test-the-wire-to-ui-seam rule).
+Verification fixtures 13–14 of docs/specs/hand-stats.md (the 2026-06-12
+revision: no inline strip, stats pane only, per-table opt-out). Real PROMPT
+frames through `FakeWireServer` into the real `<mahjong-app>` — never pre-set
+view state (the wire→UI dispatch branch is exactly what regressed before; see
+the test-the-wire-to-ui-seam rule).
 """
 
 from __future__ import annotations
@@ -29,9 +30,11 @@ def _hello() -> dict[str, Any]:
     return {"kind": "HELLO", "seq": 1, "protocol_version": 1, "server_id": "mahjong-test"}
 
 
-def _attached(own_seat: int = 0) -> dict[str, Any]:
+def _attached(own_seat: int = 0, *, stats_enabled: bool | None = None) -> dict[str, Any]:
     state = initial_state(_TEST_RULESET, seed=_TEST_SEED)
     snapshot = cast(dict[str, Any], project(state, own_seat))
+    if stats_enabled is not None:
+        snapshot["stats_enabled"] = stats_enabled
     return {
         "kind": "ATTACHED",
         "seq": 2,
@@ -88,97 +91,28 @@ def _discard_prompt(stats: dict[str, Any] | None) -> dict[str, Any]:
     return frame
 
 
-def _claim_prompt_with_stats() -> dict[str, Any]:
-    return {
-        "kind": "PROMPT",
-        "seq": 3,
-        "table_id": 1,
-        "hand_index": 0,
-        "seat": 0,
-        "phase": "CLAIM_WINDOW",
-        "legal_actions": [
-            {"type": "PASS"},
-            {"type": "PENG", "tile": "B6"},
-        ],
-        "default_action": {"type": "PASS"},
-        "deadline_ms": int(time.time() * 1000) + 30_000,
-        "prompt_id": "p_0_5_CLAIM",
-        "stats": {
-            "floor": 3,
-            "wall_remaining": 17,
-            "hand": {
-                "shanten": 1,
-                "tiles": [{"tile": "B6", "remaining": 0}, {"tile": "B7", "remaining": 4}],
-            },
-            "claims": [
-                {"action": {"type": "PENG", "tile": "B6"}, "shanten_after": 0},
-                {"action": {"type": "GANG", "tile": "B6", "kind": "EXPOSED"}, "shanten_after": 1},
-            ],
-        },
-    }
-
-
-async def _attach(page: Page, server: FakeWireServer) -> None:
+async def _attach(page: Page, server: FakeWireServer, *, stats_enabled: bool | None = None) -> None:
     await page.goto(server.url)
     await server.send(_hello())
-    await server.send(_attached())
+    await server.send(_attached(stats_enabled=stats_enabled))
     await expect(page.locator("game-pane").locator(".table-ascii, .minimal-wrap")).to_be_visible(
         timeout=5000
     )
 
 
-# --- fixture 11: the strip ---
+# --- fixture 13: no inline strip; the Alt+S pane holds the analysis ---
 
 
-async def test_discard_prompt_with_stats_renders_strip(
+async def test_discard_prompt_renders_no_inline_strip(
     page: Page, fake_wire_server: FakeWireServer
 ) -> None:
+    """The 2026-06-12 revision removed the in-board strip: a DISCARD prompt
+    carrying stats shows the prompt bar but no inline analysis."""
     await _attach(page, fake_wire_server)
     await fake_wire_server.send(_discard_prompt(_DISCARD_STATS))
 
-    strip = page.locator("game-pane").locator(".stats-strip")
-    await expect(strip).to_be_visible(timeout=5000)
-    # No selection yet -> the server-sorted best line (discards[0]).
-    await expect(strip.locator(".lead")).to_contain_text("TENPAI")
-    # Waits with remaining counts + fan.
-    await expect(strip).to_contain_text("×3")
-    await expect(strip).to_contain_text("4f/6f")
-    # The B9 wait is sub-floor (2f < 3f) AND dead (×0): flagged, not hidden.
-    sub = strip.locator(".stat-tile.sub-floor")
-    await expect(sub).to_have_count(1)
-    await expect(sub).to_contain_text("<floor")
-    dead = strip.locator(".stat-tile.dead")
-    await expect(dead).to_have_count(1)
-
-
-async def test_prompt_without_stats_renders_no_strip(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
-    """Backward compat: the pre-Spec-37 frame shape shows bar, no strip."""
-    await _attach(page, fake_wire_server)
-    await fake_wire_server.send(_discard_prompt(None))
-
     await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
     await expect(page.locator("game-pane").locator(".stats-strip")).to_have_count(0)
-
-
-async def test_claim_prompt_strip_shows_hand_and_claim_options(
-    page: Page, fake_wire_server: FakeWireServer
-) -> None:
-    await _attach(page, fake_wire_server)
-    await fake_wire_server.send(_claim_prompt_with_stats())
-
-    strip = page.locator("game-pane").locator(".stats-strip")
-    await expect(strip).to_be_visible(timeout=5000)
-    await expect(strip.locator(".lead")).to_contain_text("now: 1-shanten")
-    improving = strip.locator(".claim-option.improves")
-    await expect(improving).to_have_count(1)
-    await expect(improving).to_contain_text("PENG → TENPAI")
-    neutral = strip.locator(".claim-option.neutral")
-    await expect(neutral).to_contain_text("GANG → 1-shanten")
-
-
-# --- fixture 12: the Alt+S detail pane ---
 
 
 async def test_alt_s_detail_pane_lists_every_candidate(
@@ -186,7 +120,9 @@ async def test_alt_s_detail_pane_lists_every_candidate(
 ) -> None:
     await _attach(page, fake_wire_server)
     await fake_wire_server.send(_discard_prompt(_DISCARD_STATS))
-    await expect(page.locator("game-pane").locator(".stats-strip")).to_be_visible(timeout=5000)
+    # Stats are pane-only now; wait on the prompt bar (proof the frame landed)
+    # rather than a strip that no longer exists.
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
 
     await page.keyboard.press("Alt+KeyS")
     pane = page.locator("stats-pane")
@@ -201,3 +137,34 @@ async def test_alt_s_detail_pane_lists_every_candidate(
     # Toggle off again.
     await page.keyboard.press("Alt+KeyS")
     await expect(page.locator("stats-pane")).to_have_count(0)
+
+
+async def test_alt_s_pane_without_discard_prompt_shows_placeholder(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Opening the pane with no live DISCARD prompt shows the guidance text,
+    not an empty table."""
+    await _attach(page, fake_wire_server)
+    await page.keyboard.press("Alt+KeyS")
+    pane = page.locator("stats-pane")
+    await expect(pane).to_be_visible(timeout=5000)
+    await expect(pane.locator(".placeholder")).to_contain_text("your turn to discard")
+
+
+# --- fixture 14: per-table opt-out ---
+
+
+async def test_alt_s_pane_shows_disabled_message(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """A table created with stats_enabled=false (carried on the snapshot) makes
+    the pane say so explicitly."""
+    await _attach(page, fake_wire_server, stats_enabled=False)
+    await fake_wire_server.send(_discard_prompt(None))  # disabled tables send no stats
+
+    await page.keyboard.press("Alt+KeyS")
+    pane = page.locator("stats-pane")
+    await expect(pane).to_be_visible(timeout=5000)
+    await expect(pane.locator(".placeholder")).to_contain_text("stats disabled")
+    # And never an analysis table.
+    await expect(pane.locator("table.stats-table")).to_have_count(0)

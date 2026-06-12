@@ -639,6 +639,7 @@ class MultiTableOrchestrator:
                 bot_pacing_enabled=opts.bot_pacing_enabled,
                 bot_min_delay_s=opts.bot_min_delay_s,
                 bot_max_delay_s=opts.bot_max_delay_s,
+                stats_enabled=opts.stats_enabled,
             )
         except ShuttingDown:
             with contextlib.suppress(Exception):

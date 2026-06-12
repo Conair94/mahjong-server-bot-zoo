@@ -13,6 +13,10 @@ the life of the table (no mid-hand changes):
 - ``timeouts_enabled`` — when ``false``, human seats get an effectively
   unlimited decide deadline (the table waits indefinitely for a human; the
   strike / AutoPass takeover never fires on them). Bots keep their deadline.
+- ``stats_enabled`` — when ``false``, the Spec 37 decision-time analysis
+  (shanten / waits / fan) is disabled for the whole table: the composition
+  root binds no stats provider, so no ``PROMPT.stats`` is ever attached.
+  Default ``true``.
 
 ``parse_table_options`` resolves the raw wire object against the server
 defaults and returns concrete values to hand to ``create_table``. Invalid
@@ -57,6 +61,7 @@ class ResolvedTableOptions:
     bot_min_delay_s: float
     bot_max_delay_s: float
     decide_timeouts: DecideTimeouts
+    stats_enabled: bool = True
 
 
 def _resolve_pacing(raw: Any) -> tuple[float, float]:
@@ -112,6 +117,10 @@ def parse_table_options(
     if not isinstance(raw, dict):
         raise TableOptionsError(f"options must be an object; got {type(raw).__name__}")
 
+    # Stats are on unless the creator explicitly disables them (lenient, like
+    # timeouts_enabled — only a literal `false` opts out).
+    stats_enabled = raw.get("stats_enabled") is not False
+
     if "bot_pacing" in raw:
         min_s, max_s = _resolve_pacing(raw["bot_pacing"])
         pacing_enabled = True
@@ -137,7 +146,7 @@ def parse_table_options(
         # Per spec: overrides the human DISCARD deadline only.
         decide_timeouts = dataclasses.replace(decide_timeouts, human_discard_s=secs)
 
-    return ResolvedTableOptions(pacing_enabled, min_s, max_s, decide_timeouts)
+    return ResolvedTableOptions(pacing_enabled, min_s, max_s, decide_timeouts, stats_enabled)
 
 
 __all__ = [

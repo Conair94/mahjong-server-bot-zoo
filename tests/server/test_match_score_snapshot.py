@@ -19,7 +19,7 @@ _MCR: RuleSetRef = cast(
 )
 
 
-def _handle(tmp_path: Path) -> TableHandle:
+def _handle(tmp_path: Path, *, stats_enabled: bool = True) -> TableHandle:
     return TableHandle(
         table_id="40",
         ruleset=_MCR,
@@ -27,6 +27,7 @@ def _handle(tmp_path: Path) -> TableHandle:
         hand_id="t40-h0",
         record_path=tmp_path / "hand_0000.jsonl",
         server_info={"version": "test", "git_sha": "test", "host": "test"},
+        stats_enabled=stats_enabled,
     )
 
 
@@ -63,3 +64,11 @@ def test_snapshot_match_scores_is_a_copy(tmp_path: Path) -> None:
     snap = handle._snapshot_provider(0)
     snap["match_scores"]["cumulative"][0] = 999
     assert handle._match_score.cumulative[0] == 8
+
+
+def test_snapshot_carries_stats_enabled_flag(tmp_path: Path) -> None:
+    """Spec 37: the per-table stats opt-out rides the snapshot so the client
+    can render 'stats disabled'. Default tables advertise it on."""
+    assert _handle(tmp_path)._snapshot_provider(0)["stats_enabled"] is True
+    disabled = _handle(tmp_path, stats_enabled=False)
+    assert disabled._snapshot_provider(0)["stats_enabled"] is False

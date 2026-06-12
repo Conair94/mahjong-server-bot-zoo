@@ -3,8 +3,21 @@
 A per-seat, decision-time analysis payload — *how far am I from a winning
 hand, what tiles get me there, how many of each are still drawable, and how
 many fan would it score* — computed server-side from the authoritative seat
-view and attached to the existing `PROMPT` wire frame, rendered as a stats
-strip + toggleable detail panel in the web client.
+view and attached to the existing `PROMPT` wire frame, rendered in a
+toggleable detail panel (`Alt+S`) in the web client.
+
+**Revision (2026-06-12).** Three scope changes from the original Spec 37:
+
+1. **Discard-only.** Stats are computed and attached only on **DISCARD**
+   prompts — the one moment the seat holds 14 tiles and the question "which
+   tile, and how far does each leave me?" is well-posed. CLAIM-time stats
+   (standing-hand shanten + per-claim reachability) are no longer surfaced.
+2. **Detail-pane only — no inline strip.** The in-board stats strip is
+   removed; the analysis is opt-in via the `Alt+S` pane, off by default.
+3. **Per-table opt-out.** `CREATE_TABLE.options.stats_enabled = false`
+   disables the analyzer for the whole table (resolves the "tournament mode"
+   open question below). The pane then shows *"this game has stats
+   disabled."*
 
 Dual-purpose by construction: the same analysis that aids a human player is
 the explainability surface for the bot zoo (it is exactly the quantity
@@ -34,14 +47,16 @@ Builds on:
   otherwise) each with **remaining unseen count**, and at tenpai the **fan
   total per wait** (discard-win and self-draw-win, raw — below-floor shown,
   not hidden).
-- On every **CLAIM prompt**: the current hand's same stats, plus per claim
-  option (PENG/CHI/GANG) the **best reachable shanten after the forced
-  discard** — "does taking this claim actually advance me?"
 - Floor-awareness: every fan number is comparable against the ruleset's
   `fan_cliff` so the client can mark sub-floor waits (the FB-15 trap — a
   structural tenpai that cannot legally win).
-- Zero cost for bot seats and for tables without humans: the analyzer is
-  attached only to `HumanAdapter` at the composition root.
+- Zero cost for bot seats, for tables without humans, and for tables that
+  opted out (`stats_enabled = false`): the analyzer is attached only to a
+  `HumanAdapter` whose table has stats enabled, at the composition root.
+
+Non-DISCARD prompts (CLAIM windows, etc.) carry **no** `stats` — a 13-tile
+hand has no single discard decision to rank, so the question the payload
+answers isn't posed there.
 
 ## Non-goals
 
@@ -61,21 +76,18 @@ Builds on:
 ## Payload schema (`PROMPT.stats`)
 
 Computed by `mahjong.analysis.prompt_stats(view, seat, legal_actions,
-prompt_kind)`. Attached to the wire `PROMPT` frame as `stats`; omitted
-entirely if analysis fails (the prompt must never be blocked by stats — see
-§ Failure containment).
+prompt_kind)`. The live binding `analysis.stats_for_prompt` calls it **only
+for DISCARD prompts** and returns `None` otherwise, so the wire payload below
+is always the discard shape. (`prompt_stats` retains its CLAIM branch —
+standing `hand` + `claims` — as a tested pure function; it is simply not
+surfaced on the wire today.) Attached to the wire `PROMPT` frame as `stats`;
+omitted entirely if analysis fails (the prompt must never be blocked by stats
+— see § Failure containment).
 
 ```json
 {
   "floor": 3,
   "wall_remaining": 42,
-  "hand": {
-    "shanten": 0,
-    "tiles": [
-      {"tile": "W2", "remaining": 3, "fan_discard": 4, "fan_self_draw": 6},
-      {"tile": "W5", "remaining": 2, "fan_discard": 2, "fan_self_draw": 4}
-    ]
-  },
   "discards": [
     {
       "tile": "J1",
@@ -92,10 +104,6 @@ entirely if analysis fails (the prompt must never be blocked by stats — see
         {"tile": "B7", "remaining": 4}
       ]
     }
-  ],
-  "claims": [
-    {"action": {"type": "PENG", "tile": "B5"}, "shanten_after": 0},
-    {"action": {"type": "CHI", "tiles": ["B4", "B5", "B6"]}, "shanten_after": 1}
   ]
 }
 ```
@@ -107,10 +115,10 @@ Field semantics:
   a below-floor fan number (raw calculation with `fan_cliff: 0`).
 - `wall_remaining` — `view.wall.remaining_count`, the "draws left" context
   for the remaining counts.
-- `hand` — stats for the seat's current 3k+1 hand. Present on **CLAIM**
-  prompts (your standing 13-tile hand) and **omitted on DISCARD prompts**
-  (a 14-tile hand has no single shanten; the per-candidate table is the
-  answer there).
+- `hand` — stats for a seat's standing 3k+1 hand. Computed by `prompt_stats`
+  on CLAIM prompts but **not delivered on the wire** under the current
+  discard-only binding; documented here because the pure function still
+  returns it.
 - `hand.shanten` / `discards[].shanten` — `pymj.shanten` (0 = tenpai). The
   engine never prompts a won hand, so −1 does not appear.
 - `tiles[]` — at tenpai: the winning tiles (waits), each with raw fan totals
@@ -125,11 +133,9 @@ Field semantics:
 - `discards[]` — DISCARD prompts only; one row per legal PLAY, sorted by
   (`shanten`, then descending total `remaining`, then `tile_sort_key`) so
   the client's "best line" is `discards[0]` without re-deriving the policy.
-- `claims[]` — CLAIM prompts only; one row per legal PENG/CHI/GANG.
-  `shanten_after` = best shanten over the forced follow-up discard (mirrors
-  `v0._decide_claim`'s reachability probe). HU needs no row (it is the win).
-  For GANG the follow-up is a replacement draw, not a discard; its
-  `shanten_after` is the shanten of the post-meld 3k+1 hand.
+- `claims[]` — computed by `prompt_stats` on CLAIM prompts (one row per legal
+  PENG/CHI/GANG, `shanten_after` = best shanten over the forced follow-up
+  discard) but, like `hand`, **not delivered on the wire** today.
 
 ## Delivery path
 
@@ -139,7 +145,7 @@ run_hand → _build_prompt (already carries view + legal_actions)
       stats = self._stats_provider(prompt)        # injected; None → no stats
   → SeatPrompt.stats
   → SeatSession._send_prompt → PROMPT frame {... "stats": {...}}
-  → client setPrompt(frame) → stats strip + Alt+S detail panel
+  → client setPrompt(frame) → Alt+S detail panel
 ```
 
 - `HumanAdapter` gains a `stats_provider: Callable[[Prompt, int], dict |
@@ -148,7 +154,16 @@ run_hand → _build_prompt (already carries view + legal_actions)
   (`analysis.stats_for_prompt`) is wired at the composition roots
   (`server/registry.py` **and** `web/server.py`; the two hand-loop hosts are
   near-duplicates and both must be wired — see the mirror-both-hand-loops
-  rule).
+  rule). `stats_for_prompt` itself returns `None` for non-DISCARD prompts.
+- **Per-table opt-out.** `TableHandle` carries a frozen `stats_enabled`
+  (from `CREATE_TABLE.options`, default `true`). When `false`, the
+  composition root binds `stats_provider=None`, so no analysis runs and no
+  `stats` is ever attached. The flag is also spliced onto the ATTACHED
+  snapshot (`snapshot["stats_enabled"]`, same seam as `match_scores`) so the
+  client can render the *"stats disabled"* message rather than a bare
+  placeholder. The single-table `web/server.py` path has no options UI and
+  always runs with stats enabled (it omits the snapshot flag; the client
+  treats an absent flag as enabled).
 - `SeatPrompt` gains `stats: dict[str, Any] | None = None`;
   `_send_prompt` includes it only when non-None (no schema churn for TUI /
   bot tooling reading PROMPT frames).
@@ -183,24 +198,21 @@ log line carries its own traceback if it ever fires.)
 
 ## Client rendering
 
-- **Stats strip** (both minimal and classic views), shown while a prompt
-  with `stats` is live:
-  - DISCARD: one line for the currently selected tile —
-    `B9 → 1-shanten · 5 kinds / 17 tiles · best: W2 ×3` — plus a
-    `best line` hint when a strictly better candidate exists. At tenpai the
-    line shows waits with fan: `J1 → TENPAI · W2 ×3 (4f / 6f self)`;
-    sub-floor waits render dimmed with `<floor`.
-  - CLAIM: `now: 1-shanten · PENG → tenpai · CHI → 1-shanten` (options that
-    don't improve are dimmed).
-- **Detail panel** (the existing `Alt+S` pane hotkey; the old `<stats-pane>`
-  stub is repurposed — career/cross-game stats belong to the profile page,
-  not this pane): full per-candidate table, all waits/effective tiles with
-  remaining counts and fan, sorted as delivered. Fed by `<table-page>`
-  mirroring the game-pane's `prompt-changed` event. Rendered from
-  `frame.stats` verbatim — the client does **no** game math
-  (authoritative-state rule).
-- Strip and panel clear when the prompt resolves (EVENT advancing the hand)
-  — same lifecycle as `currentPrompt`.
+- **No inline strip.** The in-board stats strip is removed; the analysis is
+  off by default and lives solely behind the `Alt+S` detail pane.
+- **Detail panel** (the `Alt+S` pane hotkey; the old `<stats-pane>` stub is
+  repurposed — career/cross-game stats belong to the profile page, not this
+  pane): full per-candidate table, all waits/effective tiles with remaining
+  counts and fan, sorted as delivered. Fed by `<table-page>` mirroring the
+  game-pane's `prompt-changed` event. Rendered from `frame.stats` verbatim —
+  the client does **no** game math (authoritative-state rule).
+  - When the table opted out (`stats_enabled = false`, read from the snapshot
+    the game-pane projects onto its view), the pane shows *"this game has
+    stats disabled."* instead of any analysis.
+  - Outside a DISCARD prompt (no `stats` on the live prompt), the pane shows
+    a placeholder: *"hand analysis appears when it's your turn to discard."*
+- The panel content clears when the prompt resolves (EVENT advancing the
+  hand) — same lifecycle as `currentPrompt`.
 
 ## Verification fixtures
 
@@ -238,20 +250,28 @@ Wire/session seam (`tests/sessions/` + `tests/wire/`):
    `hand_stats_failed` log line (the DEF-18 containment contract).
 10. Mux `_send_prompt` omits the key when `stats is None`.
 
+Gating + option (`tests/analysis/`, `tests/server/`):
+
+11. `stats_for_prompt` returns the discard payload for a DISCARD prompt and
+    `None` for a CLAIM (or any non-DISCARD) prompt.
+12. `parse_table_options({"stats_enabled": false})` → `stats_enabled=False`;
+    absent / any non-`false` value → `True`.
+
 Client seam (`tests/web/`, real-frame dispatch per the wire→UI rule):
 
-11. Dispatching a PROMPT frame with `stats` renders the strip (selected
-    candidate's shanten + counts); dispatching the resolving EVENT clears
-    it.
-12. `Alt+S` toggles the detail panel; panel rows match the frame payload.
+13. Dispatching a DISCARD PROMPT frame with `stats` renders **no** inline
+    strip; pressing `Alt+S` shows the per-candidate detail table matching the
+    payload; dispatching the resolving EVENT clears it.
+14. An ATTACHED snapshot carrying `stats_enabled: false` makes the `Alt+S`
+    pane show the *"stats disabled"* message.
 
 ## Open questions
 
-- Should the strip show the v1 bot's *defense* read (deal-in risk) once
-  Stage B lands? Lean yes, as a separate dimmed line — but that couples the
-  display to bot internals; revisit when v1 Stage B exists.
-- Per-account opt-out ("tournament mode": no aids)? Settings toggle exists
-  client-side; a server-enforced table option belongs with the future
-  table-options work (`server/table_options.py`).
+- Should the pane show the v1 bot's *defense* read (deal-in risk) once Stage B
+  lands? Lean yes, as a separate dimmed line — but that couples the display to
+  bot internals; revisit when v1 Stage B exists.
+- ~~Per-account opt-out ("tournament mode": no aids)?~~ **Resolved
+  (2026-06-12)** as a per-table option (`CREATE_TABLE.options.stats_enabled`),
+  not per-account — the table is the natural scope for "no aids in this game".
 - TUI client rendering of the same payload — when the TUI gets attention
   again.

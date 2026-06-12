@@ -1,6 +1,11 @@
-// Hand-stats rendering (Spec 37): the in-pane strip and the Alt+S detail
-// panel, both driven verbatim by `PROMPT.stats` — the client does no game
-// math (authoritative-state rule); it only formats what the server sent.
+// Hand-stats rendering (Spec 37): the Alt+S detail panel, driven verbatim by
+// `PROMPT.stats` — the client does no game math (authoritative-state rule);
+// it only formats what the server sent.
+//
+// Revision (2026-06-12): stats are discard-only and pane-only. The old inline
+// strip and the CLAIM-time `hand`/`claims` rendering are gone — the server
+// now attaches `stats` (a per-candidate discard table) solely on DISCARD
+// prompts, and surfaces nothing on a table that opted out (`stats_enabled`).
 //
 // Pure functions, no DOM dependencies beyond Lit's html tag — same shape as
 // prompt.js so the formatting is unit-testable through the real frame
@@ -10,20 +15,6 @@ import { html, nothing } from "lit";
 import { tile } from "./render.js";
 
 // --- pure helpers ---------------------------------------------------------
-
-// The stats row for the player's current selection. `selectedTile` is an
-// index into `ownConcealed` (game-pane convention); no explicit selection
-// falls back to the server-sorted best line (`discards[0]`).
-export function selectedDiscardRow(stats, selectedTile, ownConcealed) {
-  const rows = stats?.discards;
-  if (!Array.isArray(rows) || rows.length === 0) return null;
-  if (selectedTile != null && ownConcealed && ownConcealed[selectedTile] != null) {
-    const token = ownConcealed[selectedTile];
-    const row = rows.find((r) => r.tile === token);
-    if (row) return row;
-  }
-  return rows[0];
-}
 
 export function shantenLabel(shanten) {
   return shanten === 0 ? "TENPAI" : `${shanten}-shanten`;
@@ -63,56 +54,19 @@ function tilesInline(tiles, floor, options, limit = Infinity) {
     : nothing}`;
 }
 
-// --- the strip (inside game-pane, both view modes) --------------------------
-
-export function renderStatsStrip(prompt, selectedTile, ownConcealed, options = {}) {
-  const stats = prompt?.stats;
-  if (!stats) return nothing;
-
-  if (Array.isArray(stats.discards)) {
-    const row = selectedDiscardRow(stats, selectedTile, ownConcealed);
-    if (!row) return nothing;
-    const best = stats.discards[0];
-    const isBest = row === best;
-    return html`<div class="stats-strip" data-kind="discard">
-      <span class="lead">${tile(row.tile, options)} → ${shantenLabel(row.shanten)}</span>
-      ${row.shanten > 0
-        ? html`<span class="accept"
-            >accepts ${row.tiles.length} kinds / ${totalRemaining(row.tiles)} tiles</span
-          >`
-        : nothing}
-      <span class="tiles">${tilesInline(row.tiles, stats.floor, options, 6)}</span>
-      ${!isBest
-        ? html`<span class="best-hint"
-            >best: ${tile(best.tile, options)} → ${shantenLabel(best.shanten)}</span
-          >`
-        : nothing}
-    </div>`;
-  }
-
-  if (stats.hand) {
-    const hand = stats.hand;
-    return html`<div class="stats-strip" data-kind="claim">
-      <span class="lead">now: ${shantenLabel(hand.shanten)}</span>
-      <span class="tiles">${tilesInline(hand.tiles, stats.floor, options, 6)}</span>
-      ${(stats.claims ?? []).map((c) => {
-        const improves = c.shanten_after < hand.shanten;
-        return html`<span class="claim-option ${improves ? "improves" : "neutral"}"
-          >${c.action.type} → ${shantenLabel(c.shanten_after)}</span
-        >`;
-      })}
-    </div>`;
-  }
-  return nothing;
-}
-
 // --- the detail panel (stats-pane, Alt+S) -----------------------------------
 
-export function renderStatsDetail(prompt, options = {}) {
+// `statsEnabled` comes from the table snapshot (`stats_enabled`); when the
+// table opted out we say so explicitly rather than showing an empty pane.
+export function renderStatsDetail(prompt, options = {}, statsEnabled = true) {
+  if (statsEnabled === false) {
+    return html`<div class="placeholder">This game has stats disabled.</div>`;
+  }
+
   const stats = prompt?.stats;
-  if (!stats) {
+  if (!stats || !Array.isArray(stats.discards)) {
     return html`<div class="placeholder">
-      (hand analysis appears with your next turn or claim window)
+      (hand analysis appears when it's your turn to discard)
     </div>`;
   }
 
@@ -120,54 +74,22 @@ export function renderStatsDetail(prompt, options = {}) {
     floor ${stats.floor}f · wall ${stats.wall_remaining}
   </div>`;
 
-  if (Array.isArray(stats.discards)) {
-    return html`${header}
-      <table class="stats-table">
-        <thead>
-          <tr><th>discard</th><th>leaves</th><th>advancing tiles</th></tr>
-        </thead>
-        <tbody>
-          ${stats.discards.map(
-            (row) => html`<tr>
-              <td>${tile(row.tile, options)}</td>
-              <td>${shantenLabel(row.shanten)}</td>
-              <td>
-                ${tilesInline(row.tiles, stats.floor, options)}
-                <span class="total">(${totalRemaining(row.tiles)})</span>
-              </td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>`;
-  }
-
-  if (stats.hand) {
-    return html`${header}
-      <div class="stats-hand">
-        <div class="lead">hand: ${shantenLabel(stats.hand.shanten)}</div>
-        <div class="tiles">${tilesInline(stats.hand.tiles, stats.floor, options)}</div>
-      </div>
-      ${(stats.claims ?? []).length
-        ? html`<table class="stats-table">
-            <thead>
-              <tr><th>claim</th><th>reaches</th></tr>
-            </thead>
-            <tbody>
-              ${stats.claims.map(
-                (c) => html`<tr>
-                  <td>
-                    ${c.action.type}${c.action.tile
-                      ? html` ${tile(c.action.tile, options)}`
-                      : nothing}${Array.isArray(c.action.tiles)
-                      ? c.action.tiles.map((t) => html` ${tile(t, options)}`)
-                      : nothing}
-                  </td>
-                  <td>${shantenLabel(c.shanten_after)}</td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>`
-        : nothing}`;
-  }
-  return header;
+  return html`${header}
+    <table class="stats-table">
+      <thead>
+        <tr><th>discard</th><th>leaves</th><th>advancing tiles</th></tr>
+      </thead>
+      <tbody>
+        ${stats.discards.map(
+          (row) => html`<tr>
+            <td>${tile(row.tile, options)}</td>
+            <td>${shantenLabel(row.shanten)}</td>
+            <td>
+              ${tilesInline(row.tiles, stats.floor, options)}
+              <span class="total">(${totalRemaining(row.tiles)})</span>
+            </td>
+          </tr>`,
+        )}
+      </tbody>
+    </table>`;
 }

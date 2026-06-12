@@ -267,10 +267,17 @@ def _shanten(concealed: tuple[Tile, ...], melds_key: _MeldKey) -> int:
     return pymj.shanten(list(concealed), melds)
 
 
-def stats_for_prompt(prompt: dict[str, Any], seat: int) -> dict[str, Any]:
+def stats_for_prompt(prompt: dict[str, Any], seat: int) -> dict[str, Any] | None:
     """`HumanAdapter.stats_provider`-shaped binding: unpacks the seat-port
     `Prompt` (which already carries the authoritative per-seat view and the
-    legal actions) into `prompt_stats`. Bound at the composition roots."""
+    legal actions) into `prompt_stats`. Bound at the composition roots.
+
+    Gated to **DISCARD** prompts (Spec 37 revision, 2026-06-12): only when the
+    seat holds 14 tiles and must choose a discard is "which tile, and how far
+    does each leave me?" a well-posed question. Returns ``None`` otherwise, so
+    no `stats` rides a CLAIM (or any non-discard) prompt."""
+    if prompt["kind"] != "DISCARD":
+        return None
     return prompt_stats(prompt["view"], seat, prompt["legal_actions"], prompt["kind"])
 
 
