@@ -107,3 +107,34 @@ def test_console_formatter_is_plain_text_not_json() -> None:
         json.loads(line)
     assert "server.ready" in line
     assert "INFO" in line
+
+
+# --- DEF-20: _setup_logging persists to a rotating file ----------------------
+
+
+def test_setup_logging_writes_json_lines_to_log_file(tmp_path) -> None:
+    """DEF-20: serve must tee logs to ``cfg.log_file`` (rotating) so crash /
+    stall evidence survives the terminal. stdout behavior is unchanged."""
+    import logging
+
+    from mahjong.cli.serve import _setup_logging
+    from mahjong.server.config import load_config_from_env
+
+    cfg, _ = load_config_from_env(env={"MAHJONG_DATA_DIR": str(tmp_path)})
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        _setup_logging(cfg)
+        logging.getLogger("mahjong.test").info("def20_probe table=%s", "t1")
+        for h in root.handlers:
+            h.flush()
+        text = (tmp_path / "logs" / "server.log").read_text()
+        assert "def20_probe table=t1" in text
+        assert '"event"' in text  # the JSON formatter, same as stdout
+    finally:
+        for h in root.handlers[:]:
+            if h not in saved_handlers:
+                h.close()
+                root.removeHandler(h)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)

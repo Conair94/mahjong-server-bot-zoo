@@ -722,37 +722,54 @@ class TableHandle:
         self._ready_seats.add(seat)
         self._ready_changed.set()
 
-    def _live_human_seats(self) -> set[int]:
+    def _gated_human_seats(self) -> set[int]:
+        """Human seats the between-hand gate must wait for: LIVE ones, plus
+        HELD ones (FB-19 — a held seat is a player mid-reconnect; vacuously
+        passing them let the next hand start under a refreshing player).
+        UNBOUND humans (left, or hold expired) are not waited for."""
         return {
             i
             for i in range(4)
-            if self.is_human_seat(i) and self._sessions.seat(i).state is SeatState.LIVE
+            if self.is_human_seat(i)
+            and self._sessions.seat(i).state in (SeatState.LIVE, SeatState.HELD)
         }
 
-    def _all_live_humans_ready(self) -> bool:
-        # Vacuously true when no human is LIVE (pure-bot table, or all humans
-        # dropped during the gate) → advance without waiting.
-        return self._live_human_seats() <= self._ready_seats
+    def _all_gated_humans_ready(self) -> bool:
+        # Vacuously true when no human is LIVE or HELD (pure-bot table, or
+        # every human gone for good) → advance without waiting.
+        return self._gated_human_seats() <= self._ready_seats
 
     async def _await_humans_ready(self) -> None:
-        """Block until every LIVE human seat has sent READY, the drain stop fires,
-        or ``ready_timeout_seconds`` elapses (safety net for a human who left).
+        """Block until every gated (LIVE or HELD) human seat has sent READY,
+        the drain stop fires, or ``ready_timeout_seconds`` elapses.
 
-        The timeout means a disconnected / walked-away human can never stall the
-        table forever; an explicit READY from everyone advances immediately."""
+        The timeout means a walked-away human can never stall the table
+        forever; an explicit READY from everyone advances immediately. A HELD
+        seat whose hold expires mid-gate shrinks the gated set, but nothing
+        wakes the gate on expiry — the next READY or the timeout re-checks.
+        Every exit is logged (`ready_gate_advanced reason=...`) so a
+        "next hand started without me" report is attributable — FB-19."""
         self._ready_seats.clear()
         self._ready_changed.clear()
+        _logger.info(
+            "ready_gate_wait table=%s hand_index=%s gated=%s",
+            self._table_id,
+            self._hand_index,
+            sorted(self._gated_human_seats()),
+        )
+        reason = "all_ready"
         loop = asyncio.get_event_loop()
         deadline = loop.time() + self._ready_timeout_seconds
-        while not (self._stop_event.is_set() or self._all_live_humans_ready()):
+        while not (self._stop_event.is_set() or self._all_gated_humans_ready()):
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return
+                reason = "timeout"
+                break
             # Clear-then-recheck so a READY that arrives between the loop guard
             # and this wait isn't lost.
             self._ready_changed.clear()
-            if self._stop_event.is_set() or self._all_live_humans_ready():
-                return
+            if self._stop_event.is_set() or self._all_gated_humans_ready():
+                break
             stop_wait = asyncio.ensure_future(self._stop_event.wait())
             ready_wait = asyncio.ensure_future(self._ready_changed.wait())
             try:
@@ -764,6 +781,19 @@ class TableHandle:
             finally:
                 stop_wait.cancel()
                 ready_wait.cancel()
+        gated = self._gated_human_seats()
+        if self._stop_event.is_set():
+            reason = "stop"
+        elif reason != "timeout" and not gated:
+            reason = "vacuous"
+        _logger.info(
+            "ready_gate_advanced reason=%s table=%s hand_index=%s ready=%s gated=%s",
+            reason,
+            self._table_id,
+            self._hand_index,
+            sorted(self._ready_seats),
+            sorted(gated),
+        )
 
     async def on_socket_dropped(self, conn: Any) -> None:
         await self._sessions.on_socket_dropped(conn)

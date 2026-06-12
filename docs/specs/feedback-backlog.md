@@ -51,7 +51,7 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-16 | bug | Typing in a text field (bug-report box / chat) fires game shortcuts — Space passes, H toggles HU, Enter discards | P1 | implemented | (this doc — keydown editable-target guard) |
 | FB-17 | bug | Reconnect/refresh serves the deal-time snapshot — board desync, phantom un-discardable tiles, "new hand = same hand" | **P0** (game-breaking) | implemented | (this doc — live-state snapshot provider) |
 | FB-18 | bug | Drawn-tile discard targeting: Enter falls back to sorted-last tile; digit keys fight the reordered display | P1 | implemented | (this doc — display-order key map + last_drawn Enter) |
-| FB-19 | bug | Next hand can start without every player's READY; no ready gate at match end | P2 | triaged | (this doc) |
+| FB-19 | bug | Next hand can start without every player's READY; no ready gate at match end | P2 | implemented | (this doc — HELD seats gated + gate logging; match-end gate → DEF-22) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
@@ -85,8 +85,8 @@ stack trace it was waiting for.
 | DEF-17 | **Rules fidelity: kong is legal on an empty wall** (surfaced closing DEF-16). Real MCR forbids declaring a kong when no replacement tile remains; this engine allows it and ends the hand as an exhaustive draw (now with a proper `HAND_END` — the DEF-16 fix). | Tightening `legal_actions` would shift every seeded rollout/golden hash for a rare edge case; the current behaviour is a coherent house ruling. | Botzone S1 integration (the live judge will enforce its own legality) or a rules-fidelity audit. | `GANG` legality in [engine/legality/discard.py](../../mahjong/engine/legality/discard.py) / [claim.py](../../mahjong/engine/legality/claim.py) — neither consults `wall.remaining` |
 | DEF-18 | **Rules fidelity: PyMahjongGB awards "Chicken Hand 8" to a zero-fan discard win** (surfaced authoring Spec 37 fixtures): a hand with no regular fans scores 8 through `pymj.calculate_fan`, which clears both the `mcr-2006` 8-fan cliff and the house 3-fan floor — so a fanless hand is currently a *legal, 8-fan-paying win* on this server. Real MCR has no chicken hand (a 0-fan hand simply cannot win). Self-draw is unaffected (Self-Drawn ≥ 1 fan suppresses it). | Whether to strip the calculator's Chicken Hand entry before the cliff check is a scoring-contract change: it alters legality and payouts and needs its own reward-shape test pass + golden review. | A live winning hand whose only fan is `Chicken Hand`, or the next scoring-config/rules-fidelity audit. | `Chicken Hand` in any `HAND_END.fan[]`; pinned in `tests/analysis/test_hand_stats.py::test_subfloor_wait_fan_shown_raw_not_hidden` |
 | DEF-19 | **Draggable / movable table panels** — the player's stated ideal for chat/stats/score panes (click-and-drag, free positioning). Spec 40 ships the fallback instead: chat in a narrower side column, stats + score widget stacked under the game pane. | A free-form windowing system (drag state, z-order, collision, persisted positions) is a large surface that fights the fixed ASCII grid, for a cosmetic gain over the fixed layout. | A player asks again for movable panels, or the fixed layout proves too constraining once the score widget + stats both see use. | [in-game-scoreboard.md § Non-goals](in-game-scoreboard.md); panel grid in [web/static/app.js](../../mahjong/web/static/app.js) `TablePage` |
-| DEF-20 | **Persist `serve` logs to a file** (rotating file handler or `tee` in the admin-console supervisor). Logs go to stdout only; when the terminal/process is gone, so is the evidence. The 2026-06-12 FB-19 instance (hand loop stalled or crashed after `...-t1-h0`; no hand-1 row ever reserved) is unattributable for exactly this reason — `hand_loop_crashed`/`hand_step_stalled` may have fired and we'll never know. | Small ops change, but touches logconfig + admin-console supervision; macOS dev box isn't the deploy target. | Next unexplained mid-session stall (any instrument-and-defer grep string firing with no captured output), or the Linux production deploy (DEF-09). | [server/logconfig.py](../../mahjong/server/logconfig.py); admin console supervisor in [admin-console.md](admin-console.md) |
 | DEF-21 | **Vestigial EVENT entries in the session-mux resume buffer.** The FB-17 resume policy (fresh current snapshot, no EVENT replay) leaves `SeatSession._buffer`'s EVENT entries written-but-never-read (only a buffered `HAND_END` is consumed on resume). Either strip EVENT buffering or build a true delta-resume (at-drop snapshot + replay) if event-order affordances are ever wanted on reconnect. | Removal touches the observe path + overflow bookkeeping + several fixtures for zero behavior change; delta-resume is speculative until someone misses the affordances. | Next structural change to `sessions/mux.py`, or a player-visible want for replay-fidelity on reconnect. | [session-mux.md § Ring buffer](session-mux.md); `_append_buffer` in [sessions/mux.py](../../mahjong/sessions/mux.py) |
+| DEF-22 | **No ready gate at match end** (FB-19 soft spot 1): when `max_hands` is reached, `TableHandle._run_hand_loop` breaks before any ready wait — the final HAND_END summary is not held for acks. | Live tables run `max_hands=None` (the branch is test-only today), and a blocking gate there would stall every `max_hands=1` test table that awaits `match_done` with a human seat; needs a non-blocking design (match-end summary state + ack, not the between-hand gate). | Finite-match tables ship to players (a match-length picker or tournament mode), or a player reports the final summary vanishing. | `_run_hand_loop` max-hands break in [server/registry.py](../../mahjong/server/registry.py); FB-19 section in this doc |
 
 When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
 does the work — same rule as the FB table above.
@@ -712,8 +712,24 @@ Playwright test that discards the just-drawn tile via Enter and via its position
   when the end of the game was reached."
 - **Priority:** P2 — flow correctness; compounded badly by FB-17 (a desynced player never
   sends READY and gets steamrolled or stranded).
-- **Status:** triaged — exact trigger for the 2026-06-12 instance indeterminate (no
-  persisted server logs — see DEF-20); the three soft spots below are all real by reading.
+- **Status:** **implemented** (2026-06-12) for the live-path soft spots; the
+  match-end gate is deferred as **DEF-22**. Shipped: (2) the gate now counts
+  **HELD** seats as gated (`_gated_human_seats` — a held seat is a player
+  mid-reconnect; resume + READY advances, hold-expiry shrinks the set, the
+  timeout still caps the wait); (3) every gate exit logs
+  `ready_gate_wait` / `ready_gate_advanced reason=all_ready|timeout|vacuous|stop`
+  with the ready/gated sets, so the next "started without me" report is
+  attributable. (1) match-end gating is **not** added: live tables run
+  `max_hands=None` (never reach that branch), and a blocking gate there would
+  stall every `max_hands=1` test table that awaits `match_done` — parked with
+  a trigger in DEF-22. DEF-20 (persist logs) closed in the same PR — `serve`
+  now tees JSON logs to `<data_dir>/logs/server.log` (rotating 5 MB × 3,
+  `MAHJONG_LOG_FILE` overrides, empty disables), so these gate log lines
+  survive the terminal. **Verification:** `tests/server/test_ready_gate.py`
+  (HELD-seat hold + advance-reason logging, red before the fix),
+  `tests/server/test_config.py` + `test_log_format.py` (log-file config +
+  file output). The exact trigger for the 2026-06-12 instance remains
+  unknown — stdout was lost; that's precisely what DEF-20 fixes for next time.
 
 ### The three gate soft spots ([server/registry.py](../../mahjong/server/registry.py))
 

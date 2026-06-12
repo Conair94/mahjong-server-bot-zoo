@@ -39,6 +39,11 @@ class ServerConfig:
     wal_checkpoint_interval_s: int
     log_level: str
     log_format: str  # "json" | "console"
+    # DEF-20: rotating file the server tees logs into (stdout is unchanged).
+    # Defaults under data_dir; MAHJONG_LOG_FILE="" disables. Without this,
+    # crash/stall evidence dies with the terminal — the 2026-06-12 FB-19
+    # instance is unattributable for exactly that reason.
+    log_file: Path | None
     decide_timeout_human_discard_s: int
     decide_timeout_human_claim_s: int
     decide_timeout_bot_s: int
@@ -114,6 +119,7 @@ _KNOWN_VARS: frozenset[str] = frozenset(
         "MAHJONG_WAL_CHECKPOINT_INTERVAL_SECONDS",
         "MAHJONG_LOG_LEVEL",
         "MAHJONG_LOG_FORMAT",
+        "MAHJONG_LOG_FILE",
         "MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S",
         "MAHJONG_DECIDE_TIMEOUT_HUMAN_CLAIM_S",
         "MAHJONG_DECIDE_TIMEOUT_BOT_S",
@@ -166,6 +172,17 @@ def load_config_from_env(
         else _default_data_dir(e)
     )
 
+    # DEF-20: default the log file under data_dir; an explicit empty value
+    # disables file logging (stdout-only, the pre-DEF-20 behaviour).
+    log_file_raw = e.get("MAHJONG_LOG_FILE")
+    log_file: Path | None
+    if log_file_raw is None:
+        log_file = data_dir / "logs" / "server.log"
+    elif log_file_raw.strip() == "":
+        log_file = None
+    else:
+        log_file = Path(log_file_raw).expanduser()
+
     cfg = ServerConfig(
         listen_host=host,
         listen_port=port,
@@ -210,6 +227,7 @@ def load_config_from_env(
         ),
         log_level=e.get("MAHJONG_LOG_LEVEL", "INFO"),
         log_format=e.get("MAHJONG_LOG_FORMAT", "json"),
+        log_file=log_file,
         decide_timeout_human_discard_s=_parse_int(
             "MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S",
             e.get("MAHJONG_DECIDE_TIMEOUT_HUMAN_DISCARD_S", "60"),
