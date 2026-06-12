@@ -436,29 +436,26 @@ class SeatSession:
         return AttachOutcome(ok=True)
 
     async def _resume(self, new_sink: OutboundSink) -> AttachOutcome:
+        # FB-17: the snapshot provider serves the *current* projected state,
+        # which already includes everything that happened while HELD —
+        # replaying buffered EVENTs on top would double-apply them in the
+        # client reducer (the phantom-tile desync). So resume always behaves
+        # like the overflow path: fresh snapshot, `resume_buffer_size = 0`,
+        # no EVENT replay. The one frame still re-delivered is a buffered
+        # HAND_END — its settlement payload (fan, score_delta, final_hands)
+        # is summary data the client applies idempotently.
         self._hold_timer.cancel()
         self._hold_deadline_ms = None
         self._outbound = _Outbound(sink=new_sink)
-        if self._buffer_overflowed:
-            self._buffer.clear()
-            self._buffer_overflowed = False
-            self._state = SeatState.LIVE
-            await self._send_attached(
-                snapshot=self._snapshot_provider(self.seat), resume_buffer_size=0
-            )
-            await self._reprompt_if_pending()
-            return AttachOutcome(ok=True)
         replay = list(self._buffer)
         self._buffer.clear()
+        self._buffer_overflowed = False
         self._state = SeatState.LIVE
         await self._send_attached(
-            snapshot=self._snapshot_provider(self.seat),
-            resume_buffer_size=len(replay),
+            snapshot=self._snapshot_provider(self.seat), resume_buffer_size=0
         )
         for kind, payload in replay:
-            if kind == "EVENT":
-                await self._emit_event(payload)
-            elif kind == "HAND_END":
+            if kind == "HAND_END":
                 await self._emit_hand_end(payload)
         await self._reprompt_if_pending()
         return AttachOutcome(ok=True)

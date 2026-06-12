@@ -49,6 +49,9 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-14 | bug | No way back to the main menu from a game — fatal when combined with a hung table (FB-13) + auto-rejoin (FB-03) | **P0** (game-breaking with FB-13) | implemented | (this doc — leave-table escape hatch) |
 | FB-15 | bug | Missed a mahjong (HU) on a discard of 9B / 7B — HU not offered | P1 | implemented | (this doc — was the `mcr-2006` 8-fan floor; see FB-10) |
 | FB-16 | bug | Typing in a text field (bug-report box / chat) fires game shortcuts — Space passes, H toggles HU, Enter discards | P1 | implemented | (this doc — keydown editable-target guard) |
+| FB-17 | bug | Reconnect/refresh serves the deal-time snapshot — board desync, phantom un-discardable tiles, "new hand = same hand" | **P0** (game-breaking) | implemented | (this doc — live-state snapshot provider) |
+| FB-18 | bug | Drawn-tile discard targeting: Enter falls back to sorted-last tile; digit keys fight the reordered display | P1 | triaged | (this doc) |
+| FB-19 | bug | Next hand can start without every player's READY; no ready gate at match end | P2 | triaged | (this doc) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
@@ -82,6 +85,8 @@ stack trace it was waiting for.
 | DEF-17 | **Rules fidelity: kong is legal on an empty wall** (surfaced closing DEF-16). Real MCR forbids declaring a kong when no replacement tile remains; this engine allows it and ends the hand as an exhaustive draw (now with a proper `HAND_END` — the DEF-16 fix). | Tightening `legal_actions` would shift every seeded rollout/golden hash for a rare edge case; the current behaviour is a coherent house ruling. | Botzone S1 integration (the live judge will enforce its own legality) or a rules-fidelity audit. | `GANG` legality in [engine/legality/discard.py](../../mahjong/engine/legality/discard.py) / [claim.py](../../mahjong/engine/legality/claim.py) — neither consults `wall.remaining` |
 | DEF-18 | **Rules fidelity: PyMahjongGB awards "Chicken Hand 8" to a zero-fan discard win** (surfaced authoring Spec 37 fixtures): a hand with no regular fans scores 8 through `pymj.calculate_fan`, which clears both the `mcr-2006` 8-fan cliff and the house 3-fan floor — so a fanless hand is currently a *legal, 8-fan-paying win* on this server. Real MCR has no chicken hand (a 0-fan hand simply cannot win). Self-draw is unaffected (Self-Drawn ≥ 1 fan suppresses it). | Whether to strip the calculator's Chicken Hand entry before the cliff check is a scoring-contract change: it alters legality and payouts and needs its own reward-shape test pass + golden review. | A live winning hand whose only fan is `Chicken Hand`, or the next scoring-config/rules-fidelity audit. | `Chicken Hand` in any `HAND_END.fan[]`; pinned in `tests/analysis/test_hand_stats.py::test_subfloor_wait_fan_shown_raw_not_hidden` |
 | DEF-19 | **Draggable / movable table panels** — the player's stated ideal for chat/stats/score panes (click-and-drag, free positioning). Spec 40 ships the fallback instead: chat in a narrower side column, stats + score widget stacked under the game pane. | A free-form windowing system (drag state, z-order, collision, persisted positions) is a large surface that fights the fixed ASCII grid, for a cosmetic gain over the fixed layout. | A player asks again for movable panels, or the fixed layout proves too constraining once the score widget + stats both see use. | [in-game-scoreboard.md § Non-goals](in-game-scoreboard.md); panel grid in [web/static/app.js](../../mahjong/web/static/app.js) `TablePage` |
+| DEF-20 | **Persist `serve` logs to a file** (rotating file handler or `tee` in the admin-console supervisor). Logs go to stdout only; when the terminal/process is gone, so is the evidence. The 2026-06-12 FB-19 instance (hand loop stalled or crashed after `...-t1-h0`; no hand-1 row ever reserved) is unattributable for exactly this reason — `hand_loop_crashed`/`hand_step_stalled` may have fired and we'll never know. | Small ops change, but touches logconfig + admin-console supervision; macOS dev box isn't the deploy target. | Next unexplained mid-session stall (any instrument-and-defer grep string firing with no captured output), or the Linux production deploy (DEF-09). | [server/logconfig.py](../../mahjong/server/logconfig.py); admin console supervisor in [admin-console.md](admin-console.md) |
+| DEF-21 | **Vestigial EVENT entries in the session-mux resume buffer.** The FB-17 resume policy (fresh current snapshot, no EVENT replay) leaves `SeatSession._buffer`'s EVENT entries written-but-never-read (only a buffered `HAND_END` is consumed on resume). Either strip EVENT buffering or build a true delta-resume (at-drop snapshot + replay) if event-order affordances are ever wanted on reconnect. | Removal touches the observe path + overflow bookkeeping + several fixtures for zero behavior change; delta-resume is speculative until someone misses the affordances. | Next structural change to `sessions/mux.py`, or a player-visible want for replay-fidelity on reconnect. | [session-mux.md § Ring buffer](session-mux.md); `_append_buffer` in [sessions/mux.py](../../mahjong/sessions/mux.py) |
 
 When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
 does the work — same rule as the FB table above.
@@ -588,6 +593,146 @@ retargeted host — the guard must read `e.composedPath()[0]`.
 (Playwright: a focused shadow-root textarea + active prompt; Space/Enter must send no
 `ACTION`). Pinned the shadow-DOM retargeting specifically — a naive `e.target` check passes
 this test wrongly.
+
+## FB-17 — Reconnect/refresh serves the deal-time snapshot (board desync; "new hand = same hand")
+
+- **Report(s):** verbal (ConnorL, 2026-06-12, relaying seat 1/South — Helio — in game
+  `20260612T154802Z-ef44e5-t1-h0`): "persistently not able to discard EW which was in my
+  hand"; "not able to discard newly drawn tiles halfway through the hand"; "new hand gives
+  the exact same hand as old hand upon refreshing the page".
+- **Priority:** P0 — desyncs the board for the rest of the hand; makes specific tiles
+  silently un-discardable; faked "same hand redealt" after refresh.
+- **Status:** **implemented** (2026-06-12). `run_hand` gained a `state_callback`;
+  both hand loops keep a `_live_state` ref the snapshot provider projects from;
+  mux resume sends a fresh current snapshot and no longer replays EVENTs
+  (would double-apply); the projection now carries `last_drawn` (redacted) and
+  `terminal.final_hands` so a reconnect snapshot is self-sufficient. Specs
+  amended: session-mux.md (§ Ring buffer, fixture 2, alternatives),
+  state-schema.md (§ Per-seat projection). EVENT buffer is now vestigial →
+  DEF-21. **Verification:** `tests/server/test_resume_snapshot.py` (3 fixtures,
+  red before the fix), revised `tests/sessions/test_ring_buffer.py` fixture 2,
+  projection tests in `tests/engine/test_state.py`. Browser-verify owed
+  (refresh mid-hand on the deployed build) — tracked in DEF-04's next pass.
+
+### Root cause (verified against spec + record)
+
+`TableHandle._snapshot_provider` ([server/registry.py:479](../../mahjong/server/registry.py#L479))
+returns `project_state(self._initial_state, seat)` — the **deal-time** state. `_initial_state`
+is only reassigned between hands ([registry.py:892](../../mahjong/server/registry.py#L892)).
+The session-mux replay buffer only accumulates while a seat is HELD
+([sessions/mux.py:514-534](../../mahjong/sessions/mux.py#L514-L534)), and the same-user
+takeover path replays nothing ([mux.py:425-436](../../mahjong/sessions/mux.py#L425-L436)).
+So any refresh / socket drop mid-hand rebuilds the client from **the original deal plus only
+the disconnect-window events** — every event between deal and drop is lost to the new page.
+
+This violates the spec: [session-mux.md fixture 3](session-mux.md) asserts the resume
+snapshot "matches **current** `project(state, seat)`". The mux unit tests pass because they
+wire a current-state provider closure; the registry (and its twin
+[web/server.py:206](../../mahjong/web/server.py#L206) — mirror-both-loops rule applies)
+wires the stale one. Same seam-test gap as the wire→UI lesson: the provider contract was
+never integration-tested. DEF-15's premise ("reconnect snapshot has no global discard
+order") silently assumed the snapshot carried current per-seat discards — it carries none.
+
+### How it explains all three symptoms
+
+After a mid-hand resume the client hand = deal(13) + post-drop draws, re-sorted, **minus
+nothing discarded before the drop**. Concretely for South: the F1 (East Wind) discarded at
+seq 3 (15:53:20Z) **reappears** in the displayed hand. Pressing its key → `actionForKey`
+matches the stale tile string against the server's `legal_actions`, which no longer contain
+`PLAY F1` → returns `null` → **silent no-op, forever** ("persistently not able to discard
+EW"). The oversized array (15+ tiles) shifts real tiles past the 14-slot key map, so newly
+drawn tiles become hard/impossible to target ("can't discard drawn tiles"; latency spikes
+of 68s/141s/87s on South's turns in the record). After HAND_END, a refresh re-serves the
+hand-0 deal — which reads as "the new hand dealt me the exact same tiles".
+
+### Fix shape
+
+Make the snapshot provider serve the **current** authoritative state (per spec), not the
+deal: thread a live-state read out of `mgr.run_hand` (e.g. a state-ref holder the table
+manager updates per step) and have both hand loops' providers project from it. Buffer
+replay semantics stay as-is. *Alternative rejected:* always-buffer-whole-hand + replay
+(event-sourcing the resume) — keeps a second source of truth and still breaks on overflow.
+
+### Verification fixtures
+
+1. Mid-hand resume: run a scripted hand to turn N, drop + reattach a human seat, assert
+   `ATTACHED.snapshot` equals `project(current_state, seat)` (concealed reflects all
+   draws/discards to date). Pins fixture 3 at the **registry** boundary.
+2. Same-user takeover mid-hand (refresh race): same assertion through the LIVE-takeover path.
+3. Post-HAND_END refresh: reattach after terminal, assert snapshot is **not** the hand's
+   deal (terminal or next-hand state, per lifecycle position).
+
+## FB-18 — Drawn-tile discard targeting: Enter falls back to sorted-last, key map fights the display order
+
+- **Report(s):** same session as FB-17 (contributing cause of "can't discard newly drawn
+  tiles").
+- **Priority:** P1 — wrong-tile discards and unreachable tiles even with a fully synced board.
+- **Status:** triaged — root-caused by code reading; fix not started.
+
+### Root cause
+
+Two related defects in the client input layer:
+
+1. **Enter fallback targets the wrong tile.** `actionForKey`
+   ([web/static/prompt.js:107-116](../../mahjong/web/static/prompt.js#L107-L116)) falls back
+   to `ownConcealed[length-1]`, with a comment claiming that's "the just-drawn tile". The
+   engine **sorts concealed after every draw**
+   ([`engine/transition/__init__.py:140-141`](../../mahjong/engine/transition/__init__.py#L140-L141)),
+   so the last element is the highest-sorting tile (honors), not the draw. This is the
+   8.7.e bug class again (derive from a canonicalised collection instead of reading the
+   authoritative `view.last_drawn.tile` slot).
+2. **Digit keys index the raw sorted array; the display reorders it.**
+   `renderOwnConcealedTiles` ([web/static/render.js:300-318](../../mahjong/web/static/render.js#L300-L318))
+   pulls the just-drawn tile out of sort order and renders it last, but
+   `TILE_CODE_TO_INDEX` ([prompt.js:26-41](../../mahjong/web/static/prompt.js#L26-L41))
+   maps keys to **raw** indices. Every tile sorted after the drawn tile's slot is
+   off-by-one between what the player counts on screen and what the key selects; the
+   visually-last tile (the draw) is *not* selected by the last key.
+
+### Fix shape
+
+(1) Enter fallback reads `view.last_drawn.tile` (when own seat drew and holds it) and falls
+back to the explicit selection only otherwise. (2) Make selection operate in **display
+order**: map key/arrow indices through the same render-order list (`origIdx`) the renderer
+builds, so screen position N always means key N. Pin both with prompt-bar unit tests plus a
+Playwright test that discards the just-drawn tile via Enter and via its position key.
+
+## FB-19 — Next hand can start without every player's ready; no ready gate at match end
+
+- **Report(s):** verbal (ConnorL, 2026-06-12): "it did not wait for all players to ready up
+  when the end of the game was reached."
+- **Priority:** P2 — flow correctness; compounded badly by FB-17 (a desynced player never
+  sends READY and gets steamrolled or stranded).
+- **Status:** triaged — exact trigger for the 2026-06-12 instance indeterminate (no
+  persisted server logs — see DEF-20); the three soft spots below are all real by reading.
+
+### The three gate soft spots ([server/registry.py](../../mahjong/server/registry.py))
+
+1. **Match end skips the gate entirely**: the `max_hands` break
+   ([registry.py:861-863](../../mahjong/server/registry.py#L861-L863)) exits before
+   `_await_humans_ready()` is ever reached — the FB-02 gate only guards *between* hands.
+   (Live `serve` runs `max_hands=None`, so this affects finite-match tables.)
+2. **Non-LIVE humans are vacuously ready**: `_all_live_humans_ready`
+   ([registry.py:720-723](../../mahjong/server/registry.py#L720-L723)) counts only LIVE
+   seats — a player mid-refresh (HELD) at gate time is silently skipped, so the next hand
+   can begin the moment the *other* player readies (or instantly, if no one is LIVE).
+3. **120 s timeout advances silently** ([registry.py:737-738](../../mahjong/server/registry.py#L737-L738))
+   with no signal to the still-reading player.
+
+For the 2026-06-12 hand: HAND_END at 16:02:39Z, and **no hand-1 row was ever reserved**
+(`hand_index` table) — the loop either sat in the gate until the server was killed
+(~16:04) or crashed in the between-hands block; stdout was not captured, so the instance
+can't be post-mortemed (hence DEF-20).
+
+### Fix shape
+
+Hold HELD seats in the gate (a held seat is a player coming back — wait for their resume
+up to the existing timeout, don't vacuously pass them); add a match-end summary state that
+also waits for acks before tearing down; log gate entry/exit/timeout
+(`ready_gate_advanced reason=all_ready|timeout|vacuous`) so the next occurrence is
+attributable. Fixtures: (a) two LIVE humans, one READY → gate holds; (b) one human goes
+HELD mid-gate → gate still waits for their resume+READY until timeout; (c) max-hands match
+end → summary held until both ack.
 
 ## Triaged but not yet fixed (this session's reports)
 

@@ -147,6 +147,24 @@ def _mask_concealed_kong_for_opponent(meld: dict[str, Any]) -> dict[str, Any]:
     return masked
 
 
+def final_hands_view(state: GameState) -> list[dict[str, Any]]:
+    """The per-seat settlement reveal: every hand face-up.
+
+    Single source of the `final_hands` shape — used by both the HAND_END
+    record event (records/diff.py) and the terminal projection (FB-17), so
+    the two can't drift. Only meaningful at TERMINAL; callers gate on that.
+    """
+    return [
+        {
+            "seat": s["seat"],
+            "concealed": list(s["concealed"]),
+            "melds": [dict(m) for m in s["melds"]],
+            "flowers": list(s["flowers"]),
+        }
+        for s in state["seats"]
+    ]
+
+
 def project(state: GameState, seat: int | None) -> SeatView:
     """Privacy-filtered view of `state` for `seat`.
 
@@ -197,6 +215,28 @@ def project(state: GameState, seat: int | None) -> SeatView:
         else [cast(PendingClaim, dict(c)) for c in state["pending_claims"] if c["seat"] == seat]
     )
 
+    # FB-17: the projection carries `last_drawn` so a reconnect snapshot is
+    # self-sufficient (just-drawn offset + Enter-to-tsumogiri survive a
+    # refresh). Who drew is public (the DRAW event shows it); the tile is
+    # private to the drawing seat — same redaction rule as `project_event`.
+    # The public (spectator) view keeps omitting the field entirely.
+    last_drawn_view: dict[str, Any] | None = None
+    if seat is not None and state["last_drawn"] is not None:
+        ld = state["last_drawn"]
+        last_drawn_view = {
+            "seat": ld["seat"],
+            "tile": ld["tile"] if ld["seat"] == seat else None,
+        }
+
+    # FB-17: at TERMINAL the view's `terminal` carries the same `final_hands`
+    # settlement reveal as the HAND_END record event (built by the shared
+    # helper so the two shapes cannot drift). Revealing every hand at
+    # settlement is MCR-legitimate — privacy applies to in-hand frames only.
+    terminal_view: dict[str, Any] | None = None
+    if state["terminal"] is not None:
+        terminal_view = dict(state["terminal"])
+        terminal_view["final_hands"] = final_hands_view(state)
+
     view: SeatView = {
         "ruleset": cast(RuleSetRef, dict(state["ruleset"])),
         "round_wind": state["round_wind"],
@@ -211,10 +251,10 @@ def project(state: GameState, seat: int | None) -> SeatView:
         "pending_claims": own_claims,
         "phase": state["phase"],
         "current_actor": state["current_actor"],
-        "terminal": (
-            cast("Any", dict(state["terminal"])) if state["terminal"] is not None else None
-        ),
+        "terminal": cast("Any", terminal_view),
     }
+    if seat is not None:
+        view["last_drawn"] = cast("Any", last_drawn_view)
     return view
 
 

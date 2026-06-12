@@ -223,11 +223,66 @@ def test_project_omits_rng() -> None:
     assert "rng" not in view
 
 
-def test_project_omits_last_drawn() -> None:
-    """`last_drawn` is an engine hint, not a public projection field."""
+def test_project_includes_own_last_drawn() -> None:
+    """FB-17: the per-seat projection carries `last_drawn` so a reconnect
+    snapshot is self-sufficient (the client's just-drawn offset and the
+    Enter-to-tsumogiri shortcut survive a refresh). Own seat sees the tile."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, 0)  # dealer holds the just-drawn 14th tile
+    assert view["last_drawn"] == s["last_drawn"]
+    assert view["last_drawn"] is not s["last_drawn"]  # copy, not alias
+
+
+def test_project_redacts_last_drawn_tile_for_other_seats() -> None:
+    """Another seat learns *who* drew (public knowledge, same as the DRAW
+    event projection) but never *what* they drew."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    view = state.project(s, 1)
+    assert view["last_drawn"] == {"seat": 0, "tile": None}
+
+
+def test_project_last_drawn_none_passes_through() -> None:
+    s = state.initial_state(MCR_REF, seed=12345)
+    s = dict(s)  # type: ignore[assignment]
+    s["last_drawn"] = None
+    view = state.project(s, 0)  # type: ignore[arg-type]
+    assert view["last_drawn"] is None
+
+
+def _terminal_stub() -> dict[str, Any]:
+    return {
+        "kind": "EXHAUSTIVE_DRAW",
+        "winner": None,
+        "win_tile": None,
+        "win_type": None,
+        "deal_in_seat": None,
+        "fan": [],
+        "fan_total": 0,
+        "score_delta": [0, 0, 0, 0],
+    }
+
+
+def test_project_terminal_includes_final_hands_reveal() -> None:
+    """FB-17: at TERMINAL the projection's `terminal` carries the same
+    `final_hands` settlement reveal the HAND_END record event does, so a
+    post-hand reconnect snapshot can render the summary without the frame."""
+    s = state.initial_state(MCR_REF, seed=12345)
+    s = dict(s)  # type: ignore[assignment]
+    s["phase"] = "TERMINAL"
+    s["terminal"] = _terminal_stub()
+    view = state.project(s, 1)  # type: ignore[arg-type]
+    hands = view["terminal"]["final_hands"]
+    assert [h["seat"] for h in hands] == [0, 1, 2, 3]
+    # Full reveal — including seats other than the viewer's.
+    assert hands[0]["concealed"] == s["seats"][0]["concealed"]
+    assert hands[0]["melds"] == s["seats"][0]["melds"]
+    assert hands[0]["flowers"] == s["seats"][0]["flowers"]
+
+
+def test_project_non_terminal_has_no_final_hands() -> None:
     s = state.initial_state(MCR_REF, seed=12345)
     view = state.project(s, 0)
-    assert "last_drawn" not in view
+    assert view["terminal"] is None
 
 
 def test_initial_state_last_drawn_is_dealer_fourteenth_tile() -> None:
@@ -356,7 +411,8 @@ def test_project_public_view_terminal_fully_visible() -> None:
         "score_delta": [-8, -8, 24, -8],
     }
     view = state.project(s, None)  # type: ignore[arg-type]
-    assert view["terminal"] == s["terminal"]
+    # Terminal passes through in full, plus the FB-17 `final_hands` reveal.
+    assert view["terminal"] == {**s["terminal"], "final_hands": state.final_hands_view(s)}
 
 
 # --- project_event(event, seat=...) (Step 7.0) ---

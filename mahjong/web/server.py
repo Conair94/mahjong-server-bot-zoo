@@ -127,6 +127,10 @@ class WebOrchestrator:
         self._initial_state: GameState = initial_state(
             ruleset, seed=seed, dealer_seat=0, hand_index=0
         )
+        # FB-17: current engine state of the running hand (run_hand's
+        # state_callback), so reconnect snapshots are live, not deal-time.
+        # Mirrors TableHandle._live_state — keep both hand loops in sync.
+        self._live_state: GameState | None = None
         # Running cumulative match score across hands (Spec 40), mirroring
         # TableHandle. Display-only, not persisted; rides each snapshot.
         self._match_score = MatchScore()
@@ -204,7 +208,8 @@ class WebOrchestrator:
     # --- providers for TableSessions ---
 
     def _snapshot_provider(self, seat: int | None) -> dict[str, Any]:
-        snapshot = cast(dict[str, Any], project_state(self._initial_state, seat))
+        source = self._live_state if self._live_state is not None else self._initial_state
+        snapshot = cast(dict[str, Any], project_state(source, seat))
         # Spec 40: splice the running match score onto the snapshot (mirrors
         # TableHandle._annotate_match_scores).
         snapshot["match_scores"] = self._match_score.to_wire()
@@ -214,6 +219,10 @@ class WebOrchestrator:
             if isinstance(s, int) and 0 <= s < len(cumulative):
                 seat_view["match_score"] = cumulative[s]
         return snapshot
+
+    def _on_hand_state(self, state: GameState) -> None:
+        """run_hand's state_callback — keep the snapshot source current."""
+        self._live_state = state
 
     def _record_path_for_hand(self, hand_index: int) -> Path:
         """Per-hand record path.  Hand 0 uses ``_record_path`` as-is so that
@@ -331,6 +340,7 @@ class WebOrchestrator:
                     decide_timeout_seconds=self._decide_timeout_seconds,
                     strike_limit=self._strike_limit,
                     event_callback=self._sessions.fanout_event_to_spectators,
+                    state_callback=self._on_hand_state,
                     dealer_seat=self._dealer_seat,
                     hand_index_in_match=self._hand_index,
                 )
@@ -366,6 +376,9 @@ class WebOrchestrator:
                     dealer_seat=self._dealer_seat,
                     hand_index=self._hand_index,
                 )
+                # FB-17: between hands the snapshot must show the next deal,
+                # not the finished hand (mirrors TableHandle).
+                self._live_state = None
 
                 # Issue DETACH(hand_ended) + ATTACHED(new hand) to all seats.
                 await self._sessions.begin_next_hand()

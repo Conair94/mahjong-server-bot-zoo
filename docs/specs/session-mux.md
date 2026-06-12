@@ -146,11 +146,9 @@ The four invariants the implementation must hold:
 Per-seat circular buffer of projected wire-`EVENT` payloads.
 
 - **Capacity.** Default 256 events. Sized to comfortably hold one full hand (an MCR hand has roughly 100–150 wire-visible events to a participating seat). Configurable via `MAHJONG_RESUME_BUFFER_SIZE`.
-- **Overflow policy.** Oldest event evicted. On `RESUME`, if the client's last-seen `event.seq` is older than the oldest event in the buffer (i.e., we evicted past the client's resume point), the server sends `ATTACHED` with a fresh `snapshot` and `resume_buffer_size = 0`. The client treats it as a fresh attach.
-- **Reset.** On `LIVE → UNBOUND` and on hand end. Each hand starts with an empty buffer.
-- **What's stored.** The projected wire shape, not the raw `RecordEvent`. Projection happens once at `observe` time; the buffer is replay-cheap.
-
-The "buffer overflow → fresh snapshot" policy is the only place session-mux gives up on perfect event replay. The alternative — unbounded buffer — opens a DoS vector (a disconnected client whose seat is held indefinitely could accumulate memory). Bounded buffer + fall-back-to-snapshot is the bounded-memory variant.
+- **Resume policy** *(revised 2026-06-12, FB-17)*. Every reattach — fresh bind, HELD resume, same-user takeover, overflow — sends `ATTACHED` with a fresh **current** `snapshot` (`project(state, seat)` at attach time) and `resume_buffer_size = 0`. Buffered `EVENT` frames are **never replayed**: the current snapshot already includes their effects, so replaying them double-applies in the client reducer (the FB-17 desync). The one buffered frame still re-delivered on resume is a `HAND_END` (idempotent settlement summary).
+- **Reset.** On `LIVE → UNBOUND`, on resume, and on hand end. Each hand starts with an empty buffer.
+- **What's stored.** The projected wire shape, not the raw `RecordEvent`. With the FB-17 resume policy the EVENT entries are vestigial (only `HAND_END` is consumed) — removal or a true delta-resume (at-drop snapshot + replay) is parked as DEF-21 in the feedback backlog.
 
 ## Pending prompt across reconnect
 
@@ -293,7 +291,7 @@ The seat state machine in this spec is unchanged by [multi-human-seats.md](multi
 ## Alternatives considered
 
 - **Per-connection seat state instead of per-`(user, table, seat)` state.** Simpler in code: every reconnect is a fresh seat-bind. Rejected: it makes reconnect mid-hand effectively impossible (no continuity of identity from the table manager's perspective; the manager would see seat A leave and a new seat A join, and the strike counter would reset). The per-tuple model preserves identity across socket changes.
-- **No ring buffer; on reconnect always re-send a fresh snapshot.** Simpler. Rejected: a fresh snapshot is a `SeatView`, which loses event-ordering and timing fidelity. Some UI affordances (last-discard highlight, recent-meld animation) need event order. Re-sending the buffer is cheap and preserves these.
+- **No ring buffer; on reconnect always re-send a fresh snapshot.** Originally rejected ("a fresh snapshot loses event-ordering fidelity; some UI affordances need event order"). **Adopted 2026-06-12 (FB-17), reversing that call.** The original design assumed a stale-base snapshot + replay reconstructs current state, but the snapshot provider contract (fixture 3) is the *current* `project(state, seat)` — replaying HELD-window EVENTs on top double-applies them in the client reducer, which is exactly the FB-17 phantom-tile desync. The affordances the replay was preserving are carried by view fields (`last_discard`, `last_drawn`, `terminal`) in the snapshot itself, and a reconnecting page has no animation context to preserve anyway. The one frame still re-delivered from the buffer is a `HAND_END` (idempotent summary data). The HELD-window buffer itself is retained but vestigial — see DEF-21.
 - **Unbounded ring buffer.** Avoids the "overflow → fresh snapshot" code path. Rejected: DoS vector (a held seat could accumulate megabytes if events kept happening — though they can't, since a held seat is a stalled hand). The bound is cheap insurance.
 - **Implement the hold timer in the table manager, not session-mux.** Would couple the timer to the hand lifecycle. Rejected: the hold timer must survive *the seat transitioning from `LIVE` to `HELD`*, which the table manager doesn't observe (the table manager only observes prompt-level outcomes). Keeping the timer in session-mux puts it at the layer that owns the connection state.
 - **`DETACH` could be a single direction (server → client only).** A client could simply close the WebSocket to leave. Rejected: a server-side `DETACH` ack lets the server free resources before the close, and a client-initiated `DETACH` with a `reason` is more diagnostic than a bare close. Cost of supporting both directions is one extra message in the wire spec.
@@ -305,7 +303,7 @@ These are the acceptance criteria for impl step 7.3 (session-mux) and step 7.4 (
 
 1. **State machine: every transition fires exactly once per trigger.** Parameterised test over the 7 transitions in the §"Seat state machine" table. Each test sets up the source state, fires the trigger, asserts the target state and the side effects.
 
-2. **Buffered events replay in order on reconnect.** Setup: bind seat, send 10 `EVENT`s (5 live + drop + 5 buffered), reconnect. Assert: client receives the 5 buffered events in order with `resume_buffer_size = 5`, *then* any new traffic.
+2. **Resume sends a fresh current snapshot, never an EVENT replay** *(revised 2026-06-12, FB-17)*. Setup: bind seat, send 10 `EVENT`s (5 live + drop + 5 buffered), reconnect. Assert: `ATTACHED.snapshot` is re-queried from the provider *at resume time* (current state), `resume_buffer_size = 0`, no `EVENT` frames precede new live traffic. (A buffered `HAND_END` is still re-delivered — see test_hand_end_routing.)
 
 3. **Ring-buffer overflow forces a fresh snapshot.** Setup: `MAHJONG_RESUME_BUFFER_SIZE = 4`, bind seat, send 10 `EVENT`s while held, reconnect. Assert: `ATTACHED.resume_buffer_size = 0`, `snapshot` matches current `project(state, seat)`.
 
