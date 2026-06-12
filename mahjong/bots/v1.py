@@ -43,7 +43,7 @@ from mahjong.engine import pymj
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.scoring import lookup_x
 from mahjong.engine.tiles import Tile, tile_sort_key
-from mahjong.engine.types import Action, Meld, SeatView, SeatViewOpponent
+from mahjong.engine.types import Action, GangAction, Meld, SeatView, SeatViewOpponent
 
 # --- Hand-tuned constants (orderings pinned by tests, literals tunable) ------
 
@@ -130,7 +130,7 @@ def decide_action(
 
 
 def _best_viable_gang(
-    gangs: list[Action],
+    gangs: list[GangAction],
     view: SeatView,
     seat: int,
     prompt_kind: PromptKind,
@@ -158,7 +158,7 @@ def _best_viable_gang(
         # the claim logic if the kong is refused).
         alternative = effective_distance(concealed, melds, seat_wind, round_wind, config, remaining)
 
-    viable: list[Action] = []
+    viable: list[GangAction] = []
     for action in gangs:
         after_concealed, after_melds = _apply_gang(action, concealed, melds, seat)
         d = effective_distance(
@@ -168,7 +168,7 @@ def _best_viable_gang(
             viable.append(action)
     if not viable:
         return None
-    return min(viable, key=lambda a: (tile_sort_key(a["tile"]), a["kind"]))  # type: ignore[typeddict-item]
+    return min(viable, key=lambda a: (tile_sort_key(a["tile"]), a["kind"]))
 
 
 def _apply_gang(
@@ -180,7 +180,7 @@ def _apply_gang(
     tile: Tile = action["tile"]  # type: ignore[typeddict-item]
     kind = action["kind"]  # type: ignore[typeddict-item]
     new_concealed = list(concealed)
-    new_melds = [dict(m) for m in melds]
+    new_melds: list[Meld] = [m.copy() for m in melds]
 
     if kind == "CONCEALED":
         for _ in range(4):
@@ -197,7 +197,7 @@ def _apply_gang(
                 m["type"] = "GANG_ADDED"
                 m["tiles"] = [tile] * 4
                 break
-    return new_concealed, [m for m in new_melds]  # type: ignore[misc]
+    return new_concealed, [m for m in new_melds]
 
 
 # --- Distance and offense ----------------------------------------------------

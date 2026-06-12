@@ -24,7 +24,7 @@ from mahjong.engine import pymj, scoring
 from mahjong.engine.rulesets import resolve_config
 from mahjong.engine.tiles import tile_sort_key
 from mahjong.engine.transition import clone_state
-from mahjong.engine.types import FanEntry, GameState, Meld, Terminal
+from mahjong.engine.types import FanEntry, GameState, Meld, Terminal, WinType
 
 
 def apply_hu(state: GameState, seat: int) -> GameState:
@@ -37,7 +37,7 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         assert last is not None
         win_tile = last["tile"]
         deal_in_seat: int | None = last["seat"]
-        win_type = "DISCARD"
+        win_type: WinType = "DISCARD"
         hand = list(seat_data["concealed"])
         # Tile becomes part of the winning hand visually; record convention
         # leaves it implicit (the meld layout reconstructs the shape).
@@ -63,7 +63,7 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         hand,
         melds,
         win_tile,
-        win_type=win_type,  # type: ignore[arg-type]
+        win_type=win_type,
         seat_wind=seat_data["seat_wind"],
         round_wind=new["round_wind"],
         ruleset_config=config,
@@ -75,7 +75,7 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         fan_total,
         win_type,
         deal_in_seat,
-        conversion=config.get("conversion"),  # type: ignore[arg-type]
+        conversion=config.get("conversion"),
     )
     for i in range(4):
         new["seats"][i]["score"] += score_delta[i]
@@ -84,7 +84,7 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         "kind": "HU",
         "winner": seat,
         "win_tile": win_tile,
-        "win_type": win_type,  # type: ignore[typeddict-item]
+        "win_type": win_type,
         "deal_in_seat": deal_in_seat,
         "fan": list(fans),
         "fan_total": fan_total,

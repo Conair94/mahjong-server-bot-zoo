@@ -14,6 +14,7 @@ This is also the bot-explainability surface: `discards[]` is the quantity
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -114,7 +115,7 @@ def prompt_stats(
         "shanten": _shanten(tuple(concealed), _meld_key(melds)),
         "tiles": _tiles_block(concealed, melds, seat_wind, round_wind, raw_config, counts),
     }
-    claims = []
+    claims: list[dict[str, Any]] = []
     for action in legal_actions:
         if action["type"] not in ("PENG", "CHI", "GANG"):
             continue
@@ -146,7 +147,7 @@ def _tiles_block(
     melds_key = _meld_key(melds)
     base = _shanten(tuple(standing), melds_key)
     if base == 0:
-        rows = []
+        rows: list[dict[str, Any]] = []
         for wait in sorted(pymj.winning_tiles(standing, melds), key=tile_sort_key):
             rows.append(
                 {
@@ -267,10 +268,16 @@ def _shanten(concealed: tuple[Tile, ...], melds_key: _MeldKey) -> int:
     return pymj.shanten(list(concealed), melds)
 
 
-def stats_for_prompt(prompt: dict[str, Any], seat: int) -> dict[str, Any] | None:
+def stats_for_prompt(prompt: Mapping[str, Any], seat: int) -> dict[str, Any] | None:
     """`HumanAdapter.stats_provider`-shaped binding: unpacks the seat-port
     `Prompt` (which already carries the authoritative per-seat view and the
     legal actions) into `prompt_stats`. Bound at the composition roots.
+
+    The param is typed `Mapping` (not the strict `Prompt` TypedDict) on
+    purpose: this binding only *reads* the prompt, and a read-only `Mapping`
+    parameter is what makes `stats_for_prompt` assignable to the
+    `StatsProvider = Callable[[Prompt, int], ...]` alias (a callable taking a
+    `dict[str, Any]` is not — a TypedDict is not a `dict` subtype).
 
     Gated to **DISCARD** prompts (Spec 37 revision, 2026-06-12): only when the
     seat holds 14 tiles and must choose a discard is "which tile, and how far

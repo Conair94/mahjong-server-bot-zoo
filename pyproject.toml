@@ -29,11 +29,13 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    # mypy is intentionally left floating here: the type-check step has its own
-    # pre-existing failures (and the code's PEP 695 generics need mypy >= 1.12,
-    # so pre-commit's v1.10.1 pin is itself stale) — that cleanup is tracked
-    # separately, not in this formatting PR.
-    "mypy>=1.10",
+    # Pin mypy to the SAME version pre-commit uses (.pre-commit-config.yaml:
+    # mirrors-mypy v2.1.0) for the same reason ruff is pinned below: CI installs
+    # mypy from here with no floor of its own, so a floating `>=` lets CI drift
+    # away from the version contributors run locally. 2.1.0 also parses the
+    # code's PEP 695 generics (mahjong/selfplay/seeds.py), which the old v1.10.1
+    # pre-commit pin could not. Bump this and the pre-commit rev together.
+    "mypy==2.1.0",
     # Pin ruff to the SAME version pre-commit uses (.pre-commit-config.yaml:
     # ruff v0.5.5). CI installs ruff from here with no floor of its own, so an
     # unpinned `>=` let CI float to a newer ruff whose formatter diverged from
