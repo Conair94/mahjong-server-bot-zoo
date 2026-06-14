@@ -731,37 +731,71 @@ class TableHandle:
         self._ready_seats.add(seat)
         self._ready_changed.set()
 
-    def _live_human_seats(self) -> set[int]:
+    def _gated_human_seats(self) -> set[int]:
+        """Human seats the between-hand summary gate waits on.
+
+        LIVE (present) **and** HELD (mid-reconnect — a player coming back, not a
+        no-show) both count. FB-19 soft spot 2: the old version counted only
+        LIVE seats, so a player who was *refreshing* (HELD) at gate time was
+        silently skipped and the next hand could start the instant the *other*
+        human readied — steamrolling the returning player. UNBOUND seats
+        (definitively gone / never bound) still drop out so they can't stall the
+        table; the gate timeout is the backstop for a HELD seat whose hold
+        expires without resuming."""
         return {
             i
             for i in range(4)
-            if self.is_human_seat(i) and self._sessions.seat(i).state is SeatState.LIVE
+            if self.is_human_seat(i)
+            and self._sessions.seat(i).state in (SeatState.LIVE, SeatState.HELD)
         }
 
-    def _all_live_humans_ready(self) -> bool:
-        # Vacuously true when no human is LIVE (pure-bot table, or all humans
-        # dropped during the gate) → advance without waiting.
-        return self._live_human_seats() <= self._ready_seats
+    def _all_gated_humans_ready(self) -> bool:
+        # Vacuously true when no human is gated (pure-bot table, or every human
+        # UNBOUND) → advance without waiting.
+        return self._gated_human_seats() <= self._ready_seats
 
     async def _await_humans_ready(self) -> None:
-        """Block until every LIVE human seat has sent READY, the drain stop fires,
-        or ``ready_timeout_seconds`` elapses (safety net for a human who left).
+        """Block until every gated human seat has sent READY, the drain stop
+        fires, or ``ready_timeout_seconds`` elapses (safety net for a human who
+        left).
 
         The timeout means a disconnected / walked-away human can never stall the
-        table forever; an explicit READY from everyone advances immediately."""
+        table forever; an explicit READY from everyone advances immediately.
+
+        FB-19 soft spot 3: logs gate open + advance(reason) so a gate that holds
+        unexpectedly long, or advances while a player was still reconnecting, is
+        attributable from the server log rather than silent (complements DEF-20,
+        which owes persisted logs)."""
         self._ready_seats.clear()
         self._ready_changed.clear()
+        gated = self._gated_human_seats()
+        if not gated:
+            _logger.info(
+                "ready_gate_advanced table=%s hand_index=%s reason=vacuous waited_on=[]",
+                self._table_id,
+                self._hand_index,
+            )
+            return
+        _logger.info(
+            "ready_gate_opened table=%s hand_index=%s waiting_on=%s timeout=%.0fs",
+            self._table_id,
+            self._hand_index,
+            sorted(gated),
+            self._ready_timeout_seconds,
+        )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + self._ready_timeout_seconds
-        while not (self._stop_event.is_set() or self._all_live_humans_ready()):
+        reason = "all_ready"
+        while not (self._stop_event.is_set() or self._all_gated_humans_ready()):
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return
+                reason = "timeout"
+                break
             # Clear-then-recheck so a READY that arrives between the loop guard
             # and this wait isn't lost.
             self._ready_changed.clear()
-            if self._stop_event.is_set() or self._all_live_humans_ready():
-                return
+            if self._stop_event.is_set() or self._all_gated_humans_ready():
+                break
             stop_wait = asyncio.ensure_future(self._stop_event.wait())
             ready_wait = asyncio.ensure_future(self._ready_changed.wait())
             try:
@@ -773,6 +807,16 @@ class TableHandle:
             finally:
                 stop_wait.cancel()
                 ready_wait.cancel()
+        if reason != "timeout":
+            reason = "stop" if self._stop_event.is_set() else "all_ready"
+        _logger.info(
+            "ready_gate_advanced table=%s hand_index=%s reason=%s ready=%s waited_on=%s",
+            self._table_id,
+            self._hand_index,
+            reason,
+            sorted(self._ready_seats),
+            sorted(gated),
+        )
 
     async def on_socket_dropped(self, conn: Any) -> None:
         await self._sessions.on_socket_dropped(conn)
@@ -897,10 +941,14 @@ class TableHandle:
                 if self._stop_event.is_set():
                     break
 
-                # FB-02: hold the HAND_END summary until every LIVE human seat
+                # FB-02 / FB-19: hold the HAND_END summary until every gated
+                # human seat (LIVE *or* HELD — a refreshing player isn't skipped)
                 # acknowledges it (READY), with a timeout safety net — instead of
-                # auto-advancing in ~1s. Pure-bot tables aren't gated (no LIVE
-                # humans → returns immediately).
+                # auto-advancing in ~1s. Pure-bot tables aren't gated (no gated
+                # humans → returns immediately). NOTE: the match-end summary
+                # (max_hands reached) still skips this gate — deferred, see the
+                # FB-19 DEF row; live ``serve`` runs max_hands=None so it never
+                # reaches that break.
                 await self._await_humans_ready()
                 if self._stop_event.is_set():
                     break

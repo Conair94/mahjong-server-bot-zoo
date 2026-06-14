@@ -51,7 +51,7 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-16 | bug | Typing in a text field (bug-report box / chat) fires game shortcuts — Space passes, H toggles HU, Enter discards | P1 | implemented | (this doc — keydown editable-target guard) |
 | FB-17 | bug | Reconnect/refresh serves the deal-time snapshot — board desync, phantom un-discardable tiles, "new hand = same hand" | **P0** (game-breaking) | implemented | (this doc — live-state snapshot provider) |
 | FB-18 | bug | Drawn-tile discard targeting: Enter falls back to sorted-last tile; digit keys fight the reordered display | P1 | implemented | (this doc) |
-| FB-19 | bug | Next hand can start without every player's READY; no ready gate at match end | P2 | triaged | (this doc) |
+| FB-19 | bug | Next hand can start without every player's READY; no ready gate at match end | P2 | implemented | (this doc — HELD gating + gate logging; match-end gate → DEF-24) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
 
@@ -86,6 +86,7 @@ stack trace it was waiting for.
 | DEF-19 | **Draggable / movable table panels** — the player's stated ideal for chat/stats/score panes (click-and-drag, free positioning). Spec 40 ships the fallback instead: chat in a narrower side column, stats + score widget stacked under the game pane. | A free-form windowing system (drag state, z-order, collision, persisted positions) is a large surface that fights the fixed ASCII grid, for a cosmetic gain over the fixed layout. | A player asks again for movable panels, or the fixed layout proves too constraining once the score widget + stats both see use. | [in-game-scoreboard.md § Non-goals](in-game-scoreboard.md); panel grid in [web/static/app.js](../../mahjong/web/static/app.js) `TablePage` |
 | DEF-20 | **Persist `serve` logs to a file** (rotating file handler or `tee` in the admin-console supervisor). Logs go to stdout only; when the terminal/process is gone, so is the evidence. The 2026-06-12 FB-19 instance (hand loop stalled or crashed after `...-t1-h0`; no hand-1 row ever reserved) is unattributable for exactly this reason — `hand_loop_crashed`/`hand_step_stalled` may have fired and we'll never know. | Small ops change, but touches logconfig + admin-console supervision; macOS dev box isn't the deploy target. | Next unexplained mid-session stall (any instrument-and-defer grep string firing with no captured output), or the Linux production deploy (DEF-09). | [server/logconfig.py](../../mahjong/server/logconfig.py); admin console supervisor in [admin-console.md](admin-console.md) |
 | DEF-21 | **Vestigial EVENT entries in the session-mux resume buffer.** The FB-17 resume policy (fresh current snapshot, no EVENT replay) leaves `SeatSession._buffer`'s EVENT entries written-but-never-read (only a buffered `HAND_END` is consumed on resume). Either strip EVENT buffering or build a true delta-resume (at-drop snapshot + replay) if event-order affordances are ever wanted on reconnect. | Removal touches the observe path + overflow bookkeeping + several fixtures for zero behavior change; delta-resume is speculative until someone misses the affordances. | Next structural change to `sessions/mux.py`, or a player-visible want for replay-fidelity on reconnect. | [session-mux.md § Ring buffer](session-mux.md); `_append_buffer` in [sessions/mux.py](../../mahjong/sessions/mux.py) |
+| DEF-24 | **FB-19 soft spot 1: the match-end summary skips the ready gate.** A finite-match table (`max_hands` set) breaks out of the hand loop the instant the last hand ends — *before* `_await_humans_ready` — so the final HAND_END summary is never acknowledged before teardown. (Soft spots 2 + 3 — HELD gating + gate logging — landed 2026-06-14.) | No live impact: `serve` runs `max_hands=None`, so the `max_hands` break never fires in production. Adding the gate here changes finite-match-with-LIVE-human test behavior (e.g. `test_resume_snapshot` runs `max_hands=1` with an attached human → would newly block on a never-sent READY) and needs a distinct match-end summary state, not just the between-hand gate. | A finite-match / tournament mode ships (`max_hands` set on a live table), or a player reports the end-of-match summary flashing. | the `next_hand_index >= self._max_hands` break in [server/registry.py](../../mahjong/server/registry.py) `_run_hand_loop`; fixture (c) in the FB-19 section of this doc. |
 | DEF-22 | **Web-client E2E (Playwright) tests don't run in CI** — `tests/web/` requires `playwright` + browser binaries, which aren't in `[dev]` deps or any CI step, so CI now `importorskip`s the whole tree (1 skip). The suite has *never* run in CI; it was masked behind the long-red mypy step until that went green (2026-06-12). Browser-verify of UI remains a manual, owed activity (many `project_layer8_browser_verified`-class items). | Wiring it in needs a CI `playwright install chromium` step (~150 MB download) across the 4-cell matrix, and macOS-runner browser E2E is notably flaky — real cost for tests that duplicate manual browser-verify. | A web-UI regression slips through that an E2E test would have caught, or CI gains a dedicated (non-matrix) E2E job. | `pytest.importorskip("playwright")` in [tests/web/conftest.py](../../tests/web/conftest.py); CI matrix in [.github/workflows/ci.yml](../../.github/workflows/ci.yml) |
 
 When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
@@ -723,8 +724,11 @@ skips the web tree — DEF-22.)
   when the end of the game was reached."
 - **Priority:** P2 — flow correctness; compounded badly by FB-17 (a desynced player never
   sends READY and gets steamrolled or stranded).
-- **Status:** triaged — exact trigger for the 2026-06-12 instance indeterminate (no
-  persisted server logs — see DEF-20); the three soft spots below are all real by reading.
+- **Status:** **implemented** (2026-06-14) for the two live-path soft spots (2 + 3); the
+  match-end gate (soft spot 1) is deferred — **DEF-24**, no live impact (`serve` runs
+  `max_hands=None`). Exact trigger for the 2026-06-12 instance stays indeterminate (no
+  persisted server logs — see DEF-20); the gate logging added below is what attributes the
+  next one.
 
 ### The three gate soft spots ([server/registry.py](../../mahjong/server/registry.py))
 
@@ -744,15 +748,32 @@ For the 2026-06-12 hand: HAND_END at 16:02:39Z, and **no hand-1 row was ever res
 (~16:04) or crashed in the between-hands block; stdout was not captured, so the instance
 can't be post-mortemed (hence DEF-20).
 
-### Fix shape
+### Fix (implemented — soft spots 2 + 3)
 
-Hold HELD seats in the gate (a held seat is a player coming back — wait for their resume
-up to the existing timeout, don't vacuously pass them); add a match-end summary state that
-also waits for acks before tearing down; log gate entry/exit/timeout
-(`ready_gate_advanced reason=all_ready|timeout|vacuous`) so the next occurrence is
-attributable. Fixtures: (a) two LIVE humans, one READY → gate holds; (b) one human goes
-HELD mid-gate → gate still waits for their resume+READY until timeout; (c) max-hands match
-end → summary held until both ack.
+Both live-path soft spots are fixed in [server/registry.py](../../mahjong/server/registry.py):
+
+- **Soft spot 2 (HELD vacuously skipped).** `_live_human_seats` → `_gated_human_seats`,
+  now counting human seats that are **LIVE *or* HELD**. A player mid-refresh (HELD) is no
+  longer skipped: the between-hand gate holds for them up to `ready_timeout_seconds` (the
+  backstop for a hold that expires without resuming). Pure-bot tables and all-UNBOUND tables
+  stay vacuous (advance immediately) — bot self-play timing unchanged.
+- **Soft spot 3 (silent advance).** `_await_humans_ready` now logs `ready_gate_opened`
+  (which seats, the timeout) and `ready_gate_advanced reason=all_ready|timeout|vacuous|stop`
+  — so a gate that holds too long, or advances while a player was reconnecting, is
+  attributable from the server log (complements DEF-20, which still owes persisted logs).
+
+**Verification** ([tests/server/test_ready_gate.py](../../tests/server/test_ready_gate.py)):
+the existing FB-02 mechanics still pass; new cases drive a *real* seat to HELD (attach +
+socket-drop) and assert it joins `_gated_human_seats()` and the gate does **not** advance
+when only the other (LIVE) human readies — it advances only once the returning HELD player
+readies too; plus log-reason assertions for the vacuous and timeout paths. **Negative
+control:** both HELD tests fail against the old LIVE-only gate (seat 0's READY advances the
+gate while seat 1 is still HELD) and pass only with the fix. Full server suite: 219 passed.
+
+**Soft spot 1 (match-end gate) is deferred — DEF-24.** It has no live impact (`serve` runs
+`max_hands=None`, so the loop never reaches the `max_hands` break), and gating at match end
+changes finite-match-with-LIVE-human test behavior and needs a distinct match-end summary
+state. Original fixture (c) — max-hands match end → summary held until ack — moves with it.
 
 ## Triaged but not yet fixed (this session's reports)
 
