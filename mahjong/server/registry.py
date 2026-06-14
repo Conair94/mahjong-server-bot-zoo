@@ -257,7 +257,6 @@ class TableHandle:
         strike_limit: int = 3,
         max_hands: int | None = 1,
         between_hand_pause_seconds: float = 2.0,
-        ready_timeout_seconds: float = 120.0,
         persistence: Persistence | None = None,
         data_dir: Path | None = None,
         seats: SeatsTuple | None = None,
@@ -278,7 +277,6 @@ class TableHandle:
         self._strike_limit = strike_limit
         self._max_hands = max_hands
         self._between_hand_pause_seconds = between_hand_pause_seconds
-        self._ready_timeout_seconds = ready_timeout_seconds
         self._persistence = persistence
         self._data_dir = data_dir
         # Bot pacing (Layer-8 §2 — humanize bot turn speed at multi-human
@@ -340,11 +338,24 @@ class TableHandle:
         # by ``_reserve_hand_row`` to fill ``participants[seat].account_id``.
         self._human_identities: dict[int, HumanIdentity] = {}
 
+        # FB-02 / FB-19 (between-hand ready-up gate): between hands the loop waits
+        # for every *gated* human seat (LIVE or HELD) to send READY before
+        # starting the next hand, instead of a fixed pause that flashed the
+        # summary for ~1s. ``_ready_seats`` accumulates per between-hand window;
+        # ``_ready_changed`` wakes the gate on each READY *and* on a hold expiry
+        # (a gated seat dropping out — the gate no longer times out, so the
+        # expiry wake is what lets it advance past a player who's gone).
+        # Initialised before ``TableSessions`` so the ``on_hold_expired`` hook is
+        # safe the instant a seat could expire.
+        self._ready_seats: set[int] = set()
+        self._ready_changed: asyncio.Event = asyncio.Event()
+
         self._sessions: TableSessions = TableSessions(
             table_id=int(table_id),
             snapshot_provider=self._snapshot_provider,
             hand_index_provider=lambda: self._hand_index,
             hold_seconds=self._hold_seconds,
+            on_hold_expired=self._on_gated_seat_expired,
         )
         self._hand_task: asyncio.Task[None] | None = None
         self._match_done: asyncio.Event = asyncio.Event()
@@ -355,14 +366,6 @@ class TableHandle:
         # between-hand pause can wait on it interruptibly — a SIGTERM during the
         # pause stops us immediately rather than after the full pause.
         self._stop_event: asyncio.Event = asyncio.Event()
-
-        # FB-02 (end-game ready-up gate): between hands, the loop waits for each
-        # LIVE human seat to send READY (acknowledging the HAND_END summary)
-        # before starting the next hand, instead of a fixed pause that flashed
-        # the summary for ~1s. ``_ready_seats`` accumulates per between-hand
-        # window; ``_ready_changed`` wakes the gate on each READY / disconnect.
-        self._ready_seats: set[int] = set()
-        self._ready_changed: asyncio.Event = asyncio.Event()
 
     # --- public read-only properties ---
 
@@ -718,17 +721,30 @@ class TableHandle:
             return
         await self._sessions.handle_inbound(conn, msg)
 
-    # --- FB-02: end-game ready-up gate ---
+    # --- FB-02 / FB-19: end-game ready-up gate ---
 
     def _mark_ready(self, conn: Any) -> None:
         """Record a READY from *conn*'s human seat and wake the between-hand gate.
 
         Ignored (silently) from a non-human seat or an unrecognised connection —
-        READY is advisory; a bad frame must not drop the socket."""
+        READY is advisory; a bad frame must not drop the socket. The gate loop,
+        woken by ``_ready_changed``, re-broadcasts the readiness roster."""
         seat = self._seat_for_conn(conn)
         if seat is None or not self.is_human_seat(seat):
             return
         self._ready_seats.add(seat)
+        self._ready_changed.set()
+
+    async def _on_gated_seat_expired(self, seat: int) -> None:
+        """Wake the between-hand gate when a seat's hold expires.
+
+        A HELD seat is *gated* (the player is mid-reconnect); when its hold
+        expires it transitions to UNBOUND and drops out of the gated set. The
+        gate no longer times out (per the live-play tweak: it waits for everyone,
+        showing who it's waiting on), so this wake is what lets it re-evaluate and
+        advance past a player who is now definitively gone — without it the gate
+        would sleep forever on a seat that will never READY."""
+        del seat  # we re-derive the gated set from session state on wake
         self._ready_changed.set()
 
     def _gated_human_seats(self) -> set[int]:
@@ -739,9 +755,9 @@ class TableHandle:
         LIVE seats, so a player who was *refreshing* (HELD) at gate time was
         silently skipped and the next hand could start the instant the *other*
         human readied — steamrolling the returning player. UNBOUND seats
-        (definitively gone / never bound) still drop out so they can't stall the
-        table; the gate timeout is the backstop for a HELD seat whose hold
-        expires without resuming."""
+        (definitively gone / never bound) drop out so they can't stall the table;
+        a HELD seat whose hold expires drops out the same way and wakes the gate
+        via ``_on_gated_seat_expired``."""
         return {
             i
             for i in range(4)
@@ -754,18 +770,26 @@ class TableHandle:
         # UNBOUND) → advance without waiting.
         return self._gated_human_seats() <= self._ready_seats
 
+    async def _broadcast_ready_state(self, gated: set[int]) -> None:
+        """Push the current readiness roster to seats + spectators so everyone
+        sees who the next hand is waiting on. ``ready`` is intersected with
+        ``gated`` so a stale READY for a now-departed seat doesn't linger."""
+        ready = sorted(self._ready_seats & gated)
+        waiting_on = sorted(gated - self._ready_seats)
+        await self._sessions.fanout_ready_state(ready=ready, waiting_on=waiting_on)
+
     async def _await_humans_ready(self) -> None:
-        """Block until every gated human seat has sent READY, the drain stop
-        fires, or ``ready_timeout_seconds`` elapses (safety net for a human who
-        left).
+        """Block until every gated human seat has sent READY (or the drain stop
+        fires). **No timeout** (live-play tweak): the table waits for everyone
+        and broadcasts a live readiness roster so players see who's holding it
+        up, rather than auto-advancing after a fixed window. A player who is
+        truly gone drops out of the gated set (UNBOUND / hold expiry, the latter
+        waking the gate via ``_on_gated_seat_expired``), so "wait forever" can't
+        strand the table on a no-show — only on a present-but-idle human, which
+        the roster makes visible.
 
-        The timeout means a disconnected / walked-away human can never stall the
-        table forever; an explicit READY from everyone advances immediately.
-
-        FB-19 soft spot 3: logs gate open + advance(reason) so a gate that holds
-        unexpectedly long, or advances while a player was still reconnecting, is
-        attributable from the server log rather than silent (complements DEF-20,
-        which owes persisted logs)."""
+        Logs gate open + advance(reason) so a gate that holds unexpectedly long
+        is attributable from the server log (complements DEF-20)."""
         self._ready_seats.clear()
         self._ready_changed.clear()
         gated = self._gated_human_seats()
@@ -777,20 +801,13 @@ class TableHandle:
             )
             return
         _logger.info(
-            "ready_gate_opened table=%s hand_index=%s waiting_on=%s timeout=%.0fs",
+            "ready_gate_opened table=%s hand_index=%s waiting_on=%s",
             self._table_id,
             self._hand_index,
             sorted(gated),
-            self._ready_timeout_seconds,
         )
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + self._ready_timeout_seconds
-        reason = "all_ready"
+        await self._broadcast_ready_state(gated)
         while not (self._stop_event.is_set() or self._all_gated_humans_ready()):
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                reason = "timeout"
-                break
             # Clear-then-recheck so a READY that arrives between the loop guard
             # and this wait isn't lost.
             self._ready_changed.clear()
@@ -801,14 +818,15 @@ class TableHandle:
             try:
                 await asyncio.wait(
                     {stop_wait, ready_wait},
-                    timeout=remaining,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
             finally:
                 stop_wait.cancel()
                 ready_wait.cancel()
-        if reason != "timeout":
-            reason = "stop" if self._stop_event.is_set() else "all_ready"
+            # Re-broadcast on every wake: a READY landed, or a gated seat's hold
+            # expired and it dropped out — either changes the roster.
+            await self._broadcast_ready_state(self._gated_human_seats())
+        reason = "stop" if self._stop_event.is_set() else "all_ready"
         _logger.info(
             "ready_gate_advanced table=%s hand_index=%s reason=%s ready=%s waited_on=%s",
             self._table_id,
@@ -943,7 +961,8 @@ class TableHandle:
 
                 # FB-02 / FB-19: hold the HAND_END summary until every gated
                 # human seat (LIVE *or* HELD — a refreshing player isn't skipped)
-                # acknowledges it (READY), with a timeout safety net — instead of
+                # acknowledges it (READY) — no timeout (the gate waits for
+                # everyone and broadcasts a live readiness roster) instead of
                 # auto-advancing in ~1s. Pure-bot tables aren't gated (no gated
                 # humans → returns immediately). NOTE: the match-end summary
                 # (max_hands reached) still skips this gate — deferred, see the

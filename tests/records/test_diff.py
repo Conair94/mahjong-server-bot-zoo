@@ -515,6 +515,63 @@ def test_diff_hu_emits_hand_end() -> None:
     assert hand_end["state_hash"].startswith("sha256:")
 
 
+def test_diff_hand_end_carries_final_hand_stats_excluding_winner() -> None:
+    """HAND_END rides a settlement tenpai/shanten reveal for every non-winner
+    (the winner already mahjong'd). Wiring test — the shanten/fan correctness
+    itself is pinned in tests/analysis/test_settlement_stats.py."""
+    winner = sorted(
+        ["J1", "J1", "J1", "J2", "J2", "J2", "J3", "J3", "J3", "F1", "F1", "F1", "W1", "W1"],
+        key=tile_sort_key,
+    )
+    tenpai = sorted(
+        ["W1", "W1", "W1", "W7", "W8", "W9", "B1", "B2", "B3", "T5", "T5", "B7", "B8"],
+        key=tile_sort_key,
+    )
+    two_shanten = sorted(
+        ["W1", "W2", "W3", "W5", "W6", "B1", "B2", "T4", "T5", "T6", "J1", "J2", "J3"],
+        key=tile_sort_key,
+    )
+    concealed = {0: winner, 1: tenpai, 2: two_shanten, 3: two_shanten}
+    seats = [
+        {
+            "seat": i,
+            "seat_wind": f"F{i + 1}",
+            "concealed": concealed[i],
+            "melds": [],
+            "discards": [],
+            "flowers": [],
+            "score": 0,
+        }
+        for i in range(4)
+    ]
+    s: dict[str, Any] = {
+        "ruleset": MCR_REF,
+        "round_wind": "F1",
+        "dealer_seat": 0,
+        "hand_index": 0,
+        "turn_index": 0,
+        "wall": {"remaining": [], "drawn_count": 144, "total": 144},
+        "seats": seats,
+        "last_discard": None,
+        "last_drawn": {"seat": 0, "tile": "W1"},
+        "pending_claims": [],
+        "phase": "DISCARD",
+        "current_actor": 0,
+        "terminal": None,
+        "rng": {"seed": "0", "cursor": 0},
+    }
+    hu: dict[str, Any] = {"type": "HU"}
+    s_after = apply_action(s, 0, hu)  # type: ignore[arg-type]
+
+    hand_end = next(e for e in diff_to_events(s, 0, hu, s_after, ts=TS) if e["event"] == "HAND_END")
+    stats = hand_end["final_hand_stats"]
+    assert "floor" in stats
+    by_seat = {e["seat"]: e for e in stats["seats"]}
+    assert set(by_seat) == {1, 2, 3}  # winner (seat 0) excluded
+    assert by_seat[1]["shanten"] == 0 and "waits" in by_seat[1]
+    assert by_seat[2]["shanten"] == 2 and "waits" not in by_seat[2] and "accepts" not in by_seat[2]
+
+
 def test_diff_per_action_payloads_have_required_common_fields() -> None:
     """Every emitted event has event, turn_index, phase, ts (seq filled by writer)."""
     s0 = _seed_state()

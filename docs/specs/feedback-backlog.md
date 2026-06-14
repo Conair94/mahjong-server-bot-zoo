@@ -88,6 +88,8 @@ stack trace it was waiting for.
 | DEF-21 | **Vestigial EVENT entries in the session-mux resume buffer.** The FB-17 resume policy (fresh current snapshot, no EVENT replay) leaves `SeatSession._buffer`'s EVENT entries written-but-never-read (only a buffered `HAND_END` is consumed on resume). Either strip EVENT buffering or build a true delta-resume (at-drop snapshot + replay) if event-order affordances are ever wanted on reconnect. | Removal touches the observe path + overflow bookkeeping + several fixtures for zero behavior change; delta-resume is speculative until someone misses the affordances. | Next structural change to `sessions/mux.py`, or a player-visible want for replay-fidelity on reconnect. | [session-mux.md § Ring buffer](session-mux.md); `_append_buffer` in [sessions/mux.py](../../mahjong/sessions/mux.py) |
 | DEF-24 | **FB-19 soft spot 1: the match-end summary skips the ready gate.** A finite-match table (`max_hands` set) breaks out of the hand loop the instant the last hand ends — *before* `_await_humans_ready` — so the final HAND_END summary is never acknowledged before teardown. (Soft spots 2 + 3 — HELD gating + gate logging — landed 2026-06-14.) | No live impact: `serve` runs `max_hands=None`, so the `max_hands` break never fires in production. Adding the gate here changes finite-match-with-LIVE-human test behavior (e.g. `test_resume_snapshot` runs `max_hands=1` with an attached human → would newly block on a never-sent READY) and needs a distinct match-end summary state, not just the between-hand gate. | A finite-match / tournament mode ships (`max_hands` set on a live table), or a player reports the end-of-match summary flashing. | the `next_hand_index >= self._max_hands` break in [server/registry.py](../../mahjong/server/registry.py) `_run_hand_loop`; fixture (c) in the FB-19 section of this doc. |
 | DEF-22 | **Web-client E2E (Playwright) tests don't run in CI** — `tests/web/` requires `playwright` + browser binaries, which aren't in `[dev]` deps or any CI step, so CI now `importorskip`s the whole tree (1 skip). The suite has *never* run in CI; it was masked behind the long-red mypy step until that went green (2026-06-12). Browser-verify of UI remains a manual, owed activity (many `project_layer8_browser_verified`-class items). | Wiring it in needs a CI `playwright install chromium` step (~150 MB download) across the 4-cell matrix, and macOS-runner browser E2E is notably flaky — real cost for tests that duplicate manual browser-verify. | A web-UI regression slips through that an E2E test would have caught, or CI gains a dedicated (non-matrix) E2E job. | `pytest.importorskip("playwright")` in [tests/web/conftest.py](../../tests/web/conftest.py); CI matrix in [.github/workflows/ci.yml](../../.github/workflows/ci.yml) |
+| DEF-25 | **Settlement hand-stats run unconditionally in the self-play / eval loop.** `settlement_hand_stats` (the hand-end tenpai/fan reveal) is computed in `diff_to_events._hand_end_event`, which the self-play runner also drives via `run_hand`. Typical hand-ends are ~0.01 ms, but an all-1-shanten hand's `accepts` path is ~3–12 ms — wasted work for training, which never renders the stats. | Negligible at current eval scale, and there is no high-throughput NN training loop yet (Layer 9 is bot-zoo eval, not RL training). Adding a skip flag now is YAGNI (one caller that doesn't need it). | A high-volume training loop lands and per-hand stat compute shows up in a profile → gate it behind a `run_hand`/`diff_to_events` flag (default on for live, off for training). | `settlement_hand_stats(...)` call in [records/diff.py](../../mahjong/records/diff.py) `_hand_end_event`; self-play caller [selfplay/runner.py](../../mahjong/selfplay/runner.py) |
+| DEF-26 | **A mid-gate reconnect doesn't immediately see the readiness roster.** `READY_STATE` is broadcast on gate-open and on each change (LIVE seats + spectators), but a player who reconnects *during* the between-hand gate gets the current roster only on the next change — until then their ready-area shows the button/“ready” with no roster. | The gate re-broadcasts on every READY / hold-expiry, so the gap self-heals within one event; including the roster in the attach snapshot/buffer is extra plumbing for a sub-second, rare window. | A player reports a blank roster after refreshing between hands, or the next structural change to the attach/snapshot path. | `_broadcast_ready_state` in [server/registry.py](../../mahjong/server/registry.py); attach snapshot in [sessions/mux.py](../../mahjong/sessions/mux.py) |
 
 When you close a DEF row, delete it (or mark it `verified`/done) in the **same PR** that
 does the work — same rule as the FB table above.
@@ -184,30 +186,38 @@ The "concealed tiles not displayed" half is likely the *correct* new Bug-D face-
 Spec 29 confirmed the `HAND_END` summary renders correctly. The gap was **flow control**:
 the table auto-advanced after a fixed ~2s pause, flashing the summary. Now the live
 between-hand advance (`TableHandle._run_hand_loop`, registry.py) holds the next hand at a
-**ready-up gate** until every **LIVE human** seat sends a `READY` ack, with a
-`ready_timeout_seconds` (default 120s) safety net so a disconnected / walked-away human
-can't stall the table forever. Pure-bot tables aren't gated (no LIVE humans → the gate
-returns immediately, so self-play / bot timing is unchanged).
+**ready-up gate** until every **gated human** (LIVE *or* HELD) seat sends a `READY` ack.
+Pure-bot tables aren't gated (no gated humans → the gate returns immediately, so self-play /
+bot timing is unchanged).
+
+**Live-play tweak (2026-06-14): no timeout + live roster.** The gate no longer auto-advances
+on a `ready_timeout_seconds` deadline (the param is gone) — it waits for everyone and
+broadcasts a `READY_STATE` roster so players see who it's holding for. A player who is truly
+gone still can't strand the table: they drop out of the gated set (UNBOUND, or a HELD seat
+whose hold expires — the expiry wakes the gate via `_on_gated_seat_expired`). Only a
+present-but-idle human can hold it open now, and the roster makes that visible.
 
 Design decisions:
 
 - **`READY` wire message** (client → server, game wire — `KNOWN_KINDS` + round-trip).
-  `READY_STATE` (server → client) is reserved in the codec for future multi-human
-  "waiting on N players" feedback; not broadcast yet (the live case is solo).
-- **Only LIVE humans gate.** A human who drops during the gate falls out of the LIVE set,
-  so the remaining humans (or none) advance — reuses the 8.7 `SeatState.LIVE` model.
+  **`READY_STATE`** (server → client) is now broadcast to LIVE seats + spectators on gate
+  open and on each change (`{ready[], waiting_on[]}` over the gated seats), via
+  `TableSessions.fanout_ready_state`.
+- **LIVE *and* HELD humans gate** (FB-19): a refreshing player isn't skipped. A definitively
+  gone seat (UNBOUND / expired hold) drops out so the gate can advance.
 - **Brief pause kept** before the gate (preserves drain/`stop_event` behavior); the gate
   is purely additive on top.
 - **Client:** `<game-pane>` shows a `Ready ▶ Next hand` button at `HAND_END`; click sends
-  `READY` (via a `ready-submitted` CustomEvent → app `_conn.send`) and swaps to
-  "Waiting for the next hand…" (idempotent — no double-submit). `setSnapshot` re-arms the
-  button when a terminal-free snapshot (new hand) arrives.
+  `READY` and swaps to a "you're ready" indicator (idempotent — no double-submit). The
+  `READY_STATE` roster renders alongside (✓ readied / … waiting). `setSnapshot` re-arms the
+  button and clears the roster when a terminal-free snapshot (new hand) arrives.
 
 ### Verification (all green)
 
 - Gate unit tests [tests/server/test_ready_gate.py](../../tests/server/test_ready_gate.py):
-  no-live-humans advances immediately; un-readied human times out (waited, didn't flash);
-  a mid-gate READY advances well under the timeout; `_mark_ready` ignores non-human/unknown.
+  no-gated-humans advances immediately; an un-readied human is waited on indefinitely (no
+  timeout); a mid-gate READY advances; a HELD seat's hold expiry wakes the gate; the
+  `READY_STATE` roster is broadcast; `_mark_ready` ignores non-human/unknown.
 - Codec round-trip for `READY`/`READY_STATE` ([tests/wire/test_codec.py](../../tests/wire/test_codec.py)).
 - Browser wire→UI [tests/web/test_hand_end_dispatch.py](../../tests/web/test_hand_end_dispatch.py)
   `test_ready_button_sends_ready_and_shows_waiting`: real `<mahjong-app>` over the fake wire —
@@ -774,6 +784,20 @@ gate while seat 1 is still HELD) and pass only with the fix. Full server suite: 
 `max_hands=None`, so the loop never reaches the `max_hands` break), and gating at match end
 changes finite-match-with-LIVE-human test behavior and needs a distinct match-end summary
 state. Original fixture (c) — max-hands match end → summary held until ack — moves with it.
+
+### Follow-up (2026-06-14): no timeout + live readiness roster
+
+Per a live-play request, soft spot 3's behaviour changed: the gate **no longer times out**.
+`ready_timeout_seconds` is removed; `_await_humans_ready` waits on `_ready_changed` /
+`_stop_event` only. Because there's no deadline anymore, a HELD seat dropping out (hold
+expiry) must *wake* the gate — wired via `TableSessions(on_hold_expired=_on_gated_seat_expired)`,
+which sets `_ready_changed` so the loop re-evaluates `_gated_human_seats()` and advances once
+the departed seat is UNBOUND. Logging keeps `ready_gate_opened` / `ready_gate_advanced
+reason=all_ready|vacuous|stop` (the `timeout` reason is gone). The reserved `READY_STATE`
+frame is now broadcast (`fanout_ready_state`) on gate open and every change, and the client
+renders the live roster — see the **Shape (implemented)** block in the FB-02 section above.
+Cost of the unconditional self-play path and the mid-gate-reconnect roster gap are parked as
+**DEF-25** / **DEF-26**.
 
 ## Triaged but not yet fixed (this session's reports)
 

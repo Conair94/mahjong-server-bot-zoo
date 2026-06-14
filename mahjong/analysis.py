@@ -14,7 +14,7 @@ This is also the bot-explainability surface: `discards[]` is the quantity
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -130,6 +130,64 @@ def prompt_stats(
     return out
 
 
+def settlement_hand_stats(
+    seats: list[Mapping[str, Any]],
+    round_wind: Tile,
+    ruleset: Mapping[str, Any],
+    *,
+    exclude_seats: Collection[int] = (),
+) -> dict[str, Any]:
+    """Hand-end tenpai/shanten reveal for every seat that didn't win.
+
+    Settlement-time analysis (all hands face-up at TERMINAL), shipped as
+    ``HAND_END.terminal.final_hand_stats``. For each seat not in
+    ``exclude_seats`` (the winner(s)):
+
+    - ``shanten`` (0 == tenpai).
+    - shanten 0 → ``waits``: every winning tile with raw fan
+      (``fan_discard`` / ``fan_self_draw``) — the same per-wait figures
+      ``prompt_stats`` reports for a tenpai hand.
+    - shanten 1 → ``accepts``: the **top-3** tiles that reach tenpai, ranked by
+      the best fan reachable once tenpai is hit (a 2-ply optimistic max: draw
+      this tile → best completion).
+    - shanten >= 2 → no tile list (just the count).
+
+    Raw fan (cliff zeroed) is reported with ``floor`` alongside so the client
+    can dim sub-floor figures, exactly as ``prompt_stats`` does (FB-15 shape).
+    A seat not in standing 3k+1 form (e.g. the self-draw winner, were it not
+    excluded) is skipped defensively.
+    """
+    config = resolve_config(dict(ruleset))
+    floor = config.get("fan_cliff", pymj.MCR_FAN_CLIFF)
+    raw_config = {**config, "fan_cliff": 0}
+    excluded = set(exclude_seats)
+
+    out_seats: list[dict[str, Any]] = []
+    for seat_data in seats:
+        seat = seat_data["seat"]
+        if seat in excluded:
+            continue
+        concealed: list[Tile] = list(seat_data["concealed"])
+        if len(concealed) % 3 != 1:
+            continue  # not a standing hand — skip rather than emit garbage
+        melds: list[Meld] = list(seat_data["melds"])
+        seat_wind: Tile = seat_data["seat_wind"]
+        shanten = _shanten(tuple(concealed), _meld_key(melds))
+        entry: dict[str, Any] = {"seat": seat, "shanten": shanten}
+        if shanten == 0:
+            entry["waits"] = _settlement_waits(
+                concealed, melds, seat_wind, round_wind, raw_config
+            )
+        elif shanten == 1:
+            entry["accepts"] = _settlement_accepts(
+                concealed, melds, seat_wind, round_wind, raw_config
+            )
+        out_seats.append(entry)
+
+    out_seats.sort(key=lambda e: e["seat"])
+    return {"floor": floor, "seats": out_seats}
+
+
 # --- internals ---------------------------------------------------------------
 
 
@@ -172,6 +230,72 @@ def _tiles_block(
             rows.append({"tile": tile, "remaining": counts[tile]})
     rows.sort(key=lambda r: tile_sort_key(r["tile"]))
     return rows
+
+
+def _settlement_waits(
+    standing: list[Tile],
+    melds: list[Meld],
+    seat_wind: Tile,
+    round_wind: Tile,
+    raw_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Tenpai (shanten 0): each winning tile with raw discard/self-draw fan.
+
+    Same per-wait figures as ``_tiles_block``'s tenpai branch, minus the
+    remaining-count (a dead wait is moot once the hand is over)."""
+    rows: list[dict[str, Any]] = []
+    for wait in sorted(pymj.winning_tiles(standing, melds), key=tile_sort_key):
+        rows.append(
+            {
+                "tile": wait,
+                "fan_discard": _fan_total(
+                    standing, melds, wait, "DISCARD", seat_wind, round_wind, raw_config
+                ),
+                "fan_self_draw": _fan_total(
+                    standing, melds, wait, "SELF_DRAW", seat_wind, round_wind, raw_config
+                ),
+            }
+        )
+    return rows
+
+
+def _settlement_accepts(
+    standing: list[Tile],
+    melds: list[Meld],
+    seat_wind: Tile,
+    round_wind: Tile,
+    raw_config: dict[str, Any],
+    *,
+    top_n: int = 3,
+) -> list[dict[str, Any]]:
+    """1-shanten: the top-``top_n`` tiles that reach tenpai, each with the best
+    fan reachable once tenpai is hit. For each candidate draw, find the discard
+    that lands on tenpai and take the max fan over the resulting waits (the most
+    the player could potentially have made). Ranked by best fan desc, then tile
+    order, and capped — a 1-shanten hand often accepts 8+ tiles."""
+    melds_key = _meld_key(melds)
+    best_by_tile: dict[Tile, int] = {}
+    for draw in _ALL_TILE_TYPES:
+        if standing.count(draw) >= 4:
+            continue
+        drawn = [*standing, draw]
+        best_fan: int | None = None
+        for disc in set(drawn):
+            after = _without(drawn, disc)
+            if _shanten(tuple(after), melds_key) != 0:
+                continue
+            for wait in pymj.winning_tiles(after, melds):
+                fan = max(
+                    _fan_total(after, melds, wait, "DISCARD", seat_wind, round_wind, raw_config),
+                    _fan_total(after, melds, wait, "SELF_DRAW", seat_wind, round_wind, raw_config),
+                )
+                if best_fan is None or fan > best_fan:
+                    best_fan = fan
+        if best_fan is not None:
+            best_by_tile[draw] = best_fan
+    rows: list[dict[str, Any]] = [{"tile": t, "best_fan": f} for t, f in best_by_tile.items()]
+    rows.sort(key=lambda r: (-r["best_fan"], tile_sort_key(r["tile"])))
+    return rows[:top_n]
 
 
 def _fan_total(

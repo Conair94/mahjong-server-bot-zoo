@@ -1,18 +1,23 @@
-"""FB-02 / FB-19: the between-hand ready-up gate (TableHandle._await_humans_ready).
+"""FB-02 / FB-19 + live-play tweak: the between-hand ready-up gate
+(TableHandle._await_humans_ready).
 
 The HAND_END summary used to flash for ~1s before the next hand auto-started. The
-gate holds the next hand until every *gated* human acknowledges (READY), with a
-timeout safety net so a disconnected / walked-away human can't stall forever, and
-no gate at all for pure-bot tables.
+gate holds the next hand until every *gated* human acknowledges (READY); pure-bot
+tables aren't gated at all.
 
-FB-19 widened "gated" from LIVE-only to **LIVE or HELD**: a player who is
-mid-refresh (HELD) at gate time must not be skipped, or the next hand starts the
-instant the *other* human readies and steamrolls the returning player. It also
-added gate open/advance logging so a long or vacuous gate is attributable.
+FB-19 widened "gated" from LIVE-only to **LIVE or HELD**: a player mid-refresh
+(HELD) at gate time must not be skipped, or the next hand starts the instant the
+*other* human readies and steamrolls the returning player.
+
+Live-play tweak: the gate **no longer times out**. It waits for everyone and
+broadcasts a live ``READY_STATE`` roster (who's readied / who it's waiting on). A
+player who is truly gone drops out of the gated set — UNBOUND, or a HELD seat
+whose hold expires (which wakes the gate via ``_on_gated_seat_expired``) — so
+"wait forever" never strands the table on a no-show.
 
 The gate-mechanics tests exercise the loop directly (``_gated_human_seats``
-patched to simulate state); the HELD tests drive a *real* seat to HELD via
-attach + socket-drop so they pin the actual predicate.
+patched, or ``_ready_seats`` poked); the HELD/expiry tests drive a *real* seat
+through attach + socket-drop so they pin the actual predicate and the wake.
 """
 
 from __future__ import annotations
@@ -51,7 +56,7 @@ _SEATS_2H = (
 
 
 class _Sink:
-    """Minimal OutboundSink double — swallows sends, tracks closed-ness."""
+    """Minimal OutboundSink double — records sends, tracks closed-ness."""
 
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
@@ -71,9 +76,12 @@ class _Sink:
 def _handle(
     tmp_path: Path,
     *,
-    ready_timeout_seconds: float,
     seats: tuple[SeatComposition, ...] = _SEATS,
+    hold_seconds: float | None = None,
 ) -> TableHandle:
+    kwargs: dict[str, Any] = {}
+    if hold_seconds is not None:
+        kwargs["hold_seconds"] = hold_seconds
     return TableHandle(
         table_id="77",
         ruleset=_MCR,
@@ -82,32 +90,39 @@ def _handle(
         record_path=tmp_path / "hand_0000.jsonl",
         server_info={"version": "test", "git_sha": "test", "host": "test"},
         seats=seats,
-        ready_timeout_seconds=ready_timeout_seconds,
+        **kwargs,
     )
 
 
-# --- FB-02 gate mechanics ---------------------------------------------------
+def _ready_states(sink: _Sink) -> list[dict[str, Any]]:
+    return [m for m in sink.messages if m.get("kind") == "READY_STATE"]
+
+
+# --- gate mechanics ---------------------------------------------------------
 
 
 async def test_no_live_humans_advances_immediately(tmp_path):
     # Fresh handle: no human is LIVE/HELD → gate must not block at all.
-    handle = _handle(tmp_path, ready_timeout_seconds=999.0)
+    handle = _handle(tmp_path)
     await asyncio.wait_for(handle._await_humans_ready(), timeout=1.0)
 
 
-async def test_gate_times_out_when_human_never_readies(tmp_path, monkeypatch):
-    handle = _handle(tmp_path, ready_timeout_seconds=0.1)
+async def test_gate_waits_indefinitely_for_un_readied_human(tmp_path, monkeypatch):
+    """No timeout: the gate keeps waiting for a gated human who never readies
+    (the live-play tweak — the roster shows who it's waiting on instead of
+    auto-advancing)."""
+    handle = _handle(tmp_path)
     monkeypatch.setattr(handle, "_gated_human_seats", lambda: {0})
-    loop = asyncio.get_event_loop()
-    t0 = loop.time()
-    await asyncio.wait_for(handle._await_humans_ready(), timeout=2.0)
-    elapsed = loop.time() - t0
-    # It waited (didn't advance instantly) but did eventually time out.
-    assert 0.05 <= elapsed < 1.5
+    gate = asyncio.ensure_future(handle._await_humans_ready())
+    # It must NOT advance on its own — give it well past any old 0.1s timeout.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(asyncio.shield(gate), timeout=0.4)
+    assert not gate.done()
+    gate.cancel()
 
 
 async def test_gate_advances_as_soon_as_human_readies(tmp_path, monkeypatch):
-    handle = _handle(tmp_path, ready_timeout_seconds=30.0)  # long: must NOT wait it out
+    handle = _handle(tmp_path)
     monkeypatch.setattr(handle, "_gated_human_seats", lambda: {0})
 
     gate = asyncio.ensure_future(handle._await_humans_ready())
@@ -118,11 +133,11 @@ async def test_gate_advances_as_soon_as_human_readies(tmp_path, monkeypatch):
     handle._ready_seats.add(0)
     handle._ready_changed.set()
 
-    await asyncio.wait_for(gate, timeout=1.0)  # well under the 30s timeout
+    await asyncio.wait_for(gate, timeout=1.0)
 
 
 async def test_mark_ready_ignores_non_human_and_unknown(tmp_path, monkeypatch):
-    handle = _handle(tmp_path, ready_timeout_seconds=30.0)
+    handle = _handle(tmp_path)
 
     class _Conn:
         pass
@@ -144,7 +159,7 @@ async def test_mark_ready_ignores_non_human_and_unknown(tmp_path, monkeypatch):
 async def test_held_human_is_in_the_gated_set(tmp_path):
     """A player mid-refresh shows as HELD; the gate must still wait for them.
     Pre-FB-19 ``_live_human_seats`` returned only {0}, so seat 1 was skipped."""
-    handle = _handle(tmp_path, ready_timeout_seconds=30.0, seats=_SEATS_2H)
+    handle = _handle(tmp_path, seats=_SEATS_2H)
     s0 = _Sink()
     await handle.sessions.seat(0).attach(s0, user_id="u0")  # LIVE
     s1 = _Sink()
@@ -160,7 +175,7 @@ async def test_gate_holds_for_a_held_human_until_they_ready(tmp_path):
     """With seat 0 LIVE and seat 1 HELD, seat 0 readying alone must NOT advance
     the gate (the pre-FB-19 vacuous-skip bug); it advances only once the
     returning HELD player resumes and readies too."""
-    handle = _handle(tmp_path, ready_timeout_seconds=30.0, seats=_SEATS_2H)
+    handle = _handle(tmp_path, seats=_SEATS_2H)
     s0 = _Sink()
     await handle.sessions.seat(0).attach(s0, user_id="u0")
     s1 = _Sink()
@@ -177,17 +192,67 @@ async def test_gate_holds_for_a_held_human_until_they_ready(tmp_path):
     await asyncio.sleep(0.05)
     assert not gate.done()
 
-    # The HELD player resumes + readies → gate advances, well under the timeout.
+    # The HELD player resumes + readies → gate advances.
     handle._ready_seats.add(1)
     handle._ready_changed.set()
     await asyncio.wait_for(gate, timeout=1.0)
 
 
-# --- FB-19 soft spot 3: the gate logs why it advanced ----------------------
+async def test_gate_advances_when_a_held_seats_hold_expires(tmp_path):
+    """The load-bearing no-timeout wake: a single human goes HELD and never
+    readies; when its hold expires it drops out of the gated set and
+    ``_on_gated_seat_expired`` wakes the gate, which advances. Without that wake
+    the gate (which no longer times out) would sleep forever and this would hit
+    the wait_for timeout — i.e. this fails without the fix."""
+    handle = _handle(tmp_path, hold_seconds=0.15)  # one human seat
+    s0 = _Sink()
+    await handle.sessions.seat(0).attach(s0, user_id="u0")
+    await handle.sessions.seat(0).on_socket_dropped(s0)  # LIVE -> HELD
+    assert handle.sessions.seat(0).state is SeatState.HELD
+
+    gate = asyncio.ensure_future(handle._await_humans_ready())
+    await asyncio.sleep(0.05)
+    assert not gate.done()  # still waiting on the HELD player
+
+    await asyncio.wait_for(gate, timeout=1.0)  # hold expires → wake → advance
+    assert handle.sessions.seat(0).state is SeatState.UNBOUND
+
+
+# --- live readiness roster (READY_STATE broadcast) --------------------------
+
+
+async def test_gate_broadcasts_readiness_roster(tmp_path):
+    """The gate broadcasts a READY_STATE roster on open and on each change so
+    every seat sees who it's waiting on."""
+    handle = _handle(tmp_path, seats=_SEATS_2H)
+    s0, s1 = _Sink(), _Sink()
+    await handle.sessions.seat(0).attach(s0, user_id="u0")
+    await handle.sessions.seat(1).attach(s1, user_id="u1")
+
+    gate = asyncio.ensure_future(handle._await_humans_ready())
+    await asyncio.sleep(0.05)
+    opening = _ready_states(s1)[-1]
+    assert opening["ready"] == [] and opening["waiting_on"] == [0, 1]
+    assert opening["table_id"] == 77
+
+    # Seat 0 readies → roster updates for the still-waiting seat 1.
+    handle._ready_seats.add(0)
+    handle._ready_changed.set()
+    await asyncio.sleep(0.05)
+    after = _ready_states(s1)[-1]
+    assert after["ready"] == [0] and after["waiting_on"] == [1]
+
+    # Seat 1 readies → gate advances.
+    handle._ready_seats.add(1)
+    handle._ready_changed.set()
+    await asyncio.wait_for(gate, timeout=1.0)
+
+
+# --- soft spot 3: the gate logs why it advanced -----------------------------
 
 
 async def test_gate_logs_vacuous_advance(tmp_path, caplog):
-    handle = _handle(tmp_path, ready_timeout_seconds=30.0)  # no humans
+    handle = _handle(tmp_path)  # no humans
     with caplog.at_level(logging.INFO):
         await handle._await_humans_ready()
     assert any(
@@ -196,11 +261,15 @@ async def test_gate_logs_vacuous_advance(tmp_path, caplog):
     ), [r.getMessage() for r in caplog.records]
 
 
-async def test_gate_logs_timeout_advance(tmp_path, monkeypatch, caplog):
-    handle = _handle(tmp_path, ready_timeout_seconds=0.1)
+async def test_gate_logs_open_and_all_ready_advance(tmp_path, monkeypatch, caplog):
+    handle = _handle(tmp_path)
     monkeypatch.setattr(handle, "_gated_human_seats", lambda: {0})
     with caplog.at_level(logging.INFO):
-        await asyncio.wait_for(handle._await_humans_ready(), timeout=2.0)
+        gate = asyncio.ensure_future(handle._await_humans_ready())
+        await asyncio.sleep(0.05)
+        handle._ready_seats.add(0)
+        handle._ready_changed.set()
+        await asyncio.wait_for(gate, timeout=1.0)
     msgs = [r.getMessage() for r in caplog.records]
     assert any("ready_gate_opened" in m and "waiting_on=[0]" in m for m in msgs), msgs
-    assert any("ready_gate_advanced" in m and "reason=timeout" in m for m in msgs), msgs
+    assert any("ready_gate_advanced" in m and "reason=all_ready" in m for m in msgs), msgs

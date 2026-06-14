@@ -317,6 +317,16 @@ _HAND_END: dict[str, Any] = {
         "loser": 1,
         "fan_list": [{"name": "Pung of Terminals", "fan": 1}],
         "fan_total": 12,
+        # Settlement tenpai reveal rides the terminal; must survive the round
+        # trip untouched (the codec preserves nested optional payloads).
+        "final_hand_stats": {
+            "floor": 3,
+            "seats": [
+                {"seat": 0, "shanten": 0, "waits": [{"tile": "B6", "fan_discard": 4, "fan_self_draw": 6}]},
+                {"seat": 1, "shanten": 1, "accepts": [{"tile": "T3", "best_fan": 8}]},
+                {"seat": 3, "shanten": 2},
+            ],
+        },
     },
     "next_hand_seq": None,
 }
@@ -344,7 +354,16 @@ _START_HAND: dict[str, Any] = {"kind": "START_HAND", "table_id": 17}
 
 # FB-02: end-game ready-up gate.
 _READY: dict[str, Any] = {"kind": "READY", "table_id": 17}
-_READY_STATE: dict[str, Any] = {"kind": "READY_STATE", "ready": [0, 2], "waiting_on": 1}
+# FB-19 follow-up: between-hand readiness roster (server → client). `ready` and
+# `waiting_on` are disjoint seat lists over the gated humans.
+_READY_STATE: dict[str, Any] = {
+    "kind": "READY_STATE",
+    "seq": 12,
+    "table_id": 17,
+    "hand_index": 3,
+    "ready": [0, 2],
+    "waiting_on": [1],
+}
 
 _REGISTER: dict[str, Any] = {
     "kind": "REGISTER",

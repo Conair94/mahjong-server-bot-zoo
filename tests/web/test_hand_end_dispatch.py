@@ -161,6 +161,45 @@ async def test_hand_end_draw_frame_renders_summary(
     await expect(gp.locator(".he-score-row.he-winner")).to_have_count(0)
 
 
+def _ready_state(ready: list[int], waiting_on: list[int]) -> dict[str, Any]:
+    return {
+        "kind": "READY_STATE",
+        "seq": 10,
+        "table_id": 1,
+        "hand_index": 0,
+        "ready": ready,
+        "waiting_on": waiting_on,
+    }
+
+
+async def test_ready_state_frame_renders_live_roster(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """FB-19: a READY_STATE frame drives the live readiness roster (wire→UI seam)
+    — who's readied (✓) and who the next hand is still waiting on (…). Cleared
+    when the next hand's snapshot arrives."""
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_hand_end_hu())
+
+    gp = page.locator("game-pane")
+    await expect(gp.locator("button.ready-btn")).to_be_visible(timeout=5000)
+
+    # Seat 2 has readied; seats 0 and 3 are still pending.
+    await fake_wire_server.send(_ready_state(ready=[2], waiting_on=[0, 3]))
+    await expect(gp.locator(".ready-roster")).to_be_visible()
+    await expect(gp.locator(".ready-seat.ready-yes")).to_have_count(1)
+    await expect(gp.locator(".ready-seat.ready-no")).to_have_count(2)
+    await expect(gp.locator(".ready-seat.ready-yes")).to_contain_text("✓")
+
+    # The next hand's snapshot (no terminal) clears the roster + the summary.
+    await fake_wire_server.send({**_attached(), "seq": 20})
+    await expect(gp.locator(".ready-roster")).to_have_count(0)
+    await expect(gp.locator(".hand-end-summary")).to_have_count(0)
+
+
 async def test_ready_button_sends_ready_and_shows_waiting(
     page: Page, fake_wire_server: FakeWireServer
 ) -> None:
