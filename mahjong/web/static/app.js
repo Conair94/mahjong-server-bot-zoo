@@ -192,6 +192,7 @@ class GamePane extends LitElement {
     chiChoosing: { state: true },
     illegalBanner: { state: true },
     readySent: { state: true },
+    readyState: { state: true },
   };
 
   static styles = [
@@ -471,6 +472,39 @@ class GamePane extends LitElement {
       .he-hand-row { margin: 0.1rem 0; }
       .he-hand-name { color: var(--fg-dim); margin-right: 0.4rem; }
       .he-hand-melds { margin-left: 0.6rem; }
+      .he-tenpai-row {
+        margin: 0.1rem 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        align-items: baseline;
+      }
+      .he-tenpai-name { color: var(--fg-dim); }
+      .he-tenpai-state { font-weight: 600; }
+      .he-wait { white-space: nowrap; }
+      .he-subfloor { opacity: 0.55; }
+
+      /* --- Between-hand ready area (FB-02 button + FB-19 live roster). */
+      .ready-area {
+        margin-top: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .ready-waiting { color: var(--fg-dim); }
+      .ready-btn {
+        font-family: inherit;
+        cursor: pointer;
+        color: var(--accent);
+        background: transparent;
+        border: 1px solid var(--accent);
+        padding: 0.25rem 0.75rem;
+        align-self: flex-start;
+      }
+      .ready-roster { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+      .ready-seat { white-space: nowrap; }
+      .ready-yes { color: var(--accent); }
+      .ready-no { color: var(--fg-dim); }
 
       /* --- Illegal-action banner (transient). The prompt stays open. */
       .illegal-banner {
@@ -658,6 +692,7 @@ class GamePane extends LitElement {
     this.illegalBanner = null;
     this._illegalBannerTimer = null;
     this.readySent = false; // FB-02: has the local human acked this HAND_END?
+    this.readyState = null; // FB-19: live { ready[], waiting_on[] } roster, or null
   }
 
   pushFrame(msg) {
@@ -668,10 +703,19 @@ class GamePane extends LitElement {
     this.status = status;
   }
 
+  // FB-19: the live between-hand readiness roster (READY_STATE frame). Drives
+  // the "waiting on …" display next to the Ready button.
+  setReadyState(frame) {
+    this.readyState = { ready: frame.ready ?? [], waiting_on: frame.waiting_on ?? [] };
+  }
+
   setSnapshot(seatView, ownSeat) {
     // FB-02: a snapshot without a terminal means a fresh hand started — re-arm
-    // the ready button for the next HAND_END.
-    if (!seatView?.terminal) this.readySent = false;
+    // the ready button for the next HAND_END, and drop the stale roster.
+    if (!seatView?.terminal) {
+      this.readySent = false;
+      this.readyState = null;
+    }
     this.seatView = seatView;
     this.ownSeat = ownSeat;
     // The live table header (round/wall/hand) lives in <table-page>, which
@@ -693,6 +737,47 @@ class GamePane extends LitElement {
     this.dispatchEvent(
       new CustomEvent("ready-submitted", { bubbles: true, composed: true, detail: {} }),
     );
+  }
+
+  // FB-19: short seat label for the readiness roster (wind name, plus player
+  // name when the view carries one). Wind is always present, so this never
+  // renders an empty cell.
+  _seatRosterName(seat) {
+    const sv = this.seatView?.seats?.find((s) => s.seat === seat);
+    const wind = sv ? (ROUND_WIND_NAME[sv.seat_wind] ?? sv.seat_wind) : null;
+    const name = sv?.player?.name ?? sv?.name ?? null;
+    if (name) return `${name} (${wind})`;
+    return wind ?? `Seat ${seat + 1}`;
+  }
+
+  // FB-02 + FB-19: the between-hand control. The local Ready button (until this
+  // client acks), plus the live readiness roster (READY_STATE) showing who the
+  // next hand is still waiting on — no timeout, so this is how players know.
+  _renderReadyArea() {
+    if (!this.seatView?.terminal) return "";
+    const control = this.readySent
+      ? html`<div class="ready-waiting">✓ You're ready — waiting for the others…</div>`
+      : html`<button class="ready-btn" @click=${() => this._submitReady()}>
+          Ready ▶ Next hand
+        </button>`;
+    const rs = this.readyState;
+    const roster = rs
+      ? html`<div class="ready-roster">
+          ${[...rs.ready]
+            .sort((a, b) => a - b)
+            .map(
+              (s) =>
+                html`<span class="ready-seat ready-yes">${this._seatRosterName(s)} ✓</span>`,
+            )}
+          ${[...rs.waiting_on]
+            .sort((a, b) => a - b)
+            .map(
+              (s) =>
+                html`<span class="ready-seat ready-no">${this._seatRosterName(s)} …</span>`,
+            )}
+        </div>`
+      : "";
+    return html`<div class="ready-area">${control}${roster}</div>`;
   }
 
   setPrompt(prompt) {
@@ -928,22 +1013,7 @@ class GamePane extends LitElement {
           : html`<div class="waiting">(waiting for ATTACHED snapshot…)</div>`}
 
         ${handEndSummary ?? ""}
-        ${this.seatView?.terminal
-          ? this.readySent
-            ? html`<div
-                class="ready-waiting"
-                style="margin-top:0.5rem;color:var(--fg-dim)"
-              >
-                Waiting for the next hand…
-              </div>`
-            : html`<button
-                class="ready-btn"
-                style="margin-top:0.5rem;font-family:inherit;cursor:pointer;color:var(--accent);background:transparent;border:1px solid var(--accent);padding:0.25rem 0.75rem"
-                @click=${() => this._submitReady()}
-              >
-                Ready ▶ Next hand
-              </button>`
-          : ""}
+        ${this._renderReadyArea()}
 
         ${this.illegalBanner
           ? html`<div class="illegal-banner">${this.illegalBanner}</div>`
@@ -3254,6 +3324,8 @@ class MahjongApp extends LitElement {
           audioCues.play(cueForPrompt(frame)); // FB-06: escalating claim cue
         } else if (frame.kind === "CHAT_MESSAGE") {
           tablePage?.addChatMessage(frame); // Spec 38: table chat
+        } else if (frame.kind === "READY_STATE") {
+          pane.setReadyState(frame); // FB-19: live between-hand readiness roster
         } else if (frame.kind === "ERROR" && frame.code === "illegal_action") {
           pane.showIllegalBanner(frame.message ?? "Server rejected that action — try again.");
         } else if (frame.kind === "ERROR" && frame.code === "humans_not_ready") {

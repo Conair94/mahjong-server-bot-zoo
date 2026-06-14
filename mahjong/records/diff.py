@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from mahjong.analysis import settlement_hand_stats
 from mahjong.engine.hashing import canonical_hash
 from mahjong.engine.legality.claim import claim_actions
 from mahjong.engine.state import final_hands_view
@@ -200,6 +201,16 @@ def _hand_end_event(state_after: GameState, ts: str) -> dict[str, Any]:
         "fan_total": terminal["fan_total"],
         "score_delta": list(terminal["score_delta"]),
         "final_hands": final_hands_view(state_after),
+        # Settlement-time tenpai/shanten reveal for every non-winner (the
+        # winner already mahjong'd). Derived from the now-revealed hands; rides
+        # the wire HAND_END `terminal` like `final_hands`. Excluded from
+        # `state_hash` (it's over state, not events) so determinism is unchanged.
+        "final_hand_stats": settlement_hand_stats(
+            cast(list[Any], state_after["seats"]),
+            state_after["round_wind"],
+            dict(state_after["ruleset"]),
+            exclude_seats=winners_list,
+        ),
         "state_hash": canonical_hash(cast(dict[str, Any], state_after)),
     }
 

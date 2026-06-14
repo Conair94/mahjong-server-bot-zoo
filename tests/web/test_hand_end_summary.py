@@ -184,6 +184,61 @@ async def test_final_hands_revealed_for_all_seats(
     assert tile_counts == [2, 2, 2, 2], tile_counts
 
 
+def _terminal_with_stats() -> dict[str, Any]:
+    """A HU terminal carrying the settlement tenpai reveal: a tenpai seat (with
+    one sub-floor wait), a 1-shanten seat, and a 2-shanten seat. Winner (seat 2)
+    is absent from final_hand_stats."""
+    t = _hu_terminal()
+    t["final_hand_stats"] = {
+        "floor": 3,
+        "seats": [
+            {
+                "seat": 0,
+                "shanten": 0,
+                "waits": [
+                    {"tile": "B6", "fan_discard": 4, "fan_self_draw": 6},
+                    {"tile": "W5", "fan_discard": 1, "fan_self_draw": 2},  # sub-floor
+                ],
+            },
+            {"seat": 1, "shanten": 1, "accepts": [{"tile": "T3", "best_fan": 8}]},
+            {"seat": 3, "shanten": 2},
+        ],
+    }
+    return t
+
+
+async def test_tenpai_section_shows_shanten_and_fan(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    await _render(page, fake_wire_server, _view(_terminal_with_stats()))
+    rows = cast(
+        list[str],
+        await page.evaluate(
+            """() => Array.from(
+                 document.getElementById('__he_root').querySelectorAll('.he-tenpai-row')
+               ).map(r => r.textContent.replace(/\\s+/g, ' ').trim())"""
+        ),
+    )
+    assert len(rows) == 3  # winner (seat 2) excluded
+    assert "TENPAI" in rows[0] and "4/6" in rows[0]
+    assert "1-shanten" in rows[1] and "→8" in rows[1]
+    assert "2-shanten" in rows[2]
+    # The sub-floor W5 wait (1/2, both below the 3 floor) is dimmed.
+    subfloor = await page.evaluate(
+        """() => document.getElementById('__he_root').querySelectorAll('.he-wait.he-subfloor').length"""
+    )
+    assert subfloor == 1
+
+
+async def test_tenpai_section_absent_without_final_hand_stats(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Pre-upgrade servers / replays don't carry final_hand_stats — the section
+    renders nothing rather than erroring."""
+    await _render(page, fake_wire_server, _view(_hu_terminal()))
+    assert await _text(page, ".he-tenpai") == "MISSING"
+
+
 async def test_no_summary_before_terminal(page: Page, fake_wire_server: FakeWireServer) -> None:
     await _render(page, fake_wire_server, _view(None))
     present = await page.evaluate(

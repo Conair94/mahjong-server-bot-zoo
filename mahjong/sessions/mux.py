@@ -244,6 +244,20 @@ class Spectator:
         }
         await self.sink.send(msg)
 
+    async def send_ready_state(
+        self, *, hand_index: int, ready: list[int], waiting_on: list[int]
+    ) -> None:
+        """FB-19 follow-up: relay the between-hand readiness roster."""
+        msg = {
+            "kind": "READY_STATE",
+            "seq": self._outbound.assign_seq(),
+            "table_id": self.table_id,
+            "hand_index": hand_index,
+            "ready": list(ready),
+            "waiting_on": list(waiting_on),
+        }
+        await self.sink.send(msg)
+
     async def send_spectating(
         self,
         *,
@@ -642,6 +656,25 @@ class SeatSession:
         except Exception:
             return
 
+    async def send_ready_state(self, *, ready: list[int], waiting_on: list[int]) -> None:
+        """FB-19 follow-up: send the between-hand readiness roster. LIVE only —
+        like chat, a transient table signal, not a buffered event (a returning
+        HELD seat re-derives the roster from the next broadcast)."""
+        if self._state is not SeatState.LIVE or self._outbound is None:
+            return
+        msg = {
+            "kind": "READY_STATE",
+            "seq": self._outbound.assign_seq(),
+            "table_id": self.table_id,
+            "hand_index": self._hand_index_provider(),
+            "ready": list(ready),
+            "waiting_on": list(waiting_on),
+        }
+        try:
+            await self._outbound.sink.send(msg)
+        except Exception:
+            return
+
     # --- inbound: ACTION dispatch ---
 
     async def handle_action(self, *, prompt_id: str, action: dict[str, Any]) -> None:
@@ -979,6 +1012,20 @@ class TableSessions:
                     hand_index=self._hand_index_provider(),
                     terminal=terminal,
                     next_hand_seq=next_hand_seq,
+                )
+            except Exception:
+                continue
+
+    async def fanout_ready_state(self, *, ready: list[int], waiting_on: list[int]) -> None:
+        """FB-19 follow-up: broadcast the between-hand readiness roster to LIVE
+        seats + spectators. One dead recipient never blocks the rest."""
+        for s in self._seats:
+            await s.send_ready_state(ready=ready, waiting_on=waiting_on)
+        hand_index = self._hand_index_provider()
+        for spec in list(self._spectators.values()):
+            try:
+                await spec.send_ready_state(
+                    hand_index=hand_index, ready=ready, waiting_on=waiting_on
                 )
             except Exception:
                 continue

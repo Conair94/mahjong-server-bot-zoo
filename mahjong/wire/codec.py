@@ -285,6 +285,20 @@ class HandEnd(TypedDict):
     next_hand_seq: int | None
 
 
+class ReadyState(TypedDict):
+    """Server → client between-hand readiness roster (FB-19 follow-up). Broadcast
+    to a table's seats + spectators whenever the ready-up gate opens or a gated
+    seat readies / drops, so everyone sees who the next hand is waiting on.
+    `ready` and `waiting_on` are disjoint seat lists over the gated humans."""
+
+    kind: Literal["READY_STATE"]
+    seq: int
+    table_id: int
+    hand_index: int
+    ready: list[int]
+    waiting_on: list[int]
+
+
 class CreateTable(TypedDict):
     kind: Literal["CREATE_TABLE"]
     ruleset: str

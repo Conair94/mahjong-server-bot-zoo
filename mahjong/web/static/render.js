@@ -798,8 +798,56 @@ function _summaryHands(terminal, view, _ownSeat, options) {
   </div>`;
 }
 
+// Section: tenpai / shanten reveal for everyone who didn't win
+// (`terminal.final_hand_stats`, computed server-side at settlement). For a
+// tenpai (0-shanten) hand, each winning tile with its discard/self-draw fan;
+// for a 1-shanten hand, the top-3 tiles that reach tenpai with the best fan
+// then reachable; 2+ shanten shows the distance only. Fan below the hand's
+// floor is dimmed, not hidden (the FB-15 convention). Renders nothing for
+// pre-upgrade servers / replays that don't carry the field.
+function _summaryTenpai(terminal, view, _ownSeat, options) {
+  const stats = terminal.final_hand_stats;
+  const seats = stats && Array.isArray(stats.seats) ? stats.seats : null;
+  if (!seats || seats.length === 0) return "";
+  const floor = stats.floor ?? 0;
+  return html`<div class="he-tenpai">
+    <div class="he-section-title">Tenpai (fan: discard / self-draw)</div>
+    ${seats
+      .slice()
+      .sort((a, b) => a.seat - b.seat)
+      .map((s) => _tenpaiRow(s, view, floor, options))}
+  </div>`;
+}
+
+function _tenpaiRow(s, view, floor, options) {
+  const name = html`<span class="he-tenpai-name">${fullSeatName(view, s.seat)}:</span>`;
+  if (s.shanten === 0) {
+    return html`<div class="he-tenpai-row">
+      ${name}<span class="he-tenpai-state">TENPAI</span>
+      ${(s.waits ?? []).map(
+        (w) => html`<span class="he-wait ${w.fan_discard < floor && w.fan_self_draw < floor ? "he-subfloor" : ""}">
+          ${tile(w.tile, options)} <span class="he-fan-value">${w.fan_discard}/${w.fan_self_draw}</span>
+        </span>`,
+      )}
+    </div>`;
+  }
+  if (s.shanten === 1) {
+    return html`<div class="he-tenpai-row">
+      ${name}<span class="he-tenpai-state">1-shanten</span>
+      ${(s.accepts ?? []).map(
+        (a) => html`<span class="he-wait ${a.best_fan < floor ? "he-subfloor" : ""}">
+          ${tile(a.tile, options)} <span class="he-fan-value">→${a.best_fan}</span>
+        </span>`,
+      )}
+    </div>`;
+  }
+  return html`<div class="he-tenpai-row">
+    ${name}<span class="he-tenpai-state">${s.shanten}-shanten</span>
+  </div>`;
+}
+
 // The ordered section list. Append here to add a new summary detail.
-const HAND_END_SECTIONS = [_summaryHeadline, _summaryFan, _summaryScores, _summaryHands];
+const HAND_END_SECTIONS = [_summaryHeadline, _summaryFan, _summaryScores, _summaryHands, _summaryTenpai];
 
 export function renderHandEndSummary(view, ownSeat, options = {}) {
   const terminal = view?.terminal;

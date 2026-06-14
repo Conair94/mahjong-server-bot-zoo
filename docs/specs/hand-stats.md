@@ -265,6 +265,58 @@ Client seam (`tests/web/`, real-frame dispatch per the wire→UI rule):
 14. An ATTACHED snapshot carrying `stats_enabled: false` makes the `Alt+S`
     pane show the *"stats disabled"* message.
 
+## Settlement / hand-end stats (2026-06-14)
+
+A second use of the same analysis primitives, requested from live play: the
+hand-end summary should show, for **every seat that didn't win**, how close
+they were and what they were playing for.
+
+- **Function:** `analysis.settlement_hand_stats(seats, round_wind, ruleset,
+  exclude_seats)` — pure, reuses `_shanten` / `_fan_total` /
+  `pymj.winning_tiles`. Privacy is moot: at TERMINAL all hands are revealed
+  (see [HAND_END.final_hands](../../mahjong/engine/state.py) `final_hands_view`),
+  so this is settlement-time data, not an in-hand aid.
+- **Carrier:** attached to the `HAND_END` record event as
+  `terminal.final_hand_stats` in `records/diff.py._hand_end_event` — the
+  single source that flows to seats, spectators, **and** the persisted record
+  via `_terminal_from_record`. No new wire kind. Determinism is unaffected:
+  the rollout hash is `state_hash(state)` (over GameState), not over events.
+- **Shape** — `{ floor, seats: [ {seat, shanten, waits?|accepts?} ] }`:
+  - shanten 0 (tenpai) → `waits`: every winning tile with raw
+    `fan_discard`/`fan_self_draw` (cliff zeroed; `floor` shipped so the client
+    dims sub-floor, the FB-15 convention).
+  - shanten 1 → `accepts`: the **top-3** tiles that reach tenpai, ranked by the
+    best fan reachable once tenpai is hit (a 2-ply optimistic max). Capped
+    because a 1-shanten hand often accepts 8+ tiles.
+  - shanten ≥ 2 → shanten only, no fan (deliberate, per the live-play ask).
+  - Winner(s) excluded; on an exhausted draw all four seats appear.
+- **Client:** `_summaryTenpai` section appended to `render.js`'s
+  `HAND_END_SECTIONS`; renders nothing for pre-upgrade servers / replays
+  lacking the field.
+
+**Cost note (deferred):** `diff_to_events` also runs in the self-play / eval
+loop. Typical hand-ends are ~0.01 ms (most non-winners are 2+ shanten → one
+shanten call); the 1-shanten `accepts` path is ~3–12 ms for an all-1-shanten
+hand. Acceptable at current eval scale; see the DEF row in
+[feedback-backlog.md](feedback-backlog.md) for gating it behind a flag when a
+high-throughput training loop lands.
+
+### Settlement fixtures (`tests/analysis/test_settlement_stats.py`)
+
+1. **Tenpai seat** → shanten 0, per-wait fan matching the independently-probed
+   `TENPAI_A` figures (cross-checks the settlement path against prompt-stats).
+2. **1-shanten seat** → top-3 `accepts`, ranked by best fan desc / tile order,
+   capped (the 4th acceptance tile dropped).
+3. **2-shanten seat** → shanten only, no `waits`/`accepts`.
+4. **Winner excluded; draw reveals all four.**
+5. **Non-3k+1 hand skipped** (defensive).
+6. **Deterministic / JSON-safe.**
+
+Wire/record seam: `tests/records/test_diff.py` (HAND_END carries
+`final_hand_stats`, winner excluded) + `tests/wire/test_codec.py` (the field
+survives the HAND_END round trip). Client: `tests/web/test_hand_end_summary.py`
+(the `_summaryTenpai` section for 0/1/2-shanten + sub-floor dimming).
+
 ## Open questions
 
 - Should the pane show the v1 bot's *defense* read (deal-in risk) once Stage B
