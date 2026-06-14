@@ -235,6 +235,131 @@ async def test_alt_chord_does_not_fire_action(page: Page, fake_wire_server: Fake
     await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible()
 
 
+# --- FB-18: drawn-tile discard targeting (Enter default + display-order keys) -
+
+# Seed 8 deals dealer (seat 0) a hand whose first draw, W3, sorts to the FRONT
+# of the 14-tile concealed hand. Because the client renders the just-drawn tile
+# pulled out to the *end* (physical-table convention), the on-screen order and
+# the raw sorted order diverge — exactly the FB-18 trap. Concrete layout:
+#   raw sorted : W3 W5 W6 W8 W9 B2 B2 B6 T2 T6 T7 T8 T9 J3   (index 0..13)
+#   on screen  : W5 W6 W8 W9 B2 B2 B6 T2 T6 T7 T8 T9 J3 [W3]  (draw last)
+# So: Enter with no selection must discard the DRAW (W3), not sorted-last (J3);
+# position key "1" must select the first on-screen tile (W5), not raw index 0
+# (W3); the last on-screen key "]" must select the draw (W3), not raw 13 (J3).
+_FB18_SEED = 8
+
+
+def _fb18_snapshot() -> dict[str, Any]:
+    snapshot = cast(dict[str, Any], project(initial_state(_TEST_RULESET, seed=_FB18_SEED), 0))
+    # Sanity guard: if a future deal/projection change shifts this hand, fail
+    # loudly here rather than silently testing the wrong thing.
+    concealed = snapshot["seats"][0]["concealed"]
+    drawn = snapshot["last_drawn"]["tile"]
+    assert snapshot["phase"] == "DISCARD", snapshot["phase"]
+    assert (
+        drawn == "W3" and concealed[0] == "W3" and concealed[-1] == "J3" and concealed[1] == "W5"
+    ), (
+        concealed,
+        drawn,
+    )
+    return snapshot
+
+
+def _fb18_attached() -> dict[str, Any]:
+    return {
+        "kind": "ATTACHED",
+        "seq": 2,
+        "table_id": 1,
+        "seat": 0,
+        "hand_index": 0,
+        "snapshot": _fb18_snapshot(),
+        "resume_buffer_size": 0,
+    }
+
+
+def _fb18_discard_prompt(prompt_id: str = "p_0_0_DISCARD") -> dict[str, Any]:
+    """DISCARD prompt offering a PLAY for every distinct tile in the hand."""
+    concealed = _fb18_snapshot()["seats"][0]["concealed"]
+    tiles = list(dict.fromkeys(concealed))  # distinct, original order
+    return {
+        "kind": "PROMPT",
+        "seq": 3,
+        "table_id": 1,
+        "hand_index": 0,
+        "seat": 0,
+        "phase": "DISCARD",
+        "legal_actions": [{"type": "PLAY", "tile": t} for t in tiles],
+        "default_action": {"type": "PLAY", "tile": concealed[-1]},
+        "deadline_ms": int(time.time() * 1000) + 60_000,
+        "prompt_id": prompt_id,
+    }
+
+
+async def _fb18_setup(page: Page, fake_wire_server: FakeWireServer) -> None:
+    await page.goto(fake_wire_server.url)
+    await fake_wire_server.send(_hello())
+    await fake_wire_server.send(_fb18_attached())
+    await _wait_for_attached(page)
+    await fake_wire_server.send(_fb18_discard_prompt())
+    await expect(page.locator("game-pane").locator(".prompt-bar")).to_be_visible(timeout=5000)
+
+
+async def test_enter_discards_just_drawn_not_sorted_last(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Enter with no explicit selection tsumogiris the just-drawn tile (W3),
+    NOT the highest-sorting concealed tile (J3) — FB-18 defect 1."""
+    await _fb18_setup(page, fake_wire_server)
+
+    await page.keyboard.press("Enter")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["action"] == {"type": "PLAY", "tile": "W3"}, action_msg
+
+
+async def test_position_key_selects_on_screen_slot_not_raw_index(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """Key '1' selects the FIRST on-screen tile (W5), not raw concealed[0]
+    (W3, the draw, which renders last) — FB-18 defect 2."""
+    await _fb18_setup(page, fake_wire_server)
+
+    await page.keyboard.press("1")  # Digit1 → on-screen slot 0
+    await page.keyboard.press("Enter")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["action"] == {"type": "PLAY", "tile": "W5"}, action_msg
+
+
+async def test_last_position_key_targets_the_draw(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """The last on-screen key ']' selects the just-drawn tile (W3, rendered at
+    the end), not raw concealed[13] (J3) — FB-18 defect 2."""
+    await _fb18_setup(page, fake_wire_server)
+
+    await page.keyboard.press("]")  # BracketRight → on-screen slot 13 (the draw)
+    await page.keyboard.press("Enter")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["action"] == {"type": "PLAY", "tile": "W3"}, action_msg
+
+
+async def test_arrow_left_moves_in_display_order(
+    page: Page, fake_wire_server: FakeWireServer
+) -> None:
+    """With no selection ArrowLeft starts at the last on-screen tile (the draw)
+    and steps to its on-screen neighbour J3 (raw index 13), not raw index 12
+    (T9) — FB-18 defect 2, arrow path."""
+    await _fb18_setup(page, fake_wire_server)
+
+    await page.keyboard.press("ArrowLeft")  # draw (slot 13) -> slot 12 = J3
+    await page.keyboard.press("Enter")
+
+    action_msg = await fake_wire_server.wait_for_inbound(lambda m: m.get("kind") == "ACTION")
+    assert action_msg["action"] == {"type": "PLAY", "tile": "J3"}, action_msg
+
+
 # --- staged CHI selection (multiple sequences on one discard) ---
 
 

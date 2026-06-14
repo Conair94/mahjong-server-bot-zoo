@@ -27,6 +27,7 @@ import {
   renderPinwheel,
   renderHandEndSummary,
   renderScoreGraph,
+  concealedDisplayOrder,
 } from "/static/render.js";
 import { applyEvent } from "/static/apply_event.js";
 import { audioCues, cueForEvent, cueForPrompt, cueForTerminal } from "/static/audio.js";
@@ -820,25 +821,49 @@ class GamePane extends LitElement {
 
     // Tile-selection keys set the cursor; arrow keys nudge it; Enter
     // confirms PLAY. All other keys dispatch to actionForKey.
+    //
+    // Selection runs in DISPLAY order, not raw concealed order: the just-drawn
+    // tile is rendered out of sort order (pulled to the end), so a position
+    // key / arrow must address the on-screen slot the player sees. `order`
+    // maps each screen slot to its raw concealed index (origIdx), the value
+    // stored in selectedTile and read back by the renderer and actionForKey —
+    // FB-18 defect 2.
     const tileIdx = tileIndexForKeyCode(e.code);
     const concealed = this._ownConcealedTiles();
+    const order = concealedDisplayOrder(concealed, this.seatView, this.ownSeat);
     if (tileIdx !== null) {
-      if (tileIdx >= 0 && tileIdx < concealed.length) {
+      if (tileIdx >= 0 && tileIdx < order.length) {
         e.preventDefault();
-        this.selectedTile = tileIdx;
+        this.selectedTile = order[tileIdx].origIdx;
       }
       return;
     }
     if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
-      if (concealed.length === 0) return;
-      const cur = this.selectedTile ?? concealed.length - 1;
-      const next = e.code === "ArrowLeft" ? Math.max(0, cur - 1) : Math.min(concealed.length - 1, cur + 1);
+      if (order.length === 0) return;
+      // Nudge the cursor in display order. With no selection yet, start from
+      // the last on-screen tile (the just-drawn one), matching Enter's default.
+      let pos =
+        this.selectedTile == null
+          ? order.length - 1
+          : order.findIndex((o) => o.origIdx === this.selectedTile);
+      if (pos < 0) pos = order.length - 1;
+      const nextPos =
+        e.code === "ArrowLeft" ? Math.max(0, pos - 1) : Math.min(order.length - 1, pos + 1);
       e.preventDefault();
-      this.selectedTile = next;
+      this.selectedTile = order[nextPos].origIdx;
       return;
     }
 
-    const action = actionForKey(e.code, this.currentPrompt, this.selectedTile, concealed);
+    // Enter's no-selection fallback is the just-drawn tile (tsumogiri).
+    const justDrawn = order.find((o) => o.isJustDrawn);
+    const lastDrawnTile = justDrawn ? justDrawn.token : null;
+    const action = actionForKey(
+      e.code,
+      this.currentPrompt,
+      this.selectedTile,
+      concealed,
+      lastDrawnTile,
+    );
     if (!action) return; // illegal key for this prompt — no-op per spec.
     e.preventDefault();
     this._submitAction(action);

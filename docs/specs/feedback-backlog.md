@@ -50,7 +50,7 @@ Each item has a stable `FB-NN` id. "Report(s)" are the on-disk filenames under
 | FB-15 | bug | Missed a mahjong (HU) on a discard of 9B / 7B — HU not offered | P1 | implemented | (this doc — was the `mcr-2006` 8-fan floor; see FB-10) |
 | FB-16 | bug | Typing in a text field (bug-report box / chat) fires game shortcuts — Space passes, H toggles HU, Enter discards | P1 | implemented | (this doc — keydown editable-target guard) |
 | FB-17 | bug | Reconnect/refresh serves the deal-time snapshot — board desync, phantom un-discardable tiles, "new hand = same hand" | **P0** (game-breaking) | implemented | (this doc — live-state snapshot provider) |
-| FB-18 | bug | Drawn-tile discard targeting: Enter falls back to sorted-last tile; digit keys fight the reordered display | P1 | triaged | (this doc) |
+| FB-18 | bug | Drawn-tile discard targeting: Enter falls back to sorted-last tile; digit keys fight the reordered display | P1 | implemented | (this doc) |
 | FB-19 | bug | Next hand can start without every player's READY; no ready gate at match end | P2 | triaged | (this doc) |
 
 Priority key: **P0** ship next · **P1** important, larger · **P2** polish.
@@ -667,7 +667,7 @@ replay semantics stay as-is. *Alternative rejected:* always-buffer-whole-hand + 
 - **Report(s):** same session as FB-17 (contributing cause of "can't discard newly drawn
   tiles").
 - **Priority:** P1 — wrong-tile discards and unreachable tiles even with a fully synced board.
-- **Status:** triaged — root-caused by code reading; fix not started.
+- **Status:** **implemented** (2026-06-14).
 
 ### Root cause
 
@@ -689,13 +689,33 @@ Two related defects in the client input layer:
    off-by-one between what the player counts on screen and what the key selects; the
    visually-last tile (the draw) is *not* selected by the last key.
 
-### Fix shape
+### Fix (implemented)
 
-(1) Enter fallback reads `view.last_drawn.tile` (when own seat drew and holds it) and falls
-back to the explicit selection only otherwise. (2) Make selection operate in **display
-order**: map key/arrow indices through the same render-order list (`origIdx`) the renderer
-builds, so screen position N always means key N. Pin both with prompt-bar unit tests plus a
-Playwright test that discards the just-drawn tile via Enter and via its position key.
+The display-order computation `renderOwnConcealedTiles` did inline is now an exported pure
+helper **`concealedDisplayOrder(concealed, view, ownSeat)`**
+([web/static/render.js](../../mahjong/web/static/render.js)) — the single source of truth for
+"which on-screen slot is which raw concealed index (`origIdx`)", shared by the renderer and
+the keystroke layer.
+
+1. **Enter default** ([prompt.js](../../mahjong/web/static/prompt.js) `actionForKey`): an
+   explicit cursor selection still wins, but with none the fallback is the **just-drawn tile**
+   (passed in as `lastDrawnTile`), not `ownConcealed[length-1]`. Tsumogiri now discards the
+   draw.
+2. **Position / arrow keys run in display order** ([app.js](../../mahjong/web/static/app.js)
+   `_handleKeydown`): a tile key maps screen slot N → `order[N].origIdx`; arrows step through
+   `order` and map back to `origIdx`. `selectedTile` stays a raw index (what the renderer
+   marks `.selected` and `actionForKey` reads), so screen position N always means key N even
+   though the draw renders out of sort order.
+
+### Verification
+
+[tests/web/test_prompt.py](../../tests/web/test_prompt.py) — four Playwright cases on a
+seed-8 DISCARD snapshot where the dealer's draw (W3) sorts to the *front* (so on-screen
+order ≠ raw order; sorted-last is J3): Enter → discards the draw W3 not J3; key `1` → first
+on-screen tile W5 not raw[0] W3; key `]` → the draw W3 not raw[13] J3; ArrowLeft → on-screen
+neighbour J3 not raw[12] T9. **Negative control:** all four fail against the unfixed source
+(Enter→J3, keys hit raw indices) and pass only with the fix. (Playwright runs locally; CI
+skips the web tree — DEF-22.)
 
 ## FB-19 — Next hand can start without every player's ready; no ready gate at match end
 
