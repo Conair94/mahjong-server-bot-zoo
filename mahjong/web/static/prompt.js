@@ -11,11 +11,12 @@
 //   GANG   → G    (EXPOSED / CONCEALED)
 //   BUGANG → B    (GANG with kind=ADDED)
 //   HU     → H
-//   PLAY   → tile keys 1..9 0 - = [ ]  → concealed indices 0..13
-//            Arrow Left/Right nudge the selected index by one slot.
-//            Enter confirms PLAY for the selected tile (or, if no
-//            explicit selection, the last tile in concealed — the
-//            just-drawn one during DISCARD phase).
+//   PLAY   → tile keys 1..9 0 - = [ ]  → on-screen tile positions 0..13
+//            (mapped through the display order in app.js, since the draw is
+//            rendered out of sort order — FB-18).
+//            Arrow Left/Right nudge the selection by one on-screen slot.
+//            Enter confirms PLAY for the selected tile (or, if no explicit
+//            selection, the just-drawn tile — tsumogiri).
 
 import { html } from "lit";
 
@@ -75,9 +76,12 @@ export function keyForAction(action) {
  * Returns `null` if no legal action corresponds.
  *
  * `ownConcealed` is the owning seat's concealed tile list (Tile[]). Used to
- * resolve tile-selection keys and the Enter-confirm shortcut for PLAY.
+ * resolve the Enter-confirm shortcut for PLAY. `selectedTile` is a raw index
+ * into `ownConcealed` (the renderer marks that same index `.selected`).
+ * `lastDrawnTile` is the just-drawn tile token (or null) — the Enter default
+ * when the player hasn't picked a tile.
  */
-export function actionForKey(eventCode, prompt, selectedTile, ownConcealed) {
+export function actionForKey(eventCode, prompt, selectedTile, ownConcealed, lastDrawnTile = null) {
   if (!prompt) return null;
   const legal = prompt.legal_actions ?? [];
 
@@ -102,15 +106,17 @@ export function actionForKey(eventCode, prompt, selectedTile, ownConcealed) {
   }
 
   // Enter: confirm PLAY for the currently-selected tile. With no explicit
-  // selection, fall back to the last concealed tile — during DISCARD this is
-  // the just-drawn tile, which is the dominant choice.
+  // selection, default to the just-drawn tile (tsumogiri — the dominant
+  // discard). The old fallback to ownConcealed[length-1] was wrong: the
+  // engine re-sorts concealed after every draw, so the last element is the
+  // highest-sorting tile (an honor), not the draw — FB-18 defect 1.
   if (eventCode === "Enter") {
-    let idx = selectedTile;
-    if (idx == null && ownConcealed && ownConcealed.length > 0) {
-      idx = ownConcealed.length - 1;
+    let tile = null;
+    if (selectedTile != null) {
+      tile = ownConcealed?.[selectedTile] ?? null;
+    } else if (lastDrawnTile != null) {
+      tile = lastDrawnTile;
     }
-    if (idx == null) return null;
-    const tile = ownConcealed?.[idx];
     if (tile == null) return null;
     return findFirst(legal, (a) => a.type === "PLAY" && a.tile === tile);
   }

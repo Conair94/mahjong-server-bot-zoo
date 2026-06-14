@@ -287,11 +287,22 @@ function _suitOf(token) {
 //
 // Each tile is wrapped in a <span class="tile-mod ..."> so modifier
 // classes don't fight the existing .tile class set by tile().
-export function renderOwnConcealedTiles(seat, view, ownSeat, options = {}) {
-  const concealed = seat?.concealed ?? [];
-  if (concealed.length === 0) return emptyMarker();
-
-  const selectedIdx = options.selectedTile;
+/**
+ * Compute the on-screen order of a seat's own concealed tiles.
+ *
+ * The just-drawn tile (when this seat drew it and still holds it) is pulled
+ * out of sort order and placed last, mirroring the physical-table convention
+ * of keeping the draw separate. Returns one entry per concealed tile, in
+ * *display* (left-to-right screen) order: `{ token, origIdx, isJustDrawn }`,
+ * where `origIdx` is the tile's index in the raw (sorted) `concealed` array.
+ *
+ * This is the single source of truth shared by the renderer (which tile to
+ * draw where) and the keystroke layer in app.js (which tile a position key
+ * or the Enter shortcut selects), so screen position N always means key N
+ * even though the draw is rendered out of sort order — FB-18.
+ */
+export function concealedDisplayOrder(concealed, view, ownSeat) {
+  const tiles = concealed ?? [];
   const ld = view?.last_drawn;
   const hasJustDrawn = ld && ld.seat === ownSeat && ld.tile != null;
 
@@ -299,23 +310,28 @@ export function renderOwnConcealedTiles(seat, view, ownSeat, options = {}) {
   // findIndex correctly removes only one when the hand contains duplicates.
   let drawnIdx = -1;
   if (hasJustDrawn) {
-    drawnIdx = concealed.findIndex((t) => t === ld.tile);
+    drawnIdx = tiles.findIndex((t) => t === ld.tile);
   }
 
   // Build the rendered order: everything except just-drawn first, then
   // just-drawn at the end when present.
   const order = [];
-  concealed.forEach((tok, i) => {
+  tiles.forEach((tok, i) => {
     if (i === drawnIdx) return;
     order.push({ token: tok, origIdx: i, isJustDrawn: false });
   });
   if (drawnIdx >= 0) {
-    order.push({
-      token: concealed[drawnIdx],
-      origIdx: drawnIdx,
-      isJustDrawn: true,
-    });
+    order.push({ token: tiles[drawnIdx], origIdx: drawnIdx, isJustDrawn: true });
   }
+  return order;
+}
+
+export function renderOwnConcealedTiles(seat, view, ownSeat, options = {}) {
+  const concealed = seat?.concealed ?? [];
+  if (concealed.length === 0) return emptyMarker();
+
+  const selectedIdx = options.selectedTile;
+  const order = concealedDisplayOrder(concealed, view, ownSeat);
 
   // Emit per-tile spans, tracking suit transitions on the way.  No
   // suit-break on the just-drawn tile — it carries .just-drawn instead,
