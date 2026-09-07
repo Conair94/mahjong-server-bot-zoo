@@ -287,9 +287,9 @@ async def test_mt_f17_two_table_isolation(
         handle_b = orch.registry.get_table(table_id_b)
 
         # Record paths are distinct
-        assert (
-            handle_a.record_path != handle_b.record_path
-        ), "Tables A and B should write to independent record files"
+        assert handle_a.record_path != handle_b.record_path, (
+            "Tables A and B should write to independent record files"
+        )
 
         # hand_ids are distinct
         assert handle_a.hand_id != handle_b.hand_id, "Tables A and B should have distinct hand_ids"
@@ -302,12 +302,12 @@ async def test_mt_f17_two_table_isolation(
             await check_ws.recv()  # HELLO
             tables = await _list_tables(check_ws)
             listed_ids = {str(t["table_id"]) for t in tables}
-            assert (
-                table_id_a not in listed_ids
-            ), f"Table A should have been removed from LIST_TABLES; got: {listed_ids}"
-            assert (
-                table_id_b in listed_ids
-            ), f"Table B should still appear in LIST_TABLES; got: {listed_ids}"
+            assert table_id_a not in listed_ids, (
+                f"Table A should have been removed from LIST_TABLES; got: {listed_ids}"
+            )
+            assert table_id_b in listed_ids, (
+                f"Table B should still appear in LIST_TABLES; got: {listed_ids}"
+            )
 
         # Table B match_done fires after the hand completes; it already did
         assert handle_b.match_done.is_set(), "Table B's hand should have completed"

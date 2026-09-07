@@ -70,9 +70,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-        print(
-            f"created account_id={account_id} username={args.username} " f"kind={kind} role={role}"
-        )
+        print(f"created account_id={account_id} username={args.username} kind={kind} role={role}")
         return 0
     finally:
         p.close()

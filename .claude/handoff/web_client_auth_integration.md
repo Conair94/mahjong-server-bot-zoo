@@ -94,7 +94,7 @@ Client proceeds to table discovery / ATTACH
 
 ### Open Questions (Reviewer: verify these)
 
-1. **Password hashing on the client:** 
+1. **Password hashing on the client:**
    - Claim: Password is likely sent as plaintext over the WebSocket (TLS/Tailscale in production provides transport security).
    - Evidence: No `scrypt` or similar visible in client dependencies.
    - **Verify:** Check `docs/specs/wire-protocol.md` § Authentication for exact field name and format.
@@ -167,7 +167,7 @@ Client sends LIST_TABLES, CREATE_TABLE, or ATTACH (as before).
 
 ## Confidence Assessment by Haiku 4.5
 
-**Self-assessed difficulty:** LOW-to-MEDIUM  
+**Self-assessed difficulty:** LOW-to-MEDIUM
 **Self-assessed confidence:** 85%
 
 ### Why I think this is low-to-medium:

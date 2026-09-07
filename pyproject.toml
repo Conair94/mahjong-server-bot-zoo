@@ -5,18 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mahjong-server-bot-zoo"
 version = "0.0.0"
-description = "Self-hosted MCR mahjong server with a TUI client and a zoo of trained bots."
+description = "Self-hosted MCR mahjong server with a browser client and bot evaluation tools."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Connor Lockhart" }]
 dependencies = [
-    # Runtime deps land here as layers come online.
-    # PyMahjongGB is required for Layer 1.2; pin loosely until we measure stability.
-    "PyMahjongGB>=1.0",
-    # WebSocket transport for the S2 server (Layer 7.2). The wire codec itself
-    # has no dep on websockets; only the listener does.
-    "websockets>=12.0",
+    # Fan calculation is part of the deterministic rules/reward contract.
+    "PyMahjongGB==1.3.0",
+    # The transport uses the modern websockets.asyncio API.
+    "websockets>=16.0,<17",
     # Password hashing for auth (Layer 8.2). argon2id is the OWASP-current
     # standard; argon2-cffi wraps the reference C implementation.
     "argon2-cffi>=23.1",
@@ -27,24 +25,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    # Pin mypy to the SAME version pre-commit uses (.pre-commit-config.yaml:
-    # mirrors-mypy v2.1.0) for the same reason ruff is pinned below: CI installs
-    # mypy from here with no floor of its own, so a floating `>=` lets CI drift
-    # away from the version contributors run locally. 2.1.0 also parses the
-    # code's PEP 695 generics (mahjong/selfplay/seeds.py), which the old v1.10.1
-    # pre-commit pin could not. Bump this and the pre-commit rev together.
+    "pytest>=9.0,<10",
+    "pytest-asyncio>=1.3,<2",
+    # Keep these aligned with .pre-commit-config.yaml.
     "mypy==2.1.0",
-    # Pin ruff to the SAME version pre-commit uses (.pre-commit-config.yaml:
-    # ruff v0.5.5). CI installs ruff from here with no floor of its own, so an
-    # unpinned `>=` let CI float to a newer ruff whose formatter diverged from
-    # what contributors run locally — turning every PR (and main) red on a
-    # whole-repo `ruff format --check` even though nothing changed. Bump this
-    # and the pre-commit rev together when intentionally upgrading.
-    "ruff==0.5.5",
+    "ruff==0.15.13",
+    "build>=1.2,<2",
     "pre-commit>=3.7",
 ]
+
+web = ["playwright==1.60.0"]
 
 [project.scripts]
 mahjong = "mahjong.cli:main"
@@ -56,10 +46,14 @@ exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 "mahjong.engine.rulesets" = ["*.json"]
+"mahjong.web" = ["static/*"]
+"mahjong.control" = ["static/*"]
 
 # --- Pytest ---
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = [
     "-ra",
@@ -73,9 +67,6 @@ markers = [
     "needs_pymjgb: requires PyMahjongGB to be importable.",
     "slow: expensive tests (argon2 timing, multi-hand e2e); skipped in the fast <10s suite.",
 ]
-
-[tool.pytest_asyncio]
-asyncio_mode = "auto"
 
 # --- Mypy ---
 # CLAUDE.md mandates --strict on the engine and table manager; lenient elsewhere.

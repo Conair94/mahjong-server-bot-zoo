@@ -25,3 +25,7 @@ Thumbs.db
 
 # Runtime data (DB, WAL, live game records)
 var/
+
+# Local agent settings and generated CLI sample record
+.claude/settings.local.json
+/hand.jsonl

@@ -301,3 +301,7 @@ These extend the seat-port fixtures with bot-runner-specific cases.
 - **Multiple-process bots (parallel MCTS).** A bot that wants `limits.max_processes > 1` raises new questions: do child processes inherit the netns? the unprivileged uid? Working answer: yes to both — cgroup-style isolation applies to the process tree, not the leader. Document and add a fixture when the first multi-process bot is registered.
 - **Subprocess "warm pool" across hands.** Performance optimization; explicitly rejected for v1 (see Alternatives). Worth revisiting only if measured bot-spawn-time becomes a meaningful fraction of inter-hand latency.
 - **`>>>BOTZONE_REQUEST_END<<<` sentinel choice.** Worth documenting whether this exact string is used by the official local-judge tooling (so we're not gratuitously different). Verify against the wiki / sample-bot repo before S1 spawns the first reference bot; adjust if the canonical sentinel is different.
+
+## Foundation audit amendment (2026-09-07)
+
+History serializers receive `on_seated(ctx)` before process startup. Botzone initialization derives the seat/round, 13-tile deal, and dealer first draw from `ctx.initial_view`; the private shuffle seed in the record HEADER is never sent to bots. Redacted opponent concealed kongs are serialized without tile identity. Initialization failures replace the seat, and cancellation during subprocess teardown must still kill and reap the child. Full judge-compatible claim translation remains open under DEF-28 in the deferred ledger.

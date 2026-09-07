@@ -85,6 +85,16 @@ class RecordWriter:
         self._fh.close()
         self._closed = True
 
+    def close(self) -> None:
+        """Close an interrupted record without claiming it completed.
+
+        A missing FOOTER is intentional: recovery treats this as a partial
+        record. Safe to call after a successful close_with_footer as well.
+        """
+        if not self._closed:
+            self._fh.close()
+            self._closed = True
+
     @property
     def path(self) -> Path:
         return self._path

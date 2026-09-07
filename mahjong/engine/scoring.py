@@ -22,10 +22,10 @@ from typing import Any
 
 from mahjong.engine.types import WinType
 
-# Defaults reproduce the pre-change official formula exactly, so a ruleset with
-# no `conversion` block (e.g. mcr-2006.json) scores identically to before.
+# MCR §3.9.2: every opponent pays eight base points. On a discard win,
+# only the discarder also pays the hand's fan total.
 _OFFICIAL_BASE_EACH = 8
-_OFFICIAL_BASE_DEALER_IN = 24
+_OFFICIAL_BASE_DEALER_IN = 8
 _OFFICIAL_BASE_OTHER = 8
 
 

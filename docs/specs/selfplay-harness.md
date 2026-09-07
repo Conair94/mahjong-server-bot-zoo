@@ -200,3 +200,7 @@ This run is deterministic: rerun the same command, get byte-identical records an
 - **Per-run config file.** A YAML/JSON file with all flag values, for reproducibility. Working answer: defer — `--master-seed` + the exact CLI command in shell history is sufficient documentation for v1. Add a config file when a run takes more than ~5 flags to specify.
 - **Streaming eval mode** (compute summary incrementally without holding all records in memory). The aggregation is straightforward to stream; defer until a run with hundreds-of-thousands-of-records makes it necessary.
 - **Self-play between *different versions* of the same bot.** The flag interface assumes one `bot_id` per seat. A v2-vs-v2-old run would need versioned bot references (`b_imitation@0.2.0`). Working answer: address when v2 lands — `bot_id@version` syntax with no version meaning "latest."
+
+## Foundation audit amendment (2026-09-07)
+
+Resume validates record checksums, run seed, ruleset/config hash, seat assignments, and filename/index consistency before recovering incomplete output. Completed indices are a set: gaps and earlier interrupted hands are rerun even if later hands finished. A parallel CLI run validates and recovers the shared corpus before spawning workers; each worker subsequently reads only its own filenames. Evaluation rejects corrupt or incomplete records and reports the rejection instead of incorporating their score claims. Engine/bot revision provenance is still required before combining historical evaluation corpora (DEF-29).

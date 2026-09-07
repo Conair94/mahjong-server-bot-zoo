@@ -1,5 +1,8 @@
 # AI bot development plan
 
+> Historical design plan. For current implementation status and correctness gates,
+> read [the September 2026 foundation audit](foundation-audit-2026-09-07.md).
+
 This document is the design plan for the AI components of the project. The [README](../README.md) is the public-facing overview; this is the working plan.
 
 ## Framing

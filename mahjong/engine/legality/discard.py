@@ -35,37 +35,50 @@ def discard_actions(state: GameState, seat: int) -> list[Action]:
     for tile in sorted(counts):
         actions.append({"type": "PLAY", "tile": tile})
 
-    for tile, n in sorted(counts.items()):
-        if n == 4:
-            actions.append({"type": "GANG", "tile": tile, "kind": "CONCEALED"})
+    if state["wall"]["remaining"]:
+        for tile, n in sorted(counts.items()):
+            if n == 4:
+                actions.append({"type": "GANG", "tile": tile, "kind": "CONCEALED"})
 
-    peng_tiles = sorted({m["tiles"][0] for m in melds if m["type"] == "PENG"})
-    for tile in peng_tiles:
-        if counts.get(tile, 0) >= 1:
-            actions.append({"type": "GANG", "tile": tile, "kind": "ADDED"})
+        peng_tiles = sorted({m["tiles"][0] for m in melds if m["type"] == "PENG"})
+        for tile in peng_tiles:
+            if counts.get(tile, 0) >= 1:
+                actions.append({"type": "GANG", "tile": tile, "kind": "ADDED"})
 
     config = resolve_config(state["ruleset"])
-    if _self_draw_hu_legal(concealed, melds, seat_data["seat_wind"], state["round_wind"], config):
+    last_drawn = state["last_drawn"]
+    if (
+        last_drawn is not None
+        and last_drawn["seat"] == seat
+        and _self_draw_hu_legal(
+            concealed,
+            melds,
+            last_drawn["tile"],
+            seat_data["seat_wind"],
+            state["round_wind"],
+            config,
+        )
+    ):
         actions.append({"type": "HU"})
 
     return actions
 
 
 def _self_draw_hu_legal(
-    concealed: list[str], melds: list[Meld], seat_wind: str, round_wind: str, config: dict[str, Any]
+    concealed: list[str],
+    melds: list[Meld],
+    win_tile: str,
+    seat_wind: str,
+    round_wind: str,
+    config: dict[str, Any],
 ) -> bool:
-    """True iff some tile in `concealed` can be treated as the just-drawn
-    win tile to yield a calculate_fan result above the ruleset's fan cliff."""
-    if len(concealed) % 3 != 2:
+    """Score the actual draw; another tile can falsely add a wait fan."""
+    if len(concealed) % 3 != 2 or win_tile not in concealed:
         return False
-    tried: set[str] = set()
-    for win_tile in concealed:
-        if win_tile in tried:
-            continue
-        tried.add(win_tile)
-        remaining = list(concealed)
-        remaining.remove(win_tile)
-        fans = pymj.calculate_fan(
+    remaining = list(concealed)
+    remaining.remove(win_tile)
+    return bool(
+        pymj.calculate_fan(
             remaining,
             melds,
             win_tile,
@@ -74,9 +87,7 @@ def _self_draw_hu_legal(
             round_wind=round_wind,
             ruleset_config=config,
         )
-        if fans:
-            return True
-    return False
+    )
 
 
 __all__ = ["discard_actions"]

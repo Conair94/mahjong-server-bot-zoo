@@ -27,16 +27,16 @@ import pytest
 # browser E2E into CI is deferred — see DEF-22 in docs/specs/feedback-backlog.md.
 pytest.importorskip("playwright")
 
-import pytest_asyncio  # noqa: E402
-from playwright.async_api import (  # noqa: E402
+import pytest_asyncio
+from playwright.async_api import (
     Browser,
     BrowserContext,
     Page,
     async_playwright,
 )
 
-from mahjong.web import static_root  # noqa: E402
-from mahjong.wire.server import Connection, WebSocketServer  # noqa: E402
+from mahjong.web import static_root
+from mahjong.wire.server import Connection, WebSocketServer
 
 
 class FakeWireServer:

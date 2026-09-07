@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from mahjong.records.writer import RecordWriter
 from mahjong.selfplay.eval import (
     aggregate,
     format_summary,
@@ -70,12 +71,14 @@ def _write_record(
         "fan_total": fan_total,
         "score_delta": score_delta,
     }
-    footer: dict = {"event": "FOOTER", "seq": 3}
-
-    with path.open("w") as fh:
-        fh.write(json.dumps(header) + "\n")
-        fh.write(json.dumps(hand_end) + "\n")
-        fh.write(json.dumps(footer) + "\n")
+    base = {"turn_index": 0, "phase": "TERMINAL", "ts": "2026-09-07T00:00:00.000Z"}
+    header.pop("seq")
+    header["format_version"] = 1
+    hand_end.pop("seq")
+    writer = RecordWriter(path)
+    writer.write_event({**base, **header})
+    writer.write_event({**base, **hand_end})
+    writer.close_with_footer(**base, rng_cursor_final=0, state_hash_final="test", corrects=None)
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +105,18 @@ def test_parse_record_hu_win(tmp_path: Path) -> None:
     assert outcome.deal_in_seat == 1
     assert outcome.fan_total == 14
     assert outcome.score_delta == [38, -22, -8, -8]
+
+
+def test_eval_rejects_a_record_whose_outcome_was_modified(tmp_path: Path) -> None:
+    """A checksum failure must not become a plausible evaluation score."""
+    path = tmp_path / "tampered.jsonl"
+    writer = RecordWriter(path)
+    base = {"turn_index": 0, "phase": "TERMINAL", "ts": "2026-09-07T00:00:00.000Z"}
+    writer.write_event({**base, "event": "HEADER", "format_version": 1, "seats": []})
+    writer.write_event({**base, "event": "HAND_END", "kind": "DRAW", "score_delta": [0, 0, 0, 0]})
+    writer.close_with_footer(**base, rng_cursor_final=0, state_hash_final="test", corrects=None)
+    path.write_text(path.read_text().replace('"kind":"DRAW"', '"kind":"HU"'))
+    assert parse_record(path) is None
 
 
 def test_parse_record_wall_exhausted(tmp_path: Path) -> None:

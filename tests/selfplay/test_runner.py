@@ -159,13 +159,16 @@ async def test_run_refuses_non_empty_dir_without_resume(tmp_path: Path) -> None:
         await runner.run()
 
 
-async def test_resume_continues_from_max_hand_index(tmp_path: Path) -> None:
+@pytest.mark.parametrize("custom_names", [False, True])
+async def test_resume_continues_from_max_hand_index(tmp_path: Path, custom_names: bool) -> None:
+    hand_id_fn = (lambda idx: f"hand-{idx:04d}") if custom_names else None
     first = SelfPlayRunner(
         master_seed=MASTER,
         bots=["b_random"] * 4,
         hands=2,
         output_dir=tmp_path,
         adapter_factory=_canned_factory,
+        hand_id_fn=hand_id_fn,
     )
     paths1 = await first.run()
     assert len(paths1) == 2
@@ -176,6 +179,7 @@ async def test_resume_continues_from_max_hand_index(tmp_path: Path) -> None:
         hands=4,
         output_dir=tmp_path,
         adapter_factory=_canned_factory,
+        hand_id_fn=hand_id_fn,
         resume=True,
     )
     paths2 = await second.run()
@@ -188,24 +192,49 @@ async def test_resume_continues_from_max_hand_index(tmp_path: Path) -> None:
     assert indices == [0, 1, 2, 3]
 
 
+async def test_resume_repairs_holes_before_later_completed_hands(tmp_path: Path) -> None:
+    kwargs = dict(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=3,
+        output_dir=tmp_path,
+        adapter_factory=_canned_factory,
+    )
+    paths = await SelfPlayRunner(**kwargs).run()
+    paths[0].unlink()
+    paths[1].write_text(paths[1].read_text().splitlines()[0] + "\n")
+    last_record = paths[2].read_bytes()
+    repaired = await SelfPlayRunner(**kwargs, resume=True).run()
+    assert sorted(_read_header(p)["meta"]["hand_index"] for p in repaired) == [0, 1]
+    assert paths[2].read_bytes() == last_record
+
+
+async def test_resume_rejects_a_different_seed_without_changing_records(tmp_path: Path) -> None:
+    kwargs = dict(
+        bots=["b_random"] * 4,
+        hands=1,
+        output_dir=tmp_path,
+        adapter_factory=_canned_factory,
+    )
+    paths = await SelfPlayRunner(master_seed=MASTER, **kwargs).run()
+    before = paths[0].read_bytes()
+    with pytest.raises(RunnerError, match="configuration"):
+        await SelfPlayRunner(master_seed=MASTER + 1, **kwargs, resume=True).run()
+    assert paths[0].read_bytes() == before
+
+
 async def test_resume_deletes_partial_records(tmp_path: Path) -> None:
     """A file with a HEADER but no FOOTER is treated as a crash; resume
     deletes it and replays that `hand_index`."""
-    # Manufacture a partial record at hand_index=0.
-    partial = tmp_path / "partial.jsonl"
-    partial.write_text(
-        json.dumps(
-            {
-                "event": "HEADER",
-                "seq": 0,
-                "turn_index": 0,
-                "phase": "DEAL",
-                "ts": "2026-05-21T00:00:00.000Z",
-                "meta": {"master_seed": hex(MASTER), "hand_index": 0, "source": "selfplay"},
-            }
-        )
-        + "\n"
-    )
+    paths = await SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=1,
+        output_dir=tmp_path,
+        adapter_factory=_canned_factory,
+    ).run()
+    partial = paths[0]
+    partial.write_text(partial.read_text().splitlines()[0] + "\n")
 
     runner = SelfPlayRunner(
         master_seed=MASTER,
@@ -216,8 +245,8 @@ async def test_resume_deletes_partial_records(tmp_path: Path) -> None:
         resume=True,
     )
     paths = await runner.run()
-    assert not partial.exists(), "partial record should have been cleaned up"
     assert len(paths) == 1
+    assert len(paths[0].read_text().splitlines()) > 1, "partial record must have been replayed"
     header = _read_header(paths[0])
     assert header["meta"]["hand_index"] == 0
 
@@ -422,6 +451,54 @@ async def test_worker_does_not_refuse_non_empty_dir(tmp_path: Path) -> None:
     paths = await worker0.run()
     indices = sorted(_read_header(p)["meta"]["hand_index"] for p in paths)
     assert indices == [0]
+
+
+@pytest.mark.parametrize("custom_names", [False, True])
+async def test_worker_ignores_siblings_record_before_header_is_written(
+    tmp_path: Path, custom_names: bool
+) -> None:
+    """A peer can open its next output before its HEADER is visible."""
+    hand_id_fn = (lambda idx: f"hand-{idx:04d}") if custom_names else None
+    sibling = tmp_path / ("hand-0001.jsonl" if custom_names else "selfplay-00000001.jsonl")
+    sibling.touch()
+
+    paths = await SelfPlayRunner(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=2,
+        output_dir=tmp_path,
+        adapter_factory=_canned_factory,
+        hand_id_fn=hand_id_fn,
+        worker_id=0,
+        worker_count=2,
+        resume=True,
+    ).run()
+
+    assert [_read_header(path)["meta"]["hand_index"] for path in paths] == [0]
+    assert sibling.read_bytes() == b"", "one worker must never alter another worker's output"
+
+
+@pytest.mark.parametrize("worker_count", [1, 2])
+async def test_resume_rejects_filename_and_hand_index_mismatch(
+    tmp_path: Path, worker_count: int
+) -> None:
+    kwargs = dict(
+        master_seed=MASTER,
+        bots=["b_random"] * 4,
+        hands=2,
+        output_dir=tmp_path,
+        adapter_factory=_canned_factory,
+    )
+    paths = await SelfPlayRunner(**kwargs).run()
+    paths[0].write_bytes(paths[1].read_bytes())
+    paths[1].unlink()
+    before = paths[0].read_bytes()
+
+    with pytest.raises(RunnerError, match="filename"):
+        await SelfPlayRunner(**kwargs, resume=True, worker_id=0, worker_count=worker_count).run()
+
+    assert paths[0].read_bytes() == before
+    assert not paths[1].exists()
 
 
 async def test_worker_resume_filters_by_slice(tmp_path: Path) -> None:

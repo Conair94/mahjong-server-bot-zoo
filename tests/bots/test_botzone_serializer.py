@@ -219,3 +219,57 @@ def test_action_to_string_gang_added_is_bugang() -> None:
 
 def test_action_to_string_hu() -> None:
     assert action_to_botzone_string({"type": "HU"}) == "HU"
+
+
+async def test_runner_initializes_botzone_history_from_private_seat_context(monkeypatch) -> None:
+    from mahjong.adapters.bot_runner import BotRunnerAdapter
+    from mahjong.bots.manifest import parse_manifest
+    from mahjong.engine.rulesets import MANIFEST
+    from mahjong.engine.state import initial_state, project
+
+    ruleset = {"id": "mcr-2006", "version": 1, "config_hash": MANIFEST["mcr-2006"]}
+    state = initial_state(ruleset, seed=12345)
+    serializer = BotzoneCsmSerializer(seat=0)
+    manifest = parse_manifest(
+        {
+            "bot_id": "init-test",
+            "version": "1",
+            "command": ["python3"],
+            "ruleset_supported": ["mcr-2006"],
+            "format_supported": ["botzone-csm"],
+            "mode": "long_running",
+            "budget_ms_per_turn": 1000,
+        }
+    )
+    adapter = BotRunnerAdapter(manifest, history_serializer=serializer)
+
+    async def noop(*args):
+        pass
+
+    monkeypatch.setattr(adapter, "_spawn", noop)
+    monkeypatch.setattr(adapter, "_do_hello", noop)
+    await adapter.seated(
+        {
+            "seat": 0,
+            "hand_id": "init",
+            "ruleset": ruleset,
+            "seat_deadline_ms": 1000,
+            "initial_view": project(state, 0),
+        }
+    )
+    envelope = json.loads(serializer.on_decide(_discard_prompt()))
+    assert envelope["requests"][0] == "0 0 0"
+    dealt = envelope["requests"][1].split()[5:]
+    assert len(dealt) == 13
+    draw = state["last_drawn"]["tile"]
+    assert sorted([*dealt, draw]) == sorted(state["seats"][0]["concealed"])
+    assert envelope["requests"][2] == f"2 {draw}"
+    assert envelope["responses"] == ["PASS", "PASS"]
+
+
+def test_redacted_opponent_concealed_kong_has_no_tile() -> None:
+    s = BotzoneCsmSerializer(seat=0)
+    s.on_observe(
+        {"event": "CLAIM_DECISION", "seat": 1, "decision": "GANG", "kind": "CONCEALED"}, {}
+    )
+    assert json.loads(s.on_decide(_claim_prompt()))["requests"] == ["3 1 GANG"]

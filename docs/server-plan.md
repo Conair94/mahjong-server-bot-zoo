@@ -1,5 +1,8 @@
 # Server design plan
 
+> Historical design plan. For current implementation status and correctness gates,
+> read [the September 2026 foundation audit](foundation-audit-2026-09-07.md).
+
 This document is the design plan for the mahjong server itself — the part friends will log into and play on. The [AI plan](ai-plan.md) is a sibling doc covering the bot side. The [README](../README.md) is the public-facing overview.
 
 ## Purpose

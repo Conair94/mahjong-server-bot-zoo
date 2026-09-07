@@ -21,6 +21,7 @@ from typing import Any, Literal, cast
 from mahjong.adapters.base import SeatAdapter
 from mahjong.engine.rulesets import MANIFEST
 from mahjong.engine.types import RuleSetRef
+from mahjong.records.reader import RecordCorruptError, read_record
 from mahjong.selfplay.seeds import hand_seed, rotate_bots
 from mahjong.table.manager import run_hand
 
@@ -96,14 +97,16 @@ class SelfPlayRunner:
         """Play hands [start, self.hands). Returns the record paths written
         by *this* invocation (resume-skipped hands are excluded)."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        start = self._compute_start_index()
+        completed = self._completed_indices()
         ruleset: RuleSetRef = cast(
             RuleSetRef,
             {"id": self.ruleset_id, "version": 1, "config_hash": MANIFEST[self.ruleset_id]},
         )
 
         written: list[Path] = []
-        for hand_index in range(start, self.hands):
+        for hand_index in range(self.hands):
+            if hand_index in completed:
+                continue
             if hand_index % self.worker_count != self.worker_id:
                 continue
             seat_bots = self._seat_assignment(hand_index)
@@ -131,6 +134,16 @@ class SelfPlayRunner:
 
     # --- Helpers -------------------------------------------------------
 
+    def prepare_output(self) -> None:
+        """Validate and recover the full corpus before starting any workers.
+
+        The parent owns this phase. Once workers start, each opens only its
+        own deterministic filenames, so it cannot inspect a peer's partial
+        HEADER or race a peer removing an interrupted hand.
+        """
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._completed_indices(prepare_workers=True)
+
     def _seat_assignment(self, hand_index: int) -> list[str]:
         if self.rotation == "none":
             return list(self.bots)
@@ -138,39 +151,74 @@ class SelfPlayRunner:
             return rotate_bots(self.bots, hand_index)
         raise ValueError(f"unknown rotation: {self.rotation!r}")
 
-    def _compute_start_index(self) -> int:
+    def _completed_indices(self, *, prepare_workers: bool = False) -> set[int]:
         existing = sorted(self.output_dir.glob("*.jsonl"))
         if not existing:
-            return 0
+            return set()
         # In multi-worker mode the parent owns the non-empty-dir gate; each
         # worker scans only its own slice and trusts that sibling-worker
         # records belong there.
-        is_parallel = self.worker_count > 1
+        is_parallel = self.worker_count > 1 and not prepare_workers
         if not self.resume and not is_parallel:
             raise RunnerError(
                 f"output dir {self.output_dir} is non-empty; pass resume=True to continue"
             )
-        max_index = -1
+        if is_parallel:
+            # Establish ownership from the filename before opening anything.
+            # Peers may be writing a HEADER or removing an interrupted record.
+            owned_names = {
+                f"{self.hand_id_fn(idx)}.jsonl"
+                for idx in range(self.worker_id, self.hands, self.worker_count)
+            }
+            existing = [path for path in existing if path.name in owned_names]
+        completed: set[int] = set()
+        partial: list[Path] = []
         for path in existing:
             try:
                 header = self._read_header(path)
-            except (OSError, json.JSONDecodeError):
-                continue
-            if header.get("event") != "HEADER":
-                continue
+            except (OSError, ValueError) as exc:
+                raise RunnerError(f"cannot read self-play header: {path}") from exc
+            if not isinstance(header, dict) or header.get("event") != "HEADER":
+                raise RunnerError(f"not a self-play record: {path}")
             meta = header.get("meta") or {}
             idx = meta.get("hand_index")
-            if not isinstance(idx, int):
+            if type(idx) is not int or idx < 0:
+                raise RunnerError(f"invalid hand index: {path}")
+            if path.name != f"{self.hand_id_fn(idx)}.jsonl":
+                raise RunnerError(f"self-play filename does not match hand index {idx}: {path}")
+            if is_parallel and idx % self.worker_count != self.worker_id:
                 continue
-            if idx % self.worker_count != self.worker_id:
-                continue
+            self._validate_configuration(header, idx, path)
             if not self._has_footer(path):
-                # Partial record — delete and replay this hand_index.
-                path.unlink()
+                partial.append(path)
                 continue
-            if idx > max_index:
-                max_index = idx
-        return max_index + 1
+            try:
+                read_record(path)
+            except (OSError, RecordCorruptError) as exc:
+                raise RunnerError(f"corrupt completed self-play record: {path}") from exc
+            if idx in completed:
+                raise RunnerError(f"duplicate self-play hand index {idx}: {path}")
+            completed.add(idx)
+        # Validate the entire slice before deleting anything. A mismatched
+        # resume must leave the existing corpus available for investigation.
+        for path in partial:
+            path.unlink()
+        return completed
+
+    def _validate_configuration(self, header: dict[str, Any], idx: int, path: Path) -> None:
+        meta = header.get("meta") or {}
+        ruleset = header.get("ruleset") or {}
+        seats = sorted(header.get("seats") or [], key=lambda seat: seat["seat"])
+        bots = [seat.get("identity", {}).get("bot_id") for seat in seats]
+        if (
+            meta.get("source") != "selfplay"
+            or meta.get("master_seed") != hex(self.master_seed)
+            or header.get("seed") != str(hand_seed(self.master_seed, idx))
+            or ruleset.get("id") != self.ruleset_id
+            or ruleset.get("config_hash") != MANIFEST[self.ruleset_id]
+            or bots != self._seat_assignment(idx)
+        ):
+            raise RunnerError(f"self-play configuration mismatch: {path}")
 
     @staticmethod
     def _read_header(path: Path) -> dict[str, Any]:

@@ -105,33 +105,46 @@ async def _guarded_step(
     rather than waited on forever.
     """
     task = asyncio.ensure_future(step)
-    done, pending = await asyncio.wait({task}, timeout=cap_seconds)
-    if not pending:
-        return task.result()
+    try:
+        _, pending = await asyncio.wait({task}, timeout=cap_seconds)
+        if not pending:
+            return task.result()
 
-    _logger.error(
-        "hand_step_stalled [DEF-12] hand_id=%s phase=%s actor=%s turn_index=%s "
-        "next_seq=%s cap_s=%.1f stuck_at=%s",
-        hand_id,
-        phase,
-        actor,
-        turn_index,
-        next_seq,
-        cap_seconds,
-        _pending_stack_summary(task),
-    )
-    task.cancel()
-    _, still_pending = await asyncio.wait({task}, timeout=min(10.0, cap_seconds))
-    if still_pending:
         _logger.error(
-            "hand_step_stall_uncancellable [DEF-12] hand_id=%s — step task ignored "
-            "cancellation; abandoning it",
+            "hand_step_stalled [DEF-12] hand_id=%s phase=%s actor=%s turn_index=%s "
+            "next_seq=%s cap_s=%.1f stuck_at=%s",
             hand_id,
+            phase,
+            actor,
+            turn_index,
+            next_seq,
+            cap_seconds,
+            _pending_stack_summary(task),
         )
-    raise HandStepStalled(
-        f"hand {hand_id}: {phase} step (actor={actor}, turn={turn_index}) "
-        f"exceeded the {cap_seconds:.1f}s stall cap"
-    )
+        raise HandStepStalled(
+            f"hand {hand_id}: {phase} step (actor={actor}, turn={turn_index}) "
+            f"exceeded the {cap_seconds:.1f}s stall cap"
+        )
+    finally:
+        # asyncio.wait does not propagate cancellation to its children. Own
+        # the step on every exit, including table close / shutdown escalation.
+        if not task.done():
+            task.cancel()
+            _, still_pending = await asyncio.wait({task}, timeout=min(10.0, cap_seconds))
+            if still_pending:
+                _logger.error(
+                    "hand_step_stall_uncancellable [DEF-12] hand_id=%s — step task ignored "
+                    "cancellation; abandoning it",
+                    hand_id,
+                )
+                task.add_done_callback(_consume_step_exception)
+        _consume_step_exception(task)
+
+
+def _consume_step_exception(task: asyncio.Future[Any]) -> None:
+    """Retrieve failures even when a cancelled step finishes after its owner."""
+    if task.done() and not task.cancelled():
+        task.exception()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -211,14 +224,30 @@ def _build_prompt(
     }
 
 
-async def _seated_with_timeout(adapter: SeatAdapter, ctx: SeatContext, seconds: float) -> None:
+async def _seated_with_timeout(adapter: SeatAdapter, ctx: SeatContext, seconds: float) -> bool:
+    task = asyncio.create_task(adapter.seated(ctx))
     try:
-        await asyncio.wait_for(adapter.seated(ctx), timeout=seconds)
-    except (TimeoutError, Exception):
-        # Per seat-port.md, a failing `seated` causes the seat to be replaced
-        # by AutoPassAdapter. The replacement is handled by the caller; here
-        # we just swallow so gather doesn't fail-fast.
-        return
+        _, pending = await asyncio.wait({task}, timeout=seconds)
+        if pending:
+            _logger.warning("adapter_seated_timeout identity=%s", adapter.identity)
+            return False
+        if task.cancelled():
+            _logger.warning("adapter_seated_cancelled identity=%s", adapter.identity)
+            return False
+        task.result()
+        return True
+    except Exception:
+        _logger.warning("adapter_seated_failed identity=%s", adapter.identity, exc_info=True)
+        return False
+    finally:
+        # Initialization precedes the phase watchdog. Bound cancellation here
+        # too, so a broken adapter cannot prevent the first turn from starting.
+        if not task.done():
+            task.cancel()
+            await asyncio.wait({task}, timeout=seconds)
+            if not task.done():
+                _logger.warning("adapter_seated_stalled identity=%s", adapter.identity)
+        task.add_done_callback(_consume_step_exception)
 
 
 async def _fanout_observe(
@@ -246,7 +275,10 @@ async def _fanout_observe(
                 if state["phase"] != "TERMINAL"
                 else cast(SeatView, {})
             )
-            await asyncio.wait_for(adapters[seat].observe(event, view), timeout=per_observe_seconds)
+            await asyncio.wait_for(
+                adapters[seat].observe(state_module.project_event(event, seat), view),
+                timeout=per_observe_seconds,
+            )
         except (TimeoutError, Exception):
             return
 
@@ -314,113 +346,135 @@ async def run_hand(
         state_callback(state)
     writer = RecordWriter(record_path)
 
-    # --- HEADER ---
-    # Seat winds rotate with the dealer: dealer_seat = East (F1),
-    # the next seat clockwise = South (F2), etc.
-    # Wind index for seat s: (s - dealer_seat) % 4, 1-based → F1..F4.
-    header: dict[str, Any] = {
-        "event": "HEADER",
-        "turn_index": 0,
-        "phase": "DEAL",
-        "ts": _now_ts(),
-        "format_version": 1,
-        "hand_id": hand_id,
-        "match_id": None,
-        "hand_index_in_match": hand_index_in_match,
-        "ruleset": dict(ruleset),
-        "seed": str(seed),
-        "seats": [
+    reason: LeaveReason = "ERROR"
+    try:
+        # --- HEADER ---
+        # Seat winds rotate with the dealer: dealer_seat = East (F1),
+        # the next seat clockwise = South (F2), etc.
+        # Wind index for seat s: (s - dealer_seat) % 4, 1-based → F1..F4.
+        header: dict[str, Any] = {
+            "event": "HEADER",
+            "turn_index": 0,
+            "phase": "DEAL",
+            "ts": _now_ts(),
+            "format_version": 1,
+            "hand_id": hand_id,
+            "match_id": None,
+            "hand_index_in_match": hand_index_in_match,
+            "ruleset": dict(ruleset),
+            "seed": str(seed),
+            "seats": [
+                {
+                    "seat": i,
+                    "wind": f"F{(i - dealer_seat) % 4 + 1}",
+                    "identity": dict(adapters[i].identity),
+                }
+                for i in range(4)
+            ],
+            "server": dict(server_info),
+        }
+        if meta is not None:
+            header["meta"] = dict(meta)
+        writer.write_event(header)
+
+        # --- seated ---
+        contexts: list[SeatContext] = [
             {
                 "seat": i,
-                "wind": f"F{(i - dealer_seat) % 4 + 1}",
-                "identity": dict(adapters[i].identity),
+                "hand_id": hand_id,
+                "ruleset": ruleset,
+                "seat_deadline_ms": int(seated_timeout_seconds * 1000),
+                "initial_view": state_module.project(state, i),
             }
             for i in range(4)
-        ],
-        "server": dict(server_info),
-    }
-    if meta is not None:
-        header["meta"] = dict(meta)
-    writer.write_event(header)
+        ]
 
-    # --- seated ---
-    contexts: list[SeatContext] = [
-        {
-            "seat": i,
-            "hand_id": hand_id,
-            "ruleset": ruleset,
-            "seat_deadline_ms": int(seated_timeout_seconds * 1000),
-            "initial_view": state_module.project(state, i),
-        }
-        for i in range(4)
-    ]
-    await asyncio.gather(
-        *(_seated_with_timeout(adapters[i], contexts[i], seated_timeout_seconds) for i in range(4))
-    )
+        async def seat_one(seat: int) -> None:
+            adapter = adapters[seat]
+            if not await _seated_with_timeout(adapter, contexts[seat], seated_timeout_seconds):
+                adapters[seat] = cast(SeatAdapter, AutoPassAdapter())
+                await _safe_left(adapter, "REPLACED", seated_timeout_seconds)
 
-    strikes = [0] * 4
+        await asyncio.gather(*(seat_one(i) for i in range(4)))
 
-    # --- main loop ---
-    while not is_terminal(state):
-        if state["phase"] == "DISCARD":
-            step = _step_discard(
-                state,
-                adapters,
-                writer,
-                decide_timeouts,
-                observe_timeout_seconds,
-                strikes,
-                strike_limit,
-                event_callback,
+        strikes = [0] * 4
+
+        # --- main loop ---
+        while not is_terminal(state):
+            if state["phase"] == "DISCARD":
+                step = _step_discard(
+                    state,
+                    adapters,
+                    writer,
+                    decide_timeouts,
+                    observe_timeout_seconds,
+                    strikes,
+                    strike_limit,
+                    event_callback,
+                )
+            elif state["phase"] == "CLAIM_WINDOW":
+                step = _step_claim_window(
+                    state,
+                    adapters,
+                    writer,
+                    decide_timeouts,
+                    observe_timeout_seconds,
+                    strikes,
+                    strike_limit,
+                    event_callback,
+                )
+            else:
+                raise AssertionError(f"unexpected phase in run_hand: {state['phase']!r}")
+            state = await _guarded_step(
+                step,
+                cap_seconds=step_stall_seconds,
+                hand_id=hand_id,
+                phase=state["phase"],
+                actor=state["current_actor"],
+                turn_index=state["turn_index"],
+                next_seq=writer.seq,
             )
-        elif state["phase"] == "CLAIM_WINDOW":
-            step = _step_claim_window(
-                state,
-                adapters,
-                writer,
-                decide_timeouts,
-                observe_timeout_seconds,
-                strikes,
-                strike_limit,
-                event_callback,
-            )
-        else:
-            raise AssertionError(f"unexpected phase in run_hand: {state['phase']!r}")
-        state = await _guarded_step(
-            step,
-            cap_seconds=step_stall_seconds,
-            hand_id=hand_id,
-            phase=state["phase"],
-            actor=state["current_actor"],
+            if state_callback is not None:
+                state_callback(state)
+
+        # --- FOOTER ---
+        writer.close_with_footer(
             turn_index=state["turn_index"],
-            next_seq=writer.seq,
+            phase=state["phase"],
+            ts=_now_ts(),
+            rng_cursor_final=state["rng"]["cursor"],
+            state_hash_final=state_module.state_hash(state),
+            corrects=None,
         )
-        if state_callback is not None:
-            state_callback(state)
+        reason = "HAND_ENDED"
+        return state
 
-    # --- left ---
-    await asyncio.gather(
-        *(_safe_left(a, "HAND_ENDED") for a in adapters),
-        return_exceptions=True,
-    )
-
-    # --- FOOTER ---
-    writer.close_with_footer(
-        turn_index=state["turn_index"],
-        phase=state["phase"],
-        ts=_now_ts(),
-        rng_cursor_final=state["rng"]["cursor"],
-        state_hash_final=state_module.state_hash(state),
-        corrects=None,
-    )
-    return state
+    except asyncio.CancelledError:
+        reason = "TABLE_CLOSED"
+        raise
+    finally:
+        # Close before adapter callbacks: a broken adapter cannot strand the
+        # record descriptor, and a partial hand must never get a valid footer.
+        writer.close()
+        await asyncio.gather(
+            *(_safe_left(a, reason, seated_timeout_seconds) for a in adapters),
+            return_exceptions=True,
+        )
 
 
-async def _safe_left(adapter: SeatAdapter, reason: LeaveReason) -> None:
+async def _safe_left(adapter: SeatAdapter, reason: LeaveReason, seconds: float) -> None:
+    task = asyncio.create_task(adapter.left(reason))
     try:
-        await adapter.left(reason)
-    except Exception:
-        return
+        await asyncio.wait({task}, timeout=seconds)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.wait({task}, timeout=seconds)
+            if not task.done():
+                _logger.warning(
+                    "adapter_left_stalled identity=%s reason=%s", adapter.identity, reason
+                )
+        task.add_done_callback(_consume_step_exception)
 
 
 # --- Per-phase steppers ---
@@ -460,7 +514,7 @@ async def _step_discard(
             event_callback=event_callback,
         )
 
-    _maybe_swap_to_autopass(adapters, actor, strikes, strike_limit)
+    await _maybe_swap_to_autopass(adapters, actor, strikes, strike_limit)
     return state
 
 
@@ -559,7 +613,7 @@ async def _step_claim_window(
             )
 
     for seat in claimers:
-        _maybe_swap_to_autopass(adapters, seat, strikes, strike_limit)
+        await _maybe_swap_to_autopass(adapters, seat, strikes, strike_limit)
     return state
 
 
@@ -647,13 +701,15 @@ async def _apply_all_pass(
     return state
 
 
-def _maybe_swap_to_autopass(
+async def _maybe_swap_to_autopass(
     adapters: list[SeatAdapter], seat: int, strikes: list[int], strike_limit: int
 ) -> None:
     """Per seat-port.md § Error model: after `strike_limit` failures, the
     seat is replaced by an AutoPassAdapter for the remainder of the hand."""
     if strikes[seat] >= strike_limit and not isinstance(adapters[seat], AutoPassAdapter):
+        previous = adapters[seat]
         adapters[seat] = cast(SeatAdapter, AutoPassAdapter())
+        await _safe_left(previous, "REPLACED", 1.0)
 
 
 async def _decide_or_default(adapter: SeatAdapter, prompt: Prompt) -> tuple[Action, FailureMeta]:

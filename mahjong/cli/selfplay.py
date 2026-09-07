@@ -25,7 +25,7 @@ from mahjong.bots.botzone_serializer import BotzoneCsmSerializer
 from mahjong.bots.manifest import BotManifest, parse_manifest
 from mahjong.bots.registry import BotRegistry
 from mahjong.selfplay.eval import aggregate, format_summary
-from mahjong.selfplay.runner import SelfPlayRunner
+from mahjong.selfplay.runner import RunnerError, SelfPlayRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_DIR = PROJECT_ROOT / "bots" / "python-reference"
@@ -128,21 +128,18 @@ def _make_adapter_factory(registry: BotRegistry) -> Callable[[str, int], SeatAda
     return _factory
 
 
-async def _arun(args: argparse.Namespace) -> int:
+def _make_runner(args: argparse.Namespace) -> SelfPlayRunner:
     bots = [b.strip() for b in args.bots.split(",")]
     if len(bots) != 4:
-        print(f"--bots needs exactly 4 entries, got {len(bots)}", file=sys.stderr)
-        return 2
+        raise RunnerError(f"--bots needs exactly 4 entries, got {len(bots)}")
     registry = default_registry()
     for bot_id in bots:
         if bot_id not in registry:
-            print(
-                f"unknown bot_id {bot_id!r}; registered: {sorted(registry.list_ids())}",
-                file=sys.stderr,
+            raise RunnerError(
+                f"unknown bot_id {bot_id!r}; registered: {sorted(registry.list_ids())}"
             )
-            return 2
 
-    runner = SelfPlayRunner(
+    return SelfPlayRunner(
         master_seed=args.master_seed,
         bots=bots,
         hands=args.hands,
@@ -159,6 +156,10 @@ async def _arun(args: argparse.Namespace) -> int:
             "seated_timeout_seconds": 10.0,
         },
     )
+
+
+async def _arun(args: argparse.Namespace) -> int:
+    runner = _make_runner(args)
     written = await runner.run()
     print(f"selfplay: wrote {len(written)} record(s) to {args.output_dir}")
     # Eval-summary is the parent's job in parallel mode (workers shouldn't
@@ -183,7 +184,7 @@ def _spawn_workers(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    _make_runner(args).prepare_output()
 
     base_argv = [
         sys.executable,
@@ -234,10 +235,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.parallel_hands < 1:
         print(f"--parallel-hands must be >= 1, got {args.parallel_hands}", file=sys.stderr)
         return 2
-    if args.parallel_hands > 1 and args.worker_count == 1:
-        # Top-level parent invocation in parallel mode.
-        return _spawn_workers(args)
-    return asyncio.run(_arun(args))
+    try:
+        if args.parallel_hands > 1 and args.worker_count == 1:
+            # Top-level parent invocation in parallel mode.
+            return _spawn_workers(args)
+        return asyncio.run(_arun(args))
+    except (RunnerError, ValueError) as exc:
+        print(f"selfplay: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover

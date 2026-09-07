@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 from pathlib import Path
@@ -51,6 +52,8 @@ class AdminWebServer:
         static_dir: Path | None = None,
         status_interval_s: float = 2.0,
     ) -> None:
+        if host != "localhost" and not ipaddress.ip_address(host).is_loopback:
+            raise ValueError("the unauthenticated admin console must bind to loopback")
         self._plane = plane
         self._host = host
         self._port = port
@@ -98,6 +101,17 @@ class AdminWebServer:
     # --- HTTP (static assets) ---
 
     def _process_request(self, connection: ServerConnection, request: Request) -> Response | None:
+        # Loopback alone does not stop another website from opening this WS.
+        # Check Host too: accepting arbitrary hosts permits DNS rebinding.
+        authorities = {f"{host}:{self.port}" for host in ("localhost", "127.0.0.1", "[::1]")}
+        bind_host = f"[{self._host}]" if ":" in self._host else self._host
+        authorities.add(f"{bind_host}:{self.port}")
+        hosts = request.headers.get_all("Host")
+        if len(hosts) != 1 or hosts[0] not in authorities:
+            return connection.respond(403, "forbidden host\n")
+        origins = request.headers.get_all("Origin")
+        if origins and (len(origins) != 1 or origins[0] != f"http://{hosts[0]}"):
+            return connection.respond(403, "forbidden origin\n")
         offered = request.headers.get_all("Sec-WebSocket-Protocol")
         if offered:
             return None  # let the WS upgrade proceed

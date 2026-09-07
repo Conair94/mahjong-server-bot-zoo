@@ -1,10 +1,10 @@
 # mahjong-server-bot-zoo — working agreement
 
-Project goals and decisions live in [docs/ai-plan.md](docs/ai-plan.md) and [docs/server-plan.md](docs/server-plan.md). This file is the working agreement: how we build, not what we build.
+Current implementation status and known gaps live in [README.md](README.md) and [the foundation audit](docs/foundation-audit-2026-09-07.md). Original project goals and decisions live in [docs/ai-plan.md](docs/ai-plan.md) and [docs/server-plan.md](docs/server-plan.md). This file is the working agreement: how we build, not what we build.
 
 ## North star
 
-A home-hosted MCR mahjong server with a TUI client and a zoo of bots trained against it. The user is also using this project to learn AI/ML and server-ops conventions, so name techniques inline as they come up (e.g. "this is a *tracer bullet*", "this is *behavior cloning before RL*") and say briefly *why* the convention exists.
+A home-hosted MCR mahjong server with a browser client and a zoo of bots trained against it. The user is also using this project to learn AI/ML and server-ops conventions, so name techniques inline as they come up (e.g. "this is a *tracer bullet*", "this is *behavior cloning before RL*") and say briefly *why* the convention exists.
 
 ## Verification is the product
 
@@ -26,11 +26,11 @@ So the rule is: **no learning claim without a verification artifact.** A "verifi
 - RL environment (observation shape, action mask, reward signal, episode boundaries, seed determinism).
 - Training loop invariants (gradient flow, target-network updates, replay-buffer semantics).
 - Evaluation harness (matchup scoring, ELO/skill update math, fixture-based regression).
-- Bot ↔ server protocol (Botzone JSON contract — see [feedback memory on existing standards](../../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/feedback_prefer_existing_standards.md)).
+- Bot ↔ server protocol (Botzone JSON contract — see [bot-runner-protocol.md](docs/specs/bot-runner-protocol.md)).
 
 Workflow: write the failing test that pins the contract → make it pass with the simplest code → refactor. The failing test is the design artifact; skipping it skips the design step.
 
-**Test-first is optional for:** CLI argument parsing, config loaders, logging glue, one-off analysis scripts, TUI cosmetics. Cover after the fact if the behavior is non-trivial; skip if it's obvious.
+**Test-first is optional for:** CLI argument parsing, config loaders, logging glue, one-off analysis scripts, browser cosmetics. Cover after the fact if the behavior is non-trivial; skip if it's obvious.
 
 If you're unsure which bucket something falls in, ask. Drift toward strict.
 
@@ -46,7 +46,7 @@ Run cheap checks constantly, expensive ones at decision points:
 6. **Determinism check** — seeded rollout hash matches recorded fixture (catches silent env or RNG changes).
 7. **Eval harness on tiny fixture** — agent-vs-random and agent-vs-prior-checkpoint on a handful of games. Before any "the new model is better" claim.
 
-Hooks for 1–4 get wired into the repo once the language is chosen (server-plan is still open on this). Until then, run them manually and don't skip.
+Hooks for 1–4 are configured in `.pre-commit-config.yaml`. Install them with `pre-commit install` in the activated project environment. CI runs the broader checks; see README for exact commands.
 
 ## RL-specific guardrails
 
@@ -58,7 +58,7 @@ Hooks for 1–4 get wired into the repo once the language is chosen (server-plan
 
 ## Prefer existing standards
 
-Default to whatever standard already exists in the surrounding ecosystem (Botzone JSON, MCR replay logs, mature shanten/fan libraries) over custom equivalents. See the project's [prefer-existing-standards memory](../../.claude/projects/-Users-connorlockhart-Documents-GitHub-mahjong-server-bot-zoo/memory/feedback_prefer_existing_standards.md) for the full rationale. Flag any new conversion boundary explicitly.
+Default to whatever standard already exists in the surrounding ecosystem (Botzone JSON, MCR replay logs, mature shanten/fan libraries) over custom equivalents. Flag any new conversion boundary explicitly.
 
 ## Scope discipline
 

@@ -62,6 +62,7 @@ class HistorySerializer(Protocol):
         Botzone CSM `{"requests":[...], "responses":[...]}` envelope.
     """
 
+    def on_seated(self, ctx: SeatContext) -> None: ...
     def on_observe(self, event: dict[str, Any], view: dict[str, Any]) -> None: ...
     def on_decide(self, prompt: Prompt) -> str: ...
     def record_response(self, action: Action) -> None: ...
@@ -77,6 +78,9 @@ class JsonHistorySerializer:
 
     def __init__(self) -> None:
         self._observed = 0
+
+    def on_seated(self, ctx: SeatContext) -> None:
+        pass
 
     def on_observe(self, event: dict[str, Any], view: dict[str, Any]) -> None:
         self._observed += 1
@@ -235,6 +239,7 @@ class BotRunnerAdapter:
     # --- Lifecycle ---
 
     async def seated(self, ctx: SeatContext) -> None:
+        self._history_serializer.on_seated(ctx)
         await self._spawn()
         await self._do_hello(ctx)
 
@@ -417,26 +422,34 @@ class BotRunnerAdapter:
 
     async def _kill(self) -> None:
         """SIGTERM, grace, SIGKILL, reap — used on per-turn timeout."""
-        if self._proc is None or self._proc.returncode is not None:
+        proc = self._proc
+        if proc is None or proc.returncode is not None:
             return
         with contextlib.suppress(ProcessLookupError):
-            self._proc.terminate()
+            proc.terminate()
         grace = self._manifest.teardown_grace_ms / 1000.0
         try:
-            await asyncio.wait_for(self._proc.wait(), timeout=grace)
+            await asyncio.wait_for(proc.wait(), timeout=grace)
         except TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                self._proc.kill()
-            with contextlib.suppress(Exception):
-                await self._proc.wait()
+            pass
+        finally:
+            # The table may cancel left() before the bot's grace expires.
+            # Cancellation must still kill and reap the child it owns.
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                with contextlib.suppress(Exception):
+                    await proc.wait()
 
     async def _teardown(self) -> None:
-        if self._proc is not None and self._proc.returncode is None:
-            await self._kill()
-        if self._stderr_task is not None and not self._stderr_task.done():
-            self._stderr_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._stderr_task
+        try:
+            if self._proc is not None and self._proc.returncode is None:
+                await self._kill()
+        finally:
+            if self._stderr_task is not None and not self._stderr_task.done():
+                self._stderr_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await self._stderr_task
 
     async def _reap(self) -> int | None:
         if self._proc is None:

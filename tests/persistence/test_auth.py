@@ -3,12 +3,9 @@
 These are unit tests against the auth module directly.  They use an in-memory
 SQLite DB with the full migration applied (no mocking of the DB layer).
 
-The argon2 hash/verify operations are slow by design (memory-hard).  The
-expensive tests (timing, rehash) are marked ``slow`` so the core <10s suite
-can skip them; they run in CI on a dedicated runner.
-
-Fixture 9 (timing) is inherently environment-dependent and uses a generous
-30% tolerance.  It is skipped by default (opt-in: ``-m slow``).
+Argon2 hash/verify operations are memory-hard. Fixture 9 verifies that all
+login outcomes execute the real verifier with matching work parameters;
+wall-clock ratios on a shared CI runner are not a reliable security test.
 """
 
 from __future__ import annotations
@@ -223,47 +220,54 @@ def test_failure_shape_byte_identical() -> None:
     unknown = handle_auth_request(db, "ghost", "anypassword")
 
     # Both should be ok=False with all optional fields None/absent
-    assert dataclasses.asdict(wrong_pw) == dataclasses.asdict(
-        unknown
-    ), f"Failure shapes differ:\n  wrong_pw: {wrong_pw}\n  unknown:  {unknown}"
+    assert dataclasses.asdict(wrong_pw) == dataclasses.asdict(unknown), (
+        f"Failure shapes differ:\n  wrong_pw: {wrong_pw}\n  unknown:  {unknown}"
+    )
 
 
 # ---------------------------------------------------------------------------
-# Fixture 9: Timing within 30% (slow — opt-in with -m slow)
+# Fixture 9: Every login outcome performs a full, equally configured verify
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow
-def test_failure_timing_close_to_success_timing() -> None:
-    """Fixture 9: Mean failure time is within 30% of success time (timing-attack defense).
-
-    This is environment-dependent.  Run on a stable machine; skip in noisy CI.
-    Mark ``slow`` because it takes ~3s (10 x argon2 verify).
-    """
-    SAMPLES = 10  # fewer than spec's 100 to keep wall-clock manageable
+@pytest.mark.parametrize(
+    "username,password,disabled,ok",
+    [
+        ("alice", "alicepw123", False, True),
+        ("alice", "wrong", False, False),
+        ("ghost", "wrong", False, False),
+        ("alice", "alicepw123", True, False),
+    ],
+)
+def test_all_login_outcomes_run_full_argon2_verification(
+    monkeypatch: pytest.MonkeyPatch, username: str, password: str, disabled: bool, ok: bool
+) -> None:
+    import argon2
 
     db = _make_db()
     _create_alice(db)
+    if disabled:
+        db.execute("UPDATE accounts SET disabled=1 WHERE username='alice'")
+        db.commit()
+    original_verify = PasswordHasher.verify
+    verified_hashes: list[str] = []
 
-    def _time_calls(fn: object, n: int) -> float:
-        times = []
-        for _ in range(n):
-            start = time.perf_counter()
-            fn()  # type: ignore[operator]
-            times.append(time.perf_counter() - start)
-        return sum(times) / len(times)
+    def verify(hash_str: str, supplied: str) -> bool:
+        verified_hashes.append(hash_str)
+        return original_verify(hash_str, supplied)
 
-    success_mean = _time_calls(lambda: handle_auth_request(db, "alice", "alicepw123"), SAMPLES)
-    wrong_pw_mean = _time_calls(lambda: handle_auth_request(db, "alice", "wrong"), SAMPLES)
-    unknown_mean = _time_calls(lambda: handle_auth_request(db, "ghost", "wrong"), SAMPLES)
-
-    tolerance = 0.30
-    for label, mean in [("wrong_pw", wrong_pw_mean), ("unknown", unknown_mean)]:
-        ratio = abs(mean - success_mean) / success_mean
-        assert ratio <= tolerance, (
-            f"{label} mean {mean:.3f}s is >30% from success mean {success_mean:.3f}s "
-            f"(ratio={ratio:.2%})"
-        )
+    monkeypatch.setattr(PasswordHasher, "verify", staticmethod(verify))
+    result = handle_auth_request(db, username, password)
+    assert result.ok is ok
+    assert len(verified_hashes) == 1
+    params = argon2.extract_parameters(verified_hashes[0])
+    assert (params.type, params.memory_cost, params.time_cost, params.parallelism) == (
+        argon2.Type.ID,
+        65536,
+        3,
+        4,
+    )
+    db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +462,9 @@ def test_bot_account_auth_same_as_human() -> None:
 def test_static_invalid_hash_is_valid_phc() -> None:
     """Fixture 17a: STATIC_INVALID_HASH is non-empty and PHC-formatted."""
     assert STATIC_INVALID_HASH, "STATIC_INVALID_HASH is empty"
-    assert STATIC_INVALID_HASH.startswith(
-        "$argon2id$"
-    ), f"STATIC_INVALID_HASH not argon2id PHC: {STATIC_INVALID_HASH[:30]!r}"
+    assert STATIC_INVALID_HASH.startswith("$argon2id$"), (
+        f"STATIC_INVALID_HASH not argon2id PHC: {STATIC_INVALID_HASH[:30]!r}"
+    )
 
 
 def test_static_invalid_hash_does_not_verify_against_empty() -> None:
@@ -475,6 +479,6 @@ def test_static_invalid_hash_does_not_verify_against_common_passwords() -> None:
     a real user's attempt, never the sentinel phrase baked into the hash.
     """
     for pw in ("password", "123456", "admin", ""):
-        assert (
-            PasswordHasher.verify(STATIC_INVALID_HASH, pw) is False
-        ), f"STATIC_INVALID_HASH unexpectedly verified against {pw!r}"
+        assert PasswordHasher.verify(STATIC_INVALID_HASH, pw) is False, (
+            f"STATIC_INVALID_HASH unexpectedly verified against {pw!r}"
+        )

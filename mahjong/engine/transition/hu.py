@@ -4,27 +4,22 @@ Spec: docs/specs/state-schema.md § Top-level state object > terminal,
       docs/specs/engine-api.md § PyMahjongGB integration boundary.
 
 Two cases:
-  - DISCARD phase, own turn: self-draw HU. Win tile is selected as the
-    smallest tile in `concealed` whose removal yields a fan-bearing
-    decomposition (deterministic when multiple choices work).
+  - DISCARD phase, own turn: self-draw HU on the actual `last_drawn` tile.
   - CLAIM_WINDOW phase: HU on a discard. Win tile is `last_discard.tile`.
 
 Scoring is driven by the resolved ruleset's `conversion` block via
 `scoring.score_delta` (scoring-config.md). With no block (mcr-2006) this is the
 canonical MCR formula: self-draw → each non-winner pays (fan_total + 8);
-discard → discarder pays (fan_total + 24), other non-winners pay 8 each. The
+discard → discarder pays (fan_total + 8), other non-winners pay 8 each. The
 house ruleset substitutes its tier-lookup conversion. Zero-sum either way.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from mahjong.engine import pymj, scoring
 from mahjong.engine.rulesets import resolve_config
-from mahjong.engine.tiles import tile_sort_key
 from mahjong.engine.transition import clone_state
-from mahjong.engine.types import FanEntry, GameState, Meld, Terminal, WinType
+from mahjong.engine.types import GameState, Terminal, WinType
 
 
 def apply_hu(state: GameState, seat: int) -> GameState:
@@ -42,18 +37,11 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         # Tile becomes part of the winning hand visually; record convention
         # leaves it implicit (the meld layout reconstructs the shape).
     else:
-        # Prefer the actually-just-drawn tile (engine has tracked it on
-        # state.last_drawn since the last_drawn schema field was added).
+        # Legality requires a real draw by this seat. Never substitute a
+        # different tile: that can invent Closed/Edge/Single Wait fan.
         last_drawn = new["last_drawn"]
-        hint = last_drawn["tile"] if last_drawn is not None and last_drawn["seat"] == seat else None
-        win_tile = _pick_self_draw_win_tile(
-            list(seat_data["concealed"]),
-            melds,
-            seat_data["seat_wind"],
-            new["round_wind"],
-            config,
-            hint=hint,
-        )
+        assert last_drawn is not None and last_drawn["seat"] == seat
+        win_tile = last_drawn["tile"]
         deal_in_seat = None
         win_type = "SELF_DRAW"
         hand = list(seat_data["concealed"])
@@ -67,6 +55,7 @@ def apply_hu(state: GameState, seat: int) -> GameState:
         seat_wind=seat_data["seat_wind"],
         round_wind=new["round_wind"],
         ruleset_config=config,
+        flower_count=len(seat_data["flowers"]),
     )
     fan_total = sum(f["value"] for f in fans)
 
@@ -96,47 +85,3 @@ def apply_hu(state: GameState, seat: int) -> GameState:
     new["last_drawn"] = None
     new["pending_claims"] = []
     return new
-
-
-def _pick_self_draw_win_tile(
-    concealed: list[str],
-    melds: list[Meld],
-    seat_wind: str,
-    round_wind: str,
-    config: dict[str, Any],
-    *,
-    hint: str | None = None,
-) -> str:
-    """Pick the win tile for a self-draw HU.
-
-    If `hint` (the engine's `state.last_drawn.tile`) is in `concealed` and
-    yields a fan-bearing decomposition, return it — that's the *actually*
-    drawn tile and the physically correct answer. Otherwise fall back to
-    the smallest tile (canonical order) whose removal decomposes.
-    """
-    candidates: list[str] = []
-    if hint is not None and hint in concealed:
-        candidates.append(hint)
-    for tile in sorted(set(concealed), key=tile_sort_key):
-        if tile != hint:
-            candidates.append(tile)
-    for tile in candidates:
-        hand = list(concealed)
-        hand.remove(tile)
-        fans = pymj.calculate_fan(
-            hand,
-            melds,
-            tile,
-            win_type="SELF_DRAW",
-            seat_wind=seat_wind,
-            round_wind=round_wind,
-            ruleset_config=config,
-        )
-        if fans:
-            return tile
-    raise AssertionError("self-draw HU legal but no win tile decomposes — engine/legality drift")
-
-
-# Suppress unused-import lint on FanEntry — the type is part of this module's
-# contract surface via Terminal["fan"].
-_ = FanEntry

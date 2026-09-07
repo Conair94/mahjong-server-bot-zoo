@@ -102,7 +102,10 @@ def calculate_fan(
     for fan_point, cnt, _name_zh, name_en in result:
         value = fan_point * cnt
         fans.append({"name": name_en, "value": value})
-        total += value
+        # MCR flowers increase payment only after the hand qualifies. They
+        # cannot turn a sub-floor shape into a legal win.
+        if name_en != "Flower Tiles":
+            total += value
     cliff = ruleset_config.get("fan_cliff", MCR_FAN_CLIFF)
     if total < cliff:
         return []

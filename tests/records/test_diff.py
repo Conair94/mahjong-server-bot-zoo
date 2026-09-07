@@ -253,9 +253,9 @@ def test_diff_exposed_gang_emits_replacement_draw() -> None:
     # client can authoritatively apply the winning meld and roll back any losing
     # claim in the same window.
     resolutions = [e for e in events if e["event"] == "CLAIM_RESOLUTION"]
-    assert (
-        len(resolutions) == 1
-    ), f"expected one CLAIM_RESOLUTION; got {[e['event'] for e in events]}"
+    assert len(resolutions) == 1, (
+        f"expected one CLAIM_RESOLUTION; got {[e['event'] for e in events]}"
+    )
     res = resolutions[0]
     assert res["outcome"] == "CLAIMED"
     assert res["winning_seat"] == 0
@@ -312,14 +312,14 @@ def test_diff_concealed_gang_emits_no_resolution() -> None:
     gang = {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}
     s1 = apply_action(s, 0, gang)  # type: ignore[arg-type]
     events = diff_to_events(s, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
-    assert not [
-        e for e in events if e["event"] == "CLAIM_RESOLUTION"
-    ], f"concealed kong must NOT emit a resolution; got {[e['event'] for e in events]}"
+    assert not [e for e in events if e["event"] == "CLAIM_RESOLUTION"], (
+        f"concealed kong must NOT emit a resolution; got {[e['event'] for e in events]}"
+    )
 
 
-def _empty_wall_concealed_gang_state() -> dict[str, Any]:
+def _flower_only_wall_concealed_gang_state() -> dict[str, Any]:
     """DISCARD-phase state where seat 0 holds a concealed kong and the wall
-    is empty, so the kong's replacement draw exhausts into TERMINAL."""
+    contains only a flower, so the kong's replacement draw exhausts into TERMINAL."""
     seats = [
         {
             "seat": 0,
@@ -349,7 +349,7 @@ def _empty_wall_concealed_gang_state() -> dict[str, Any]:
         "dealer_seat": 0,
         "hand_index": 0,
         "turn_index": 5,
-        "wall": {"remaining": [], "drawn_count": 144, "total": 144},
+        "wall": {"remaining": ["H1"], "drawn_count": 143, "total": 144},
         "seats": seats,
         "last_discard": None,
         "last_drawn": {"seat": 0, "tile": "W3"},
@@ -361,16 +361,16 @@ def _empty_wall_concealed_gang_state() -> dict[str, Any]:
     }
 
 
-def test_diff_concealed_gang_on_empty_wall_emits_hand_end() -> None:
-    """DEF-16: a kong whose replacement draw finds the wall empty goes
+def test_diff_concealed_gang_on_flower_only_wall_emits_hand_end() -> None:
+    """DEF-16: a kong whose replacement draw consumes the final flower goes
     TERMINAL (exhaustive draw) in the engine, but the differ's GANG branch
     only emitted the DRAW when phase landed back in DISCARD — so the record
     closed (FOOTER) with no HAND_END and live clients waited on settlement
     forever. Any transition into TERMINAL must emit HAND_END."""
-    s0 = _empty_wall_concealed_gang_state()
+    s0 = _flower_only_wall_concealed_gang_state()
     gang = {"type": "GANG", "tile": "B5", "kind": "CONCEALED"}
     s1 = apply_action(s0, 0, gang)  # type: ignore[arg-type]
-    assert s1["phase"] == "TERMINAL", "premise: empty-wall kong exhausts the hand"
+    assert s1["phase"] == "TERMINAL", "premise: flower-only replacement exhausts the hand"
 
     events = diff_to_events(s0, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
     hand_ends = [e for e in events if e["event"] == "HAND_END"]
@@ -386,7 +386,7 @@ def test_diff_concealed_gang_on_empty_wall_emits_hand_end() -> None:
     assert kinds.index("CLAIM_DECISION") < kinds.index("HAND_END")
 
 
-def test_diff_exposed_gang_on_empty_wall_emits_hand_end() -> None:
+def test_diff_exposed_gang_on_flower_only_wall_emits_hand_end() -> None:
     """Same DEF-16 gap for the claim variant: DECISION + RESOLUTION must be
     followed by HAND_END when the replacement draw exhausts the wall."""
     seats = [
@@ -418,7 +418,7 @@ def test_diff_exposed_gang_on_empty_wall_emits_hand_end() -> None:
         "dealer_seat": 0,
         "hand_index": 0,
         "turn_index": 5,
-        "wall": {"remaining": [], "drawn_count": 144, "total": 144},
+        "wall": {"remaining": ["H1"], "drawn_count": 143, "total": 144},
         "seats": seats,
         "last_discard": {"seat": 1, "tile": "T3"},
         "last_drawn": None,
@@ -430,7 +430,7 @@ def test_diff_exposed_gang_on_empty_wall_emits_hand_end() -> None:
     }
     gang = {"type": "GANG", "tile": "T3", "kind": "EXPOSED"}
     s1 = apply_action(s0, 0, gang)  # type: ignore[arg-type]
-    assert s1["phase"] == "TERMINAL", "premise: empty-wall kong exhausts the hand"
+    assert s1["phase"] == "TERMINAL", "premise: flower-only replacement exhausts the hand"
 
     events = diff_to_events(s0, 0, gang, s1, ts=TS)  # type: ignore[arg-type]
     kinds = [e["event"] for e in events]

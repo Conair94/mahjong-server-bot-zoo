@@ -266,12 +266,12 @@ async def test_fixture_19_and_22_two_human_full_hand(
 
         assert len(hands_alice) == 1, f"alice should have 1 hand: {hands_alice}"
         assert len(hands_bob) == 1, f"bob should have 1 hand: {hands_bob}"
-        assert (
-            hands_alice[0].hand_id == hands_bob[0].hand_id
-        ), "alice and bob should share the same hand_id"
-        assert (
-            hands_nonexistent == []
-        ), f"nonexistent account should have no hands: {hands_nonexistent}"
+        assert hands_alice[0].hand_id == hands_bob[0].hand_id, (
+            "alice and bob should share the same hand_id"
+        )
+        assert hands_nonexistent == [], (
+            f"nonexistent account should have no hands: {hands_nonexistent}"
+        )
 
         row = hands_alice[0]
         assert row.terminal_kind in {"HU", "EXHAUSTIVE_DRAW"}, row
@@ -506,7 +506,7 @@ async def test_fixture_21a_disconnect_and_reconnect_within_hold_window(
                 break
             await asyncio.sleep(0.02)
         assert handle.sessions.seat(1).state.name == "HELD", (
-            f"seat 1 should be HELD after drop; " f"got {handle.sessions.seat(1).state}"
+            f"seat 1 should be HELD after drop; got {handle.sessions.seat(1).state}"
         )
 
         # Reconnect with the same account → same-user resume path.
@@ -653,9 +653,9 @@ async def test_fixture_21b_disconnect_no_reconnect_autopass_takeover(
         full = persistence.get_hand(hands[0].hand_id)
         assert full is not None
         seat1 = next(p for p in full.participants if p.seat == 1)
-        assert (
-            seat1.account_id == bob_id
-        ), f"seat 1 should still credit bob (account_id={bob_id}): {seat1}"
+        assert seat1.account_id == bob_id, (
+            f"seat 1 should still credit bob (account_id={bob_id}): {seat1}"
+        )
 
         # Mechanical confirmation of the strike/swap path: the record
         # should contain at least one seat-1 event annotated with the

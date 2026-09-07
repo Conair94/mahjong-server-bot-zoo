@@ -134,3 +134,57 @@ def test_default_cap_scales_with_decide_timeouts() -> None:
 async def test_normal_hand_completes_under_watchdog(tmp_path: Path) -> None:
     state = await _run(tmp_path)  # step_stall_seconds defaults (derived cap)
     assert state["terminal"] is not None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_hand_stops_pending_decision(tmp_path: Path) -> None:
+    """Closing a table must cancel the decision owned by its watchdog task."""
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+    left = []
+
+    class WaitingAdapter(CannedAdapter):
+        async def decide(self, prompt: Any) -> Any:
+            entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                stopped.set()
+
+        async def left(self, reason: Any) -> None:
+            left.append(reason)
+
+    adapters = _four_passers()
+    adapters[0] = WaitingAdapter(identity={"kind": "canned", "script": "wait"}, actions=[])
+    hand = asyncio.create_task(_run(tmp_path, adapters=adapters))
+    await asyncio.wait_for(entered.wait(), 1)
+    hand.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await hand
+    assert stopped.is_set(), "the hand ended but its decision task is still running"
+    assert left == ["TABLE_CLOSED"], "cancelled hands must release adapter resources"
+
+
+@pytest.mark.asyncio
+async def test_aborted_hand_closes_partial_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mahjong.records.writer import RecordWriter
+
+    writers = []
+
+    class TrackedWriter(RecordWriter):
+        def __init__(self, path: Path) -> None:
+            super().__init__(path)
+            writers.append(self)
+
+    monkeypatch.setattr(mgr, "RecordWriter", TrackedWriter)
+
+    def fail_publish(state: Any) -> None:
+        if state["turn_index"] > 0:
+            raise RuntimeError("consumer failed")
+
+    with pytest.raises(RuntimeError, match="consumer failed"):
+        await _run(tmp_path, state_callback=fail_publish)
+    assert writers[0].closed, "exception paths must close the partial record"
+    assert '"event":"FOOTER"' not in (tmp_path / "hand.jsonl").read_text()

@@ -319,7 +319,7 @@ Acceptance criteria for impl step 8.2 (auth module).
 
 8. **Failure shape byte-identical for wrong-password vs unknown-user.** Serialised `AuthResponse` for the two failure cases is byte-equal.
 
-9. **Failure timing within 30% of success timing.** Run 100 wrong-password attempts and 100 unknown-user attempts; mean wall-clock is within 30% of a successful-login mean (loose bound; tightened in CI on a perf-controlled runner). The exact threshold is a knob; the constraint is "no obvious timing leak".
+9. **Every login outcome performs full Argon2 verification.** Exercise success, wrong password, unknown username, and disabled account through the public authenticate API. Assert each invokes the real Argon2id verifier once with the configured memory/time/parallelism parameters. The former sequential mean-time ratio test was sensitive to scheduler load and produced false failures; these tests prevent an early-return bypass without claiming a formal constant-time guarantee.
 
 10. **Disabled account refused.** Create account, `UPDATE accounts SET disabled=1`, attempt login: `ok=False`. Existing tokens for that account fail `RESUME`.
 
