@@ -17,6 +17,7 @@ protocol (determinism.md) applies.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, cast
 
 from mahjong.engine.hashing import canonical_hash
@@ -255,7 +256,7 @@ def project(state: GameState, seat: int | None) -> SeatView:
     }
     if seat is not None:
         view["last_drawn"] = cast("Any", last_drawn_view)
-    return view
+    return deepcopy(view)
 
 
 def project_event(event: dict[str, Any], seat: int | None) -> dict[str, Any]:
@@ -263,11 +264,19 @@ def project_event(event: dict[str, Any], seat: int | None) -> dict[str, Any]:
 
     `seat=None` is the public (spectator) projection. The DRAW event's `tile`
     field is private to the drawing seat; a CONCEALED kong's `tile` is private to
-    its owner until settlement; all other event kinds are public. Pure: returns a
-    fresh dict; never mutates the input.
+    its owner until settlement. Claim opportunities are private to the offered
+    seat. Pure: returns an independent copy; never mutates the input.
 
     Spec: state-schema.md § Per-event projection; live-play-bugfixes.md Bug D.
     """
+    event = deepcopy(event)
+    if event.get("event") == "CLAIM_WINDOW":
+        event["opportunities"] = [
+            opportunity
+            for opportunity in event.get("opportunities", [])
+            if seat is not None and opportunity["seat"] == seat
+        ]
+        return event
     actor = event.get("seat")
     is_other = seat is None or seat != actor
     if event.get("event") == "DRAW" and is_other:

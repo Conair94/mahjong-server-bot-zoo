@@ -361,6 +361,7 @@ def test_hu_self_draw_transitions_to_terminal() -> None:
             _sorted(["W2"] * 13),
         ],
     )
+    s["last_drawn"] = {"seat": 0, "tile": "W1"}
     new = apply_action(s, 0, {"type": "HU"})  # type: ignore[arg-type]
     assert new["phase"] == "TERMINAL"
     assert new["last_drawn"] is None  # cleared at terminal

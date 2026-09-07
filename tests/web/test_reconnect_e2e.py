@@ -114,12 +114,12 @@ async def test_client_reconnects_and_reauths_after_drop(
     # On the new socket: a RESUME was sent and a successful AUTH_RESPONSE came back.
     new_sent = [f.replace(" ", "") for (i, d, f) in frames if i >= 1 and d == "sent"]
     new_recv = [f.replace(" ", "") for (i, d, f) in frames if i >= 1 and d == "recv"]
-    assert any(
-        "RESUME" in f for f in new_sent
-    ), f"no RESUME re-auth on the reconnected socket; sent={new_sent}"
-    assert any(
-        '"AUTH_RESPONSE"' in f and '"ok":true' in f for f in new_recv
-    ), f"no successful AUTH_RESPONSE on reconnect; recv={new_recv}"
+    assert any("RESUME" in f for f in new_sent), (
+        f"no RESUME re-auth on the reconnected socket; sent={new_sent}"
+    )
+    assert any('"AUTH_RESPONSE"' in f and '"ok":true' in f for f in new_recv), (
+        f"no successful AUTH_RESPONSE on reconnect; recv={new_recv}"
+    )
 
     # Still authed: the feedback launcher (token-gated) is visible again.
     await expect(page.locator(".launcher")).to_be_visible(timeout=10_000)

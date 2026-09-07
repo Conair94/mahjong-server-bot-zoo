@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from mahjong.engine.legality import legal_actions
 from mahjong.engine.rulesets import MANIFEST
 from mahjong.engine.tiles import Tile, tile_sort_key
@@ -56,7 +58,7 @@ def _make_state(
     if flowers is None:
         flowers = [[], [], [], []]
     if wall_remaining is None:
-        wall_remaining = []
+        wall_remaining = ["T1"]
 
     seats = [
         {
@@ -177,10 +179,11 @@ def test_discard_hu_self_draw_on_big_three_dragons() -> None:
         ["J1", "J1", "J1", "J2", "J2", "J2", "J3", "J3", "J3", "F1", "F1", "F1", "W1", "W1"]
     )
     s = _make_state(phase="DISCARD", current_actor=0, concealed=[hand] + [["W1"] * 13] * 3)
+    s["last_drawn"] = {"seat": 0, "tile": "W1"}
     actions = legal_actions(s, 0)  # type: ignore[arg-type]
-    assert any(
-        a["type"] == "HU" for a in actions
-    ), f"HU should be legal for a winning self-draw hand; got {actions!r}"
+    assert any(a["type"] == "HU" for a in actions), (
+        f"HU should be legal for a winning self-draw hand; got {actions!r}"
+    )
 
 
 def test_discard_no_hu_for_non_winning_hand() -> None:
@@ -188,6 +191,21 @@ def test_discard_no_hu_for_non_winning_hand() -> None:
     s = _make_state(phase="DISCARD", current_actor=0, concealed=[hand] + [["W1"] * 13] * 3)
     actions = legal_actions(s, 0)  # type: ignore[arg-type]
     assert not any(a["type"] == "HU" for a in actions)
+
+
+@pytest.mark.parametrize("kind", ["CONCEALED", "ADDED", "EXPOSED"])
+def test_kong_requires_a_replacement_wall_tile(kind: str) -> None:
+    melds = [[{"type": "PENG", "tiles": ["B5"] * 3, "called_from_seat": 1}], [], [], []]
+    state = _make_state(
+        phase="CLAIM_WINDOW" if kind == "EXPOSED" else "DISCARD",
+        current_actor=0,
+        concealed=[["B5"] * (1 if kind == "ADDED" else 3 if kind == "EXPOSED" else 4)]
+        + [["W2"] * 13] * 3,
+        melds=melds if kind == "ADDED" else None,
+        last_discard={"seat": 1, "tile": "B5"} if kind == "EXPOSED" else None,
+        wall_remaining=[],
+    )
+    assert {"type": "GANG", "tile": "B5", "kind": kind} not in legal_actions(state, 0)
 
 
 # --- CLAIM_WINDOW phase ---

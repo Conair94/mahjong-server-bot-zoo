@@ -41,7 +41,7 @@ def claim_actions(state: GameState, seat: int) -> list[Action]:
         actions.append({"type": "PENG", "tile": discarded})
 
     # GANG (EXPOSED): three copies in hand.
-    if counts.get(discarded, 0) >= 3:
+    if state["wall"]["remaining"] and counts.get(discarded, 0) >= 3:
         actions.append({"type": "GANG", "tile": discarded, "kind": "EXPOSED"})
 
     # CHI: next-seat only, suited tiles, within rank bounds.

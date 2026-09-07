@@ -144,7 +144,13 @@ async def test_strike_limit_swaps_in_autopass(tmp_path: Path) -> None:
     """After `strike_limit` failures, the offending seat is replaced by
     AutoPassAdapter and subsequent events carry `auto_pass: true`."""
     adapters: list[Any] = _four_passers()
-    adapters[0] = _CrashAdapter()
+    released = []
+
+    class ReleasingAdapter(_CrashAdapter):
+        async def left(self, reason: Any) -> None:
+            released.append(reason)
+
+    adapters[0] = ReleasingAdapter()
     await run_hand(
         adapters=adapters,
         ruleset=MCR_REF,
@@ -158,6 +164,8 @@ async def test_strike_limit_swaps_in_autopass(tmp_path: Path) -> None:
     seat_0_discards = [e for e in events if e["event"] == "DISCARD" and e["seat"] == 0]
     # After 2 strikes, seat 0 was swapped; subsequent discards carry auto_pass.
     assert any(e.get("auto_pass") is True for e in seat_0_discards[2:])
+
+    assert released == ["REPLACED"], "replacing a failed adapter must release its resources"
 
 
 # --- AutoPassAdapter substitution preserves replay (fixture 8) ---

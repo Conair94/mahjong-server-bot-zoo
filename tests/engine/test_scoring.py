@@ -50,10 +50,10 @@ def test_official_self_draw_matches_legacy_formula() -> None:
     assert sum(delta) == 0
 
 
-def test_official_discard_matches_legacy_formula() -> None:
-    """Discard: dealer-in pays (fan + 24); other two pay a flat 8."""
+def test_official_discard_pays_eight_base_points_per_opponent() -> None:
+    """MCR §3.9.2: discarder pays fan + 8; the other two each pay 8."""
     delta = score_delta(winner=0, fan_total=10, win_type="DISCARD", deal_in_seat=2)
-    assert delta == [50, -8, -34, -8]  # (10+24) + 8 + 8 = 50
+    assert delta == [34, -8, -18, -8]  # 10 + three base payments of 8
     assert sum(delta) == 0
 
 
@@ -68,8 +68,8 @@ def test_official_is_the_default_when_conversion_absent() -> None:
 def test_official_winner_seat_independence() -> None:
     """A non-zero winner seat lands the credit on that seat, still zero-sum."""
     delta = score_delta(winner=3, fan_total=8, win_type="DISCARD", deal_in_seat=0)
-    assert delta[3] == 8 + 24 + 8 + 8  # dealer-in (32) + two flats (8 each)
-    assert delta[0] == -(8 + 24)
+    assert delta[3] == 8 + 8 + 8 + 8  # discarder (16) + two flat payments (8 each)
+    assert delta[0] == -(8 + 8)
     assert delta[1] == -8 and delta[2] == -8
     assert sum(delta) == 0
 

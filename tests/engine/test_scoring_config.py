@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from mahjong.engine import pymj, scoring
 from mahjong.engine.hashing import canonical_hash
 from mahjong.engine.legality import legal_actions
@@ -49,6 +51,41 @@ LOW_FAN_WIN: Tile = "B9"
 
 MCR_REF: dict[str, Any] = {"id": "mcr-2006", "version": 1, "config_hash": MANIFEST["mcr-2006"]}
 HOUSE_REF: dict[str, Any] = {"id": "mcr-house-3fan", "version": 1}
+
+
+@pytest.mark.parametrize("drawn, legal", [("B3", False), ("B4", True), (None, False)])
+def test_self_draw_legality_uses_only_the_actual_draw(drawn: str | None, legal: bool) -> None:
+    """B3 completes a 7-fan hand; B4 adds Closed Wait for 8. No draw is no tsumo."""
+    state = _state_with_self_draw_hand(MCR_REF)
+    state["seats"][0]["concealed"] = sorted(
+        ["W1", "W2", "W3", "B3", "B4", "B5", "T6", "T7", "T8", "W7", "W8", "W9", "B9", "B9"],
+        key=tile_sort_key,
+    )
+    state["last_drawn"] = {"seat": 0, "tile": drawn} if drawn else None
+    assert ({"type": "HU"} in legal_actions(state, 0)) is legal
+    if legal:
+        terminal = apply_action(state, 0, {"type": "HU"})["terminal"]
+        assert terminal["win_tile"] == "B4"
+        assert terminal["fan_total"] == 8
+
+
+def test_flowers_add_to_payment_but_cannot_clear_the_fan_floor() -> None:
+    kw = dict(
+        hand=LOW_FAN_HAND13,
+        melds=[],
+        win_tile=LOW_FAN_WIN,
+        win_type="SELF_DRAW",
+        seat_wind="F1",
+        round_wind="F1",
+        flower_count=2,
+    )
+    assert pymj.calculate_fan(**kw, ruleset_config={"fan_cliff": 8}) == []
+    state = _state_with_self_draw_hand(HOUSE_REF)
+    state["seats"][0]["flowers"] = ["H1", "H2"]
+    terminal = apply_action(state, 0, {"type": "HU"})["terminal"]
+    assert terminal["fan_total"] == 8  # six qualifying fan + two flowers
+    assert {"name": "Flower Tiles", "value": 2} in terminal["fan"]
+    assert terminal["score_delta"] == [192, -64, -64, -64]
 
 
 # --- fixture 1: the fan cliff is read from config, not the MCR_FAN_CLIFF constant ---

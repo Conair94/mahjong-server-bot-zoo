@@ -175,9 +175,7 @@ def settlement_hand_stats(
         shanten = _shanten(tuple(concealed), _meld_key(melds))
         entry: dict[str, Any] = {"seat": seat, "shanten": shanten}
         if shanten == 0:
-            entry["waits"] = _settlement_waits(
-                concealed, melds, seat_wind, round_wind, raw_config
-            )
+            entry["waits"] = _settlement_waits(concealed, melds, seat_wind, round_wind, raw_config)
         elif shanten == 1:
             entry["accepts"] = _settlement_accepts(
                 concealed, melds, seat_wind, round_wind, raw_config

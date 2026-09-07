@@ -30,7 +30,9 @@ ONE_SHANTEN = ["W1", "W1", "W1", "T5", "T6", "T7", "W2", "W3", "B2", "B2", "J3",
 TWO_SHANTEN = ["W1", "W2", "W3", "W5", "W6", "B1", "B2", "T4", "T5", "T6", "J1", "J2", "J3"]
 
 
-def _seat(seat: int, concealed: list[str], melds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _seat(
+    seat: int, concealed: list[str], melds: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     return {
         "seat": seat,
         "seat_wind": "F1",

@@ -322,7 +322,11 @@ _HAND_END: dict[str, Any] = {
         "final_hand_stats": {
             "floor": 3,
             "seats": [
-                {"seat": 0, "shanten": 0, "waits": [{"tile": "B6", "fan_discard": 4, "fan_self_draw": 6}]},
+                {
+                    "seat": 0,
+                    "shanten": 0,
+                    "waits": [{"tile": "B6", "fan_discard": 4, "fan_self_draw": 6}],
+                },
                 {"seat": 1, "shanten": 1, "accepts": [{"tile": "T3", "best_fan": 8}]},
                 {"seat": 3, "shanten": 2},
             ],

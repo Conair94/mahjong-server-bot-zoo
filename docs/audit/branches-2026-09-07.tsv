@@ -1,0 +1,40 @@
+branch	commit	disposition	archive_tag
+chore/deferred-ledger-convention	e6dec11fc7ad9d645604b748218c7f521a002cc3	reachable from main	-
+chore/ledger-def11-def13	a3ea9ffa316566b8e47d8c71f38b213b16fabe9b	reachable from main	-
+chore/ops-hygiene	9a051dca4b0ad365a050487216cf891aced700d6	reachable from main	-
+docs/layer9-roadmap	ba310aaf3e62ea7e57a9991f991e385b1e6ba547	reachable from main	-
+docs/ops-handoff	0bf30c3e5a01ba2f4295e0ff2a555a8db54e5125	reachable from main	-
+docs/readme-refresh	41d86dfc2801482479a1ee20efef6aa6f5a6a298	archived	archive/pre-foundation-2026-09-07/docs/readme-refresh
+feat/achievements	d21afe5e6683cf84bb2b8c7ec57f81996d8dc5f6	reachable from main	-
+feat/claim-audio-cues	fc4bd2b84b018a01736d93df6cb8edc60b32b2e7	reachable from main	-
+feat/docs-pane	4aed5feaef5dd862d8964d62e39f30697fa80493	archived	archive/pre-foundation-2026-09-07/feat/docs-pane
+feat/feedback-tracking	22415cb20fd268368ddfef0bb0163e9c38bb40a6	reachable from main	-
+feat/hand-end-live-ready-tenpai	8538c8fbf2107c92679b445b1068d5cb5bd58622	reachable from main	-
+feat/hand-stats	cfd32c3f8003235a3cd5cd4fba8929debe32568e	reachable from main	-
+feat/iconic-claim-cues	8fb723471ee6918af0ee1f8b0acaa744fb35028f	reachable from main	-
+feat/in-game-scoreboard	1734efb28ea4affe628a5d9ac41c20d195758f27	reachable from main	-
+feat/layer9-scoring-config	ea6126452b48c06d03247a50ee869625eb0e93af	reachable from main	-
+feat/lifecycle-8.8	1b3d79dc5a34841e176da3e13c24a0024a5daca3	reachable from main	-
+feat/lifecycle-8.8-rest	bbddbc52a107b48232c3d3f78e7629c07f0f2573	reachable from main	-
+feat/minimal-play-view	83701a8e25cf675c9a81ea2db318f4cc755b24aa	reachable from main	-
+feat/profile-and-settings	738dc19b2b1829c7d985f635127d638134f5c944	reachable from main	-
+feat/richer-audio-cues	882a0eab7acd5b5881e314cc92363f9eae1a2696	reachable from main	-
+feat/stats-into-main	257008960e4a2124b65af55d786250f77f0414dc	reachable from main	-
+feat/table-chat	629467bdd6c2964bb4a6c05a5a1dcb1d7c8cdf94	reachable from main	-
+feat/ui-meld-declutter	1c0c9ad97efe1475a6a4a2acb5beba79de8fdcd3	reachable from main	-
+feat/v0-offense-bot	7b8df721a7e8e5e6ebd01758c09946976a4bbd27	reachable from main	-
+feat/v1-rule-bot	f5346d9f118e3b729881228a06ba24840b6bff12	archived	archive/pre-foundation-2026-09-07/feat/v1-rule-bot
+fix/concealed-kong-crash-and-chi-picker	05c80dd20ede3aa3867928bafd9451a022bb5407	reachable from main	-
+fix/data-dir-xdg-and-bot-picker	9e6682e7f839f5a059b6833d84b5bba891e91201	archived	archive/pre-foundation-2026-09-07/fix/data-dir-xdg-and-bot-picker
+fix/db-connection-race-def14-def23	4955ea8ee8ac8381d655b530ed2fbd61c7462f35	reachable from main	-
+fix/def16-gang-empty-wall-hand-end	f4aef0fdbb96577e8dd10fc54a5953d3fd1ce55e	reachable from main	-
+fix/fb17-live-snapshot	2337fe53b1874ec6fe9100847ebc8542b4d7d20b	archived	archive/pre-foundation-2026-09-07/fix/fb17-live-snapshot
+fix/fb18-drawn-tile-targeting	f0ff322ac9eda93f01dbecba079f1738f8f81e5d	archived	archive/pre-foundation-2026-09-07/fix/fb18-drawn-tile-targeting
+fix/fb19-ready-gate	425307e7da6fe04db3deff0f5d7ea59abc55006e	archived	archive/pre-foundation-2026-09-07/fix/fb19-ready-gate
+fix/hand-stall-watchdog	c18f011ed3db9b42b4c78df1ee19b324eeb16e3c	reachable from main	-
+fix/hu-floor-and-scoring	99f12a7c1df18f39c6b882955f4f67e7db68f9d4	archived	archive/pre-foundation-2026-09-07/fix/hu-floor-and-scoring
+fix/leave-table-escape-hatch	a7aa46ea5c56732cff548478a622738b37c33f7c	reachable from main	-
+fix/live-play-bugs-spec29	2f770aa05647fd4070ddf8ff571e5ed6cf54c05c	reachable from main	-
+fix/live-play-fb18-fb19	8ecc6ba49255776d35e1b6fa1545caf2288b21b7	reachable from main	-
+fix/profile-hang-midgame	38904e8a4d6ab2040cd08f3f2404e80eb1bd8f4d	reachable from main	-
+spec/fb03-04-05-followups	8e6d1726d17aa4fdaf0dba4c6455d7b9b6e9258a	archived	archive/pre-foundation-2026-09-07/spec/fb03-04-05-followups

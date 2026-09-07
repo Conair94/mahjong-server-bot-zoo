@@ -132,3 +132,53 @@ async def test_serves_admin_ui_index() -> None:
         assert "<admin-app>" in body
     finally:
         await server.close()
+
+
+@pytest.mark.parametrize("origin", ["https://untrusted.example", "null", "http://localhost:1"])
+async def test_rejects_cross_origin_admin_connection(origin: str) -> None:
+    """A web page on another origin cannot issue local supervisor commands."""
+    sup = _FakeSupervisor()
+    async with _running(_make_plane(sup)) as server:
+        with pytest.raises(websockets.exceptions.InvalidStatus) as exc:
+            async with websockets.connect(
+                f"ws://127.0.0.1:{server.port}/", subprotocols=[SUBPROTOCOL], origin=origin
+            ):
+                pytest.fail("cross-origin browser obtained admin access")
+        assert exc.value.response.status_code == 403
+        assert sup.state is ServerState.STOPPED
+
+
+async def test_same_origin_admin_connection_can_start_server() -> None:
+    sup = _FakeSupervisor()
+    async with (
+        _running(_make_plane(sup)) as server,
+        websockets.connect(
+            f"ws://127.0.0.1:{server.port}/",
+            subprotocols=[SUBPROTOCOL],
+            origin=f"http://127.0.0.1:{server.port}",
+        ) as ws,
+    ):
+        await _recv(ws)
+        await ws.send(json.dumps({"kind": "SERVER_START"}))
+        assert (await _recv(ws))["server"]["state"] == "RUNNING"
+
+
+async def test_rejects_rebound_host_even_with_matching_origin() -> None:
+    async with _running(_make_plane(_FakeSupervisor())) as server:
+        with pytest.raises(websockets.exceptions.InvalidStatus) as exc:
+            async with websockets.connect(
+                f"ws://untrusted.example:{server.port}/",
+                host="127.0.0.1",
+                port=server.port,
+                proxy=None,
+                subprotocols=[SUBPROTOCOL],
+                origin=f"http://untrusted.example:{server.port}",
+            ):
+                pytest.fail("untrusted Host obtained admin access")
+        assert exc.value.response.status_code == 403
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.0.2.1"])
+async def test_admin_console_refuses_non_loopback_bind(host: str) -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        AdminWebServer(plane=_make_plane(_FakeSupervisor()), host=host)

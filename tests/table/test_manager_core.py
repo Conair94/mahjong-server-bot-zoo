@@ -167,8 +167,7 @@ async def test_run_hand_dealer_seat_propagates_to_header_winds(tmp_path: Path) -
     # The engine must also start at dealer_seat: first DISCARD comes from seat 1.
     first_discard = next(e for e in events if e["event"] == "DISCARD")
     assert first_discard["seat"] == dealer_seat, (
-        f"First DISCARD should be by dealer (seat {dealer_seat}), "
-        f"got seat {first_discard['seat']}"
+        f"First DISCARD should be by dealer (seat {dealer_seat}), got seat {first_discard['seat']}"
     )
 
 

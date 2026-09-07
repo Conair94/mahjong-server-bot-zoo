@@ -583,9 +583,9 @@ class SeatSession:
         Per spec § Pending prompt: 'one outstanding prompt at a time'. Caller
         guarantees this; we assert.
         """
-        assert (
-            self._pending is None or self._pending.future.done()
-        ), "two concurrent decide() calls on the same seat"
+        assert self._pending is None or self._pending.future.done(), (
+            "two concurrent decide() calls on the same seat"
+        )
         loop = asyncio.get_event_loop()
         future: asyncio.Future[dict[str, Any]] = loop.create_future()
         pending = _Pending(prompt=prompt, future=future)

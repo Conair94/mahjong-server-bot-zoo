@@ -53,14 +53,14 @@ A tagged block. Absent ⇒ treated as `{"scheme": "mcr-official", ...defaults}`.
 "conversion": {
   "scheme": "mcr-official",
   "self_draw": { "base_each": 8 },
-  "discard":   { "base_dealer_in": 24, "base_other": 8 }
+  "discard":   { "base_dealer_in": 8, "base_other": 8 }
 }
 ```
 
 - **Self-draw:** each of the three non-winners pays `fan_total + base_each` (8). Winner receives the sum.
-- **Discard:** the dealer-in pays `fan_total + base_dealer_in` (24); each *other* non-winner pays a flat `base_other` (8, **not** `fan+8`). Winner receives the sum.
+- **Discard:** the dealer-in pays `fan_total + base_dealer_in` (8); each *other* non-winner pays a flat `base_other` (8, **not** `fan+8`). Winner receives the sum.
 
-This is exactly the current `_score_delta`. The defaults (8 / 24 / 8) reproduce it, so `mcr-2006` needs no `conversion` block at all.
+The defaults are (8 / 8 / 8). The September 2026 audit corrected the earlier specification and implementation, which charged the discarder an extra 16 points. The winner receives `fan_total + 24` on a discard win; 24 is the sum of all three base payments, not the discarder's base. See the [official MCR rules, §3.9.2](https://mahjong-europe.org/portal/images/docs/mcr_EN.pdf). `mcr-2006` needs no `conversion` block.
 
 **Scheme `house-table`** — tier lookup → per-loser multiplier. Zero-sum: the winner's delta is *derived* as the negation of the losers' total, so it cannot drift out of balance.
 
@@ -151,7 +151,7 @@ def next_dealer(current_dealer: int, terminal: Terminal, config: dict) -> int:
 Test-first; each is a pinned `(input) → (expected)` contract.
 
 1. **Cliff is config-driven (reduction test).** With `mcr-2006` resolved, `calculate_fan` on a 6-fan hand returns `[]` (cliff 8); the *same hand* under `mcr-house-3fan` (cliff 3) returns a non-empty fan list. One hand, two rulesets, opposite legality — pins that the floor comes from config, not the constant.
-2. **`mcr-2006` conversion unchanged (golden).** `_score_delta` (or its replacement) under `mcr-2006` reproduces the current `+fan+8 / +fan+24 / +8` deltas for a worked self-draw and a worked discard. This is the regression guard that the default scheme == today's behaviour.
+2. **`mcr-2006` official conversion.** At 10 fan: a self-draw gives the winner +54 and each loser −18; a discard win gives the winner +34, the discarder −18, and the other two −8 each. Preserve zero-sum payments. This fixture supersedes the incorrect pre-audit discard formula.
 3. **House table lookup (table-driven).** `X(fan)` for boundary fans `{1,2,3,4,6,7,9,10,15,16,23,24,43,44,63,64,87,88, 120}` matches `{2,4,8,16,16,32,32,64,64,80,80,160,160,240,240,360,360,500, 500(clamped)}`. Pins every tier edge and the over-88 clamp.
 4. **House discard payout (zero-sum).** A worked house discard win at a known fan: winner `+4X`, dealer-in `-2X`, each other `-X`; `sum == 0`.
 5. **House self-draw payout (zero-sum).** A worked house self-draw at a known fan: winner `+6X`, each loser `-2X`; `sum == 0`; and self-draw delta == 1.5× the discard delta at the same `X`.

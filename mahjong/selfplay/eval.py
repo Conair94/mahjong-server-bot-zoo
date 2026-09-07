@@ -10,10 +10,14 @@ won). Consumed by the --eval-summary CLI flag and future training pipelines.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+
+from mahjong.records.reader import RecordCorruptError, read_record
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,30 +72,18 @@ class EvalSummary:
 
 
 def parse_record(path: Path) -> HandOutcome | None:
-    """Parse a single JSONL record. Returns None if HAND_END is absent."""
-    header: dict[str, Any] | None = None
-    hand_end: dict[str, Any] | None = None
-
+    """Read a verified record; reject corrupt or incomplete evaluation input."""
     try:
-        with path.open() as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                evt = obj.get("event")
-                if evt == "HEADER" and header is None:
-                    header = obj
-                elif evt == "HAND_END":
-                    hand_end = obj
-    except OSError:
+        events = read_record(path)
+    except (OSError, ValueError, RecordCorruptError) as exc:
+        _logger.warning("selfplay_record_rejected path=%s reason=%s", path, exc)
         return None
-
-    if header is None or hand_end is None:
+    header = events[0]
+    endings = [event for event in events if event.get("event") == "HAND_END"]
+    if len(endings) != 1:
+        _logger.warning("selfplay_record_rejected path=%s reason=hand_end_count", path)
         return None
+    hand_end = endings[0]
 
     seats_raw = sorted(header.get("seats") or [], key=lambda s: s.get("seat", 0))
     bot_ids: list[str] = []
@@ -131,13 +123,14 @@ def _read_header_fields(paths: list[Path]) -> tuple[str | None, str | None]:
 def aggregate(paths: Iterable[Path]) -> EvalSummary:
     """Aggregate eval stats from an iterable of record paths.
 
-    Malformed or incomplete records are silently skipped.
+    Malformed or incomplete records are rejected with a warning.
     """
     path_list = list(paths)
 
     per_seat: list[SeatSummary] = [SeatSummary() for _ in range(4)]
     per_bot: dict[str, SeatSummary] = {}
     total_hands = 0
+    accepted_paths: list[Path] = []
     bot_ids_config: list[str] | None = None
 
     for path in path_list:
@@ -148,6 +141,7 @@ def aggregate(paths: Iterable[Path]) -> EvalSummary:
         if bot_ids_config is None:
             bot_ids_config = outcome.bot_ids
 
+        accepted_paths.append(path)
         total_hands += 1
 
         for seat in range(4):
@@ -172,7 +166,7 @@ def aggregate(paths: Iterable[Path]) -> EvalSummary:
                 seat_stat.deal_ins += 1
                 bot_stat.deal_ins += 1
 
-    master_seed, ruleset = _read_header_fields(path_list)
+    master_seed, ruleset = _read_header_fields(accepted_paths)
 
     return EvalSummary(
         total_hands=total_hands,

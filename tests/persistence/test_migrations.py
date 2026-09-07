@@ -84,9 +84,9 @@ def test_fresh_apply_all_indexes_exist(fresh_db: sqlite3.Connection) -> None:
         "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
     actual_indexes = {r[0] for r in rows}
-    assert (
-        expected_indexes <= actual_indexes
-    ), f"Missing indexes: {expected_indexes - actual_indexes}"
+    assert expected_indexes <= actual_indexes, (
+        f"Missing indexes: {expected_indexes - actual_indexes}"
+    )
 
 
 # ---------------------------------------------------------------------------

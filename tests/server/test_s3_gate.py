@@ -186,9 +186,9 @@ async def test_s3_gate_account_play_drain_query(tmp_path: Path) -> None:
             raise AssertionError(
                 f"server did not exit within 20s of SIGTERM\nstderr:\n{stderr}"
             ) from exc
-        assert (
-            server_proc.returncode == 0
-        ), f"server exited {server_proc.returncode}\nstderr:\n{stderr}"
+        assert server_proc.returncode == 0, (
+            f"server exited {server_proc.returncode}\nstderr:\n{stderr}"
+        )
         # Fixture 21: the whole startup→hand→shutdown run logged structured JSON.
         _assert_stdout_is_json_logs(stdout)
     finally:

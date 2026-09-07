@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any
 
 from mahjong.persistence import accounts as _accounts
 from mahjong.persistence import achievements as _achievements
@@ -42,9 +42,6 @@ from mahjong.persistence.models import (
     SessionRow,
 )
 
-if TYPE_CHECKING:
-    pass
-
 __all__ = [
     "Account",
     "AccountStats",
@@ -63,22 +60,19 @@ __all__ = [
 # Valid SQLite WAL-checkpoint modes (PRAGMA wal_checkpoint argument).
 _WAL_CHECKPOINT_MODES: frozenset[str] = frozenset({"PASSIVE", "FULL", "RESTART", "TRUNCATE"})
 
-_P = TypeVar("_P", bound="Persistence")
-_R = TypeVar("_R")
 
-
-def _synchronized(method: Callable[..., _R]) -> Callable[..., _R]:
+def _synchronized[R](method: Callable[..., R]) -> Callable[..., R]:
     """Run *method* while holding the façade's re-entrant lock."""
 
     @functools.wraps(method)
-    def wrapper(self: Persistence, *args: Any, **kwargs: Any) -> _R:
+    def wrapper(self: Persistence, *args: Any, **kwargs: Any) -> R:
         with self._lock:
             return method(self, *args, **kwargs)
 
     return wrapper
 
 
-def _synchronize_facade(cls: type[_P]) -> type[_P]:
+def _synchronize_facade[P: Persistence](cls: type[P]) -> type[P]:
     """Serialize every public façade method through ``self._lock``.
 
     The façade owns ONE ``sqlite3.Connection`` shared across the event-loop

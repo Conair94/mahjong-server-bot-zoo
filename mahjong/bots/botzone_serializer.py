@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from mahjong.adapters.base import Prompt
+from mahjong.adapters.base import Prompt, SeatContext
 from mahjong.engine.types import Action
 
 
@@ -59,6 +59,27 @@ class BotzoneCsmSerializer:
         self._header_seen = False
 
     # --- Public API ---
+
+    def on_seated(self, ctx: SeatContext) -> None:
+        """Seed protocol history from this seat's private initial view.
+
+        The record HEADER contains the hidden shuffle seed and must never be
+        broadcast to bots. The dealer's 14th tile is a separate draw request.
+        """
+        view = ctx["initial_view"]
+        self._round_index = int(view["round_wind"][1:]) - 1
+        concealed = list(view["seats"][self._seat]["concealed"])
+        last_drawn = view.get("last_drawn")
+        own_draw = last_drawn is not None and last_drawn["seat"] == self._seat
+        if own_draw:
+            assert last_drawn is not None
+            concealed.remove(last_drawn["tile"])
+        self._on_header()
+        deal = [concealed if seat == self._seat else [] for seat in range(4)]
+        self._on_deal({"concealed": deal})
+        if own_draw:
+            assert last_drawn is not None
+            self._on_draw(dict(last_drawn))
 
     def on_observe(self, event: dict[str, Any], view: dict[str, Any]) -> None:
         kind = event.get("event")
@@ -175,6 +196,8 @@ def _claim_decision_tokens(event: dict[str, Any], decision: str) -> list[str]:
         kind = event.get("kind", "EXPOSED")
         if kind == "ADDED":
             return ["BUGANG", event["tile"]]
+        if kind == "CONCEALED" and "tile" not in event:
+            return ["GANG"]
         return ["GANG", event["tile"]]
     if decision == "HU":
         return ["HU"]

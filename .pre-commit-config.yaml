@@ -19,26 +19,24 @@ repos:
         args: ["--maxkb=500"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.5
+    rev: v0.15.13
     hooks:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
-    hooks:
-      - id: mypy
-        additional_dependencies: ["pytest"]
-        # Run mypy on the package; pytest's own tree is lenient by default.
-        files: "^mahjong/"
-
   - repo: local
     hooks:
-      - id: pytest-fast
-        name: pytest (fast unit tests only)
-        entry: pytest
+      - id: mypy
+        name: mypy (project environment)
+        entry: python -m mypy mahjong/
         language: system
         types: [python]
         pass_filenames: false
-        args: ["-x", "-m", "not integration and not linux_only"]
+      - id: pytest-fast
+        name: pytest (fast unit tests only)
+        entry: python -m pytest
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: ["-x", "tests/engine", "tests/records", "tests/lint", "-m", "not integration and not linux_only and not slow"]
